@@ -81,8 +81,6 @@ type state struct {
 // panics mark the span as an error. Query strings and paths are not
 // recorded: they may carry tokens. With WithMeterProvider each request is
 // also an http.server.request.duration sample (method, route, status).
-//
-//nolint:gocognit // one middleware recording trace, metrics and status together
 func Middleware(tp trace.TracerProvider, opts ...Option) func(http.Handler) http.Handler {
 	o := newOptions(opts)
 	tracer := tp.Tracer(ScopeName)
@@ -117,61 +115,82 @@ func Middleware(tp trace.TracerProvider, opts ...Option) func(http.Handler) http
 				span.SetAttributes(semconv.HTTPRoute(route))
 			}
 
-			req := r.WithContext(context.WithValue(ctx, ctxKey{}, st))
-			rw := &recorder{ResponseWriter: w}
-
-			metricAttrs := func(extra ...attribute.KeyValue) metric.MeasurementOption {
-				attrs := append([]attribute.KeyValue{
-					semconv.HTTPRequestMethodKey.String(method),
-					semconv.URLScheme(schemeOf(r)),
-				}, extra...)
-				if st.route != "" {
-					attrs = append(attrs, semconv.HTTPRoute(st.route))
-				}
-
-				return metric.WithAttributes(attrs...)
+			sr := &serverRequest{
+				ctx: ctx, span: span, st: st, r: r, method: method,
+				req:      r.WithContext(context.WithValue(ctx, ctxKey{}, st)),
+				rw:       &recorder{ResponseWriter: w},
+				start:    start,
+				duration: duration,
 			}
 
-			defer func() {
-				if p := recover(); p != nil {
-					span.SetAttributes(semconv.ErrorTypeKey.String("panic"))
-					span.SetStatus(codes.Error, "panic")
-					span.End()
-					duration.Record(ctx, time.Since(start).Seconds(),
-						metricAttrs(semconv.ErrorTypeKey.String("panic")))
-					panic(p)
-				}
+			defer sr.finish()
 
-				// ServeMux sets Pattern on the request it receives: req, when no
-				// middleware in between cloned it.
-				if st.route == "" {
-					if route := routeOf(req.Pattern); route != "" {
-						st.route = route
-						nameSpan(span, r.Method, route)
-					}
-				}
-
-				status := rw.status
-				if status == 0 {
-					status = http.StatusOK
-				}
-
-				attrs := []attribute.KeyValue{semconv.HTTPResponseStatusCode(status)}
-				span.SetAttributes(attrs[0])
-
-				if status >= http.StatusInternalServerError {
-					attrs = append(attrs, semconv.ErrorTypeKey.String(strconv.Itoa(status)))
-					span.SetAttributes(attrs[1])
-					span.SetStatus(codes.Error, http.StatusText(status))
-				}
-
-				span.End()
-				duration.Record(ctx, time.Since(start).Seconds(), metricAttrs(attrs...))
-			}()
-
-			next.ServeHTTP(rw, req)
+			next.ServeHTTP(sr.rw, sr.req)
 		})
 	}
+}
+
+// serverRequest is the per-request state Middleware settles once the
+// handler returns or panics.
+type serverRequest struct {
+	ctx      context.Context
+	span     trace.Span
+	st       *state
+	r        *http.Request
+	req      *http.Request
+	rw       *recorder
+	method   string
+	start    time.Time
+	duration metric.Float64Histogram
+}
+
+func (s *serverRequest) metricAttrs(extra ...attribute.KeyValue) metric.MeasurementOption {
+	attrs := append([]attribute.KeyValue{
+		semconv.HTTPRequestMethodKey.String(s.method),
+		semconv.URLScheme(schemeOf(s.r)),
+	}, extra...)
+	if s.st.route != "" {
+		attrs = append(attrs, semconv.HTTPRoute(s.st.route))
+	}
+
+	return metric.WithAttributes(attrs...)
+}
+
+func (s *serverRequest) finish() {
+	if p := recover(); p != nil {
+		s.span.SetAttributes(semconv.ErrorTypeKey.String("panic"))
+		s.span.SetStatus(codes.Error, "panic")
+		s.span.End()
+		s.duration.Record(s.ctx, time.Since(s.start).Seconds(),
+			s.metricAttrs(semconv.ErrorTypeKey.String("panic")))
+		panic(p)
+	}
+
+	// ServeMux sets Pattern on the request it receives: req, when no
+	// middleware in between cloned it.
+	if s.st.route == "" {
+		if route := routeOf(s.req.Pattern); route != "" {
+			s.st.route = route
+			nameSpan(s.span, s.r.Method, route)
+		}
+	}
+
+	status := s.rw.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+
+	attrs := []attribute.KeyValue{semconv.HTTPResponseStatusCode(status)}
+	s.span.SetAttributes(attrs[0])
+
+	if status >= http.StatusInternalServerError {
+		attrs = append(attrs, semconv.ErrorTypeKey.String(strconv.Itoa(status)))
+		s.span.SetAttributes(attrs[1])
+		s.span.SetStatus(codes.Error, http.StatusText(status))
+	}
+
+	s.span.End()
+	s.duration.Record(s.ctx, time.Since(s.start).Seconds(), s.metricAttrs(attrs...))
 }
 
 func nameSpan(span trace.Span, method, route string) {
