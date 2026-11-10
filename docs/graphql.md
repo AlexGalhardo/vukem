@@ -48,7 +48,7 @@ schema, err := graphql.New(sdl,
 
 - Query fields that have a resolver run concurrently with their siblings, and items of composite lists run concurrently; output keeps document order. Mutation root fields run one after another. `graphql.WithoutConcurrency()` resolves everything serially (for resolvers sharing one `*sql.Tx`).
 - Null propagation follows the spec: an error in a non-null field nulls the nearest nullable parent; `data` is `null` when a non-null root field fails and absent for request errors.
-- Panics in resolvers are recovered and reported as internal errors.
+- Panics in resolvers are recovered and reported as internal errors. So are panics in schema callbacks (`Serialize`, `ResolveType`, a `fmt.Stringer` value): the client gets a masked error at that field's path, the field is null (or its nearest nullable parent), and sibling fields keep their data. A panic inside a subscription operation is logged and sent as a masked `error` message for that id; the connection stays open.
 - Subscription operations run through `schema.Subscribe`, `graphql.ServeWS` or the handler's SSE mode ([Subscriptions](#subscriptions)); `Execute` and plain JSON POST reject them with `BAD_REQUEST`.
 
 ## Subscriptions
