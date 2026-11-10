@@ -20,8 +20,8 @@ How the framework itself is tested, and the testing toolkit it ships to apps. De
 | Example | `example_test.go` | `go test ./...` | Doubles as pkg.go.dev docs |
 | Golden | `testdata/*.golden` | `go test ./... -update` | Generators, codemods, error pages, CLI output |
 | Fuzz | `Fuzz*` | `go test -fuzz=FuzzX ./router` | Router patterns, `.env` parser, validator tags, multipart |
-| Integration | `//go:build integration` | `task test:integration` | Needs `DATABASE_URL`, `MYSQL_URL`, `MARIADB_URL`, `REDIS_URL`, `MONGO_URL` |
-| End-to-end | `internal/cli/cli_test.go` (plus the slow tests in `openapi`, `apidocs`, `contrib/engine`) | `task test:e2e` | `vukem new` → build → boot → HTTP checks; skipped by `-short`, so `task test` stays fast; CI runs them on all OSes |
+| Integration | `//go:build integration` | `task test:integration` | Needs `DATABASE_URL`, `MYSQL_URL`, `MARIADB_URL`, `REDIS_URL`, `MONGO_URL`, `S3_ENDPOINT` |
+| End-to-end | `internal/cli/cli_test.go` (plus the slow tests in `openapi`, `apidocs`, `contrib/engine`) | `task test:e2e` | `vukem new` → build → boot → HTTP checks; skipped by `-short`, so `task test` stays fast; the CI `Test` job runs them (no `-short`) on all OSes |
 | Benchmarks | `Benchmark*` with `b.Loop()` | `task bench` | Router, `web.Ctx`, ORM; comparisons with net/http, chi and echo in `internal/bench` ([performance.md](performance.md)) |
 
 Time-dependent code (sessions, rate limits, queues, scheduler) is tested with `testing/synctest` instead of sleeps.
@@ -143,7 +143,6 @@ mean an optional native tool (LilyPond, FFmpeg) runs on Windows.
 
 | Job | Matrix |
 | --- | --- |
-| unit | `ubuntu`, `windows`, `macos` × Go `stable` (`oldstable` joins once Go 1.28 ships, since 1.27 is the minimum) |
-| integration | `ubuntu` + services `postgres:17`, `mysql:8.4`, `mariadb:11.8`, `redis:7`, `mongo:9.0.4` |
-| e2e | `ubuntu`, `windows`, `macos` × `stable` |
-| coverage | `ubuntu/stable` → Codecov, gate enforced by `internal/tools/covergate` |
+| unit + e2e (`Test`) | `ubuntu`, `windows`, `macos` × Go `stable`, `-race`, no `-short` (`oldstable` joins once Go 1.28 ships, since 1.27 is the minimum) |
+| integration (one job per driver) | `ubuntu` + services `postgres:17`, `mysql:8.4`, `mariadb:11.8`, `redis:7` (and Valkey), `mongo:9.0.4`, RustFS (S3) |
+| coverage | `ubuntu/stable`; `coverage.out` is uploaded as an artifact and the gate is enforced by `internal/tools/covergate` |

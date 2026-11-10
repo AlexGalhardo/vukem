@@ -14,7 +14,7 @@ For each fix branch (one worktree per branch under `../vukem-worktrees/<name>`, 
 1. The branch agent reports: commits, validation commands and results, public API changes, what apps must change.
 2. An independent reviewer (code-reviewer agent, read-only, clean context) reviews `git diff main...<branch>`. Security-sensitive changes always get one.
 3. Findings go back to the branch agent; it fixes test-first and rebases on the current `main`.
-4. Merge with `git merge --no-ff`, run the affected tests (and `go test ./internal/cli/ -run 'EndToEnd$'` for scaffold changes), push.
+4. Open a PR per branch (or one PR for the batch), run the affected tests (and `go test ./internal/cli/ -run 'EndToEnd$'` for scaffold changes), wait for the required checks and merge: squash a single change, rebase-merge a batch of Conventional Commits. `main` is protected, so there is no direct push. GitHub refuses a rebase merge above 100 commits: split the batch into several PRs.
 5. Remove the worktree and the merged branch.
 
 ## 2. CI gate
@@ -24,7 +24,7 @@ For each fix branch (one worktree per branch under `../vukem-worktrees/<name>`, 
 
 ## 3. Release the core
 
-Before releasing: no open `ci-failure` issue (`gh issue list --label ci-failure`), last `Fuzz` and `Vulnerabilities (weekly)` runs green.
+Before releasing: no open `ci-failure` issue (`gh issue list --label ci-failure`), last `Fuzz`, `Vulnerabilities (weekly)`, `Scorecard`, `Secrets` and `CodeQL` runs green.
 
 ```sh
 go run ./internal/tools/release -push vX.Y.Z

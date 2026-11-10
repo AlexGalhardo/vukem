@@ -4,7 +4,7 @@ Thanks for helping. This guide covers setup, workflow and the rules every change
 
 ## Setup
 
-1. Install the tools listed in [docs/tooling.md](../docs/tooling.md#required-tools) (Go ≥ 1.27, golangci-lint v2, Task, lefthook, Node.js for markdownlint). On Windows everything installs with `winget`.
+1. Install the tools listed in [docs/tooling.md](../docs/tooling.md#required-tools) (Go ≥ 1.27, golangci-lint v2, Task, lefthook, Node.js for markdownlint and the docs site). On Windows everything installs with `winget`.
 2. Clone and install the git hooks:
 
    ```sh
@@ -20,7 +20,7 @@ Thanks for helping. This guide covers setup, workflow and the rules every change
 1. Pick a task from [PLAN.md](../docs/PLAN.md) (or open an issue first for anything not in the plan).
 2. Branch from `main`: `feat/<short-name>`, `fix/<short-name>`, `docs/<short-name>`.
 3. Write the test first, then the code. Keep changes small and focused.
-4. Run `task ci` before pushing (the `pre-push` hook runs tests, vet and govulncheck).
+4. Run `task ci` before pushing (the `pre-push` hook runs vet and govulncheck; tests run in CI).
 5. Open a pull request against `main`. The **PR title** must be a Conventional Commit; it becomes the squash-merge commit message (a batch of Conventional Commits is rebase-merged instead, so each one reaches the changelog). The `main` ruleset requires a pull request, the CI status checks and a linear history, so the maintainer's own changes go through the same flow.
 6. Fill in the checklist of the [PR template](pull_request_template.md). Vukem has a single maintainer: a PR from an outside contributor is reviewed by the maintainer, and the maintainer's own PRs are merged once CI is green (GitHub does not let authors approve their own PRs; see [docs/maintenance.md](../docs/maintenance.md#code-review)).
 
