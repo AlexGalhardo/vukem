@@ -24,9 +24,9 @@ report, err := ssg.Generate(ctx, handler, []ssg.Page{
 
 ## What is refused
 
-`Page.Path` must be an absolute URL path. A scheme, host, query, fragment, NUL, backslash, or any `..` segment is `ErrInvalidPath`. Percent-encoded dots (`%2e%2e`) are unescaped and rejected the same way. `/about/`, `/./foo` and repeated slashes are cleaned with `path.Clean` before the file name is chosen.
+`Page.Path` must be an absolute URL path. A scheme, host, query, fragment, NUL, backslash, or any `..` segment is `ErrInvalidPath`. Percent-encoded dots (`%2e%2e`) are unescaped and rejected the same way. `/about/`, `/./foo` and repeated slashes are cleaned with `path.Clean` before the file name is chosen. A path is decoded once: a decoded path that still contains `%` (for example `/x%2541` or `/50%25`) is `ErrInvalidPath`, and the handler receives the decoded path (`/a%20b` is served as `/a b` and written to `a b/index.html`). A segment that ends in a dot or a space, or that is a Windows device name (`con`, `prn`, `aux`, `nul`, `com1`-`com9`, `lpt1`-`lpt9`, with or without an extension), is `ErrInvalidPath`. Two pages whose output files differ only by case (`/About` and `/about`) are `ErrInvalidPath`, naming both paths, before anything is written.
 
-The write is checked against `OutDir` after the path is cleaned, including the destination of a symlink. A path that would leave `OutDir` is `ErrEscape` and writes nothing.
+`OutDir` is opened once with `os.Root`, and every directory and file is created through it. A link or junction inside `OutDir` that points elsewhere cannot redirect a write: the page is `ErrEscape` and nothing is created outside `OutDir`. Each page is written to a temporary file beside its target and renamed over it, so an existing hard link is replaced, not truncated.
 
 Only status 200 is stored. Any other status, including a redirect, is `ErrStatus` and writes nothing for that page. A body over 8 MiB (`ssg.MaxBody`) is `ErrTooLarge` and writes nothing for that page. An exact 8 MiB body is kept. `Generate` stops at the first error. Pages written earlier stay on disk and are still listed in the report. A cancelled context before the loop creates no files.
 
