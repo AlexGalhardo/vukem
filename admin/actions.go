@@ -170,7 +170,7 @@ func (r *Resource[T]) runAction(p *Panel, a Action[T]) web.HandlerFunc {
 			return r.renderAction(c, p, http.StatusUnprocessableEntity, a, []*T{rec}, reason, msg)
 		}
 
-		if err := r.run(c.Context(), p, a, []*T{rec}, reason); err != nil {
+		if err := r.run(c.Context(), p, a, []*T{rec}, reason, actionAuthorizer(c, p, a)); err != nil {
 			return err
 		}
 
@@ -207,7 +207,7 @@ func (r *Resource[T]) runBulk(p *Panel, a Action[T]) web.HandlerFunc {
 			return r.renderAction(c, p, http.StatusUnprocessableEntity, a, recs, reason, msg)
 		}
 
-		if err := r.run(c.Context(), p, a, recs, reason); err != nil {
+		if err := r.run(c.Context(), p, a, recs, reason, actionAuthorizer(c, p, a)); err != nil {
 			return err
 		}
 
@@ -274,13 +274,37 @@ func actionReason(c *web.Ctx, ask bool) (reason, msg string) {
 	return reason, ""
 }
 
+// actionAuthorizer checks a's policy for one record with the request's
+// user.
+func actionAuthorizer[T any](c *web.Ctx, p *Panel, a Action[T]) func(*T) error {
+	return func(rec *T) error { return p.authorize(c, a.Name, rec) }
+}
+
 // run applies a to every record in one transaction, saving changed fields
-// and writing one audit entry per record.
-func (r *Resource[T]) run(ctx context.Context, p *Panel, a Action[T], recs []*T, reason string) error {
+// and writing one audit entry per record. Each record is read again with a
+// row lock and authorized as locked: the handler's earlier check saw a copy
+// another admin may have changed since, and Run must not act on it.
+func (r *Resource[T]) run(
+	ctx context.Context,
+	p *Panel,
+	a Action[T],
+	recs []*T,
+	reason string,
+	authorize func(*T) error,
+) error {
 	cols := r.auditColumns()
 
 	err := p.cfg.DB.Tx(ctx, func(tx *database.Tx) error {
-		for _, rec := range recs {
+		for _, loaded := range recs {
+			rec, err := r.lookup(ctx, orm.QueryOf[T](tx).LockForUpdate(), r.id(reflect.ValueOf(loaded).Elem()))
+			if err != nil {
+				return err
+			}
+
+			if err := authorize(rec); err != nil {
+				return err
+			}
+
 			rv := reflect.ValueOf(rec).Elem()
 			before := r.snapshot(rv, cols)
 

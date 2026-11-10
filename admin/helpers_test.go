@@ -113,6 +113,8 @@ type postPolicy struct {
 	// onUpdate runs between the panel loading the row and its transaction:
 	// the window where another writer can change the row.
 	onUpdate func(context.Context)
+	// onApprove runs whenever the Approve policy is checked.
+	onApprove func(context.Context)
 }
 
 func (p postPolicy) Update(ctx context.Context, u *User, post *Post) bool {
@@ -123,8 +125,12 @@ func (p postPolicy) Update(ctx context.Context, u *User, post *Post) bool {
 	return p.adminPolicy.Update(ctx, u, post)
 }
 
-func (postPolicy) Approve(_ context.Context, u *User, p *Post) bool {
-	return u.Role == "admin" && p.Title != "Locked"
+func (p postPolicy) Approve(ctx context.Context, u *User, post *Post) bool {
+	if p.onApprove != nil {
+		p.onApprove(ctx)
+	}
+
+	return u.Role == "admin" && post.Title != "Locked"
 }
 
 func (postPolicy) Reject(_ context.Context, u *User, _ *Post) bool { return u.Role == "admin" }
@@ -212,6 +218,9 @@ type options struct {
 	extra func(*authz.Gate[*User]) error
 	// racing runs when the panel authorizes a post update, with the panel's DB.
 	racing func(context.Context, *database.DB)
+	// racingApprove runs whenever the Approve policy is checked, with the
+	// panel's DB.
+	racingApprove func(context.Context, *database.DB)
 	// pages registers custom pages before Mount.
 	pages func(*admin.Panel) error
 	// beside registers routes next to the panel, after Mount.
@@ -295,11 +304,18 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 					gate.Define(admin.AbilityFlags, func(_ context.Context, u *User) bool { return u.Role == "admin" })
 
 					if err := gate.Register(
-						authz.For[*Post](postPolicy{onUpdate: func(ctx context.Context) {
-							if o.racing != nil {
-								o.racing(ctx, db)
-							}
-						}}),
+						authz.For[*Post](postPolicy{
+							onUpdate: func(ctx context.Context) {
+								if o.racing != nil {
+									o.racing(ctx, db)
+								}
+							},
+							onApprove: func(ctx context.Context) {
+								if o.racingApprove != nil {
+									o.racingApprove(ctx, db)
+								}
+							},
+						}),
 						authz.For[*Account](adminPolicy[*Account]{}),
 					); err != nil {
 						return err
