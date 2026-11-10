@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -754,4 +756,79 @@ func TestSecurity_A01_GraphQLSubscriptionsAuthorized(t *testing.T) {
 			})
 		})
 	}
+}
+
+type panicStore struct{}
+
+func (panicStore) Get(context.Context, string) (string, bool, error) { panic("store boom") }
+
+func (panicStore) Put(context.Context, string, string) error { panic("store boom") }
+
+func TestServeWSPanicInSerializeIsAFieldError(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		s, err := graphql.New(`
+scalar Boom
+type Query { hello: String! }
+type Subscription { tick: Boom }
+`,
+			graphql.Scalar("Boom", graphql.ScalarFuncs{Serialize: func(any) (any, error) { panic("serialize boom") }}),
+			graphql.Query("hello", func(context.Context, graphql.NoArgs) (string, error) { return "world", nil }),
+			graphql.Subscription("tick", func(context.Context, graphql.NoArgs) (<-chan int, error) {
+				ch := make(chan int, 1)
+				ch <- 1
+				close(ch)
+
+				return ch, nil
+			}),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		c := dial(t, s, graphql.WSConfig{}, graphql.WSProtocol)
+		c.init(nil)
+		c.subscribe("1", `subscription { tick }`)
+
+		m := c.recv()
+		if m.Type != "next" || !strings.Contains(string(m.Payload), `"path":["tick"]`) ||
+			strings.Contains(string(m.Payload), "boom") {
+			t.Fatalf("got %+v %s, want next with a masked error at path tick", m, m.Payload)
+		}
+
+		c.wantComplete("1")
+	})
+}
+
+func TestServeWSPanicInOperationIsMasked(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		s, _ := subApp(t)
+		cfg := graphql.WSConfig{Persisted: &graphql.PersistedQueries{Store: panicStore{}}}
+		c := dial(t, s, cfg, graphql.WSProtocol)
+		c.init(nil)
+		const q = `subscription { countdown(from: 1) }`
+
+		ext := map[string]any{"persistedQuery": map[string]any{"version": 1, "sha256Hash": graphql.Hash(q)}}
+		c.sendJSON(map[string]any{
+			"id": "1", "type": "subscribe",
+			"payload": map[string]any{"query": q, "extensions": ext},
+		})
+
+		m := c.recv()
+		if m.Type != "error" || strings.Contains(string(m.Payload), "boom") {
+			t.Fatalf("got %+v %s, want a masked error message", m, m.Payload)
+		}
+
+		if got := errorCodes(t, m); !slices.Equal(got, []string{graphql.CodeInternal}) {
+			t.Errorf("codes = %v, want [%s]", got, graphql.CodeInternal)
+		}
+
+		// The connection survives and the id is free again.
+		c.subscribe("1", `subscription { countdown(from: 1) }`)
+		c.wantNext("1", `{"countdown":1}`)
+		c.wantComplete("1")
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -324,6 +325,19 @@ func (w *wsSession[C]) run(ctx context.Context, id string, op *wsOp, req Request
 
 		return mine
 	}
+
+	// User code outside the executor's recovers (stores, source streams)
+	// must not take the process down from this goroutine.
+	defer func() {
+		if r := recover(); r != nil {
+			w.s.log.ErrorContext(ctx, "graphql: subscription operation panic", "id", id, "panic", r,
+				"stack", string(debug.Stack()))
+
+			if release() {
+				w.sendErrors(id, []*Error{requestError(CodeInternal, internalMessage)})
+			}
+		}
+	}()
 
 	finish := func(sendComplete bool) {
 		if release() && sendComplete && w.ctx.Err() == nil {
