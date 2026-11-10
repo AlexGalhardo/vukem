@@ -84,7 +84,7 @@ func (b *base) snapshot(rec reflect.Value, cols []string) map[string]any {
 	return out
 }
 
-// diff lists the columns whose values differ; sensitive columns are
+// diff lists the columns whose values differ; sensitive and hidden columns are
 // recorded as redacted, without values (A09: never log secrets).
 func (b *base) diff(before, after map[string]any, cols []string) map[string]Change {
 	out := map[string]Change{}
@@ -95,7 +95,7 @@ func (b *base) diff(before, after map[string]any, cols []string) map[string]Chan
 			continue
 		}
 
-		if b.sensitive[c] {
+		if b.sensitive[c] || b.hidden[c] {
 			out[c] = Change{Redacted: true}
 			continue
 		}
