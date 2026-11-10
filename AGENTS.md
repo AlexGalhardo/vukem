@@ -4,9 +4,8 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 
 ## Start here
 
-1. Read [PLAN.md](docs/PLAN.md): pick the first unchecked task of the current phase.
-2. Read the docs that task touches (index in [docs/README.md](docs/README.md)).
-3. Decisions are final unless [docs/brainstorming.md](docs/brainstorming.md) is updated first.
+1. Read [PLAN.md](docs/PLAN.md): pick the first unchecked task of the current phase, then the docs it touches (index in [docs/README.md](docs/README.md)).
+2. Decisions are final unless [docs/brainstorming.md](docs/brainstorming.md) is updated first.
 
 ## Commands
 
@@ -41,8 +40,8 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 | `.config/` | git-cliff, GoReleaser, Compose and the `protect-main` ruleset ([layout](docs/tooling.md#repository-layout)) |
 | `.github/` | workflows, templates, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT |
 | `internal/tools/` | repo tooling (apicheck, commitlint, covergate, fixinline, modcheck, release, snippetcheck) |
-| `drivers/*` | optional driver modules (postgres, redis, mongo) |
-| `contrib/*` | optional feature modules (graphql, grpc, stripe, imaging, engine, qrcode) |
+| `drivers/*` | optional driver modules, one Go module each (list: `go.work`) |
+| `contrib/*` | optional feature modules, one Go module each (list: `go.work`) |
 | `.claude/rules/` | path-scoped rules for agents (Go, tests, security, workflows, release…) |
 | `.claude/skills/` | Go skills, workflow skills and `vukem-release` (release + app bumps) |
 
