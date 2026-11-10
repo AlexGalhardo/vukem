@@ -120,3 +120,24 @@ func TestSecurity_A06_PersistedQuerySizeCapped(t *testing.T) {
 		}
 	})
 }
+
+func TestMemoryStoreSkipsDocumentOverBudget(t *testing.T) {
+	t.Parallel()
+
+	store := graphql.NewMemoryStore(0)
+	if err := store.Put(t.Context(), "small", "{ hello }"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Put(t.Context(), "huge", strings.Repeat(" ", graphql.MaxMemoryStoreBytes+1)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, _ := store.Get(t.Context(), "huge"); ok {
+		t.Error("a document over the whole byte budget was stored")
+	}
+
+	if _, ok, _ := store.Get(t.Context(), "small"); !ok {
+		t.Error("a document over the byte budget evicted the other entries")
+	}
+}
