@@ -393,3 +393,100 @@ func TestSecurity_A01_IdempotencyNeverReplaysCredentialHeaders(t *testing.T) {
 		t.Errorf("replay ETag = %q, want the listed header replayed", again.Header().Get("ETag"))
 	}
 }
+
+// cancelAwareStore fails writes made with a cancelled context, like the
+// database and Redis stores do.
+type cancelAwareStore struct{ cache.Store }
+
+func (s cancelAwareStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return s.Store.Set(ctx, key, value, ttl)
+}
+
+func (s cancelAwareStore) Delete(ctx context.Context, keys ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return s.Store.Delete(ctx, keys...)
+}
+
+func TestIdempotencySettlesAfterClientDisconnect(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		status    int
+		wantCalls int32
+	}{
+		{"success is stored", http.StatusCreated, 1},
+		{"failure releases the key", http.StatusInternalServerError, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls atomic.Int32
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			h := api.Idempotency(cancelAwareStore{cache.NewMemory(100)}, api.IdempotencyOptions{})(
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					calls.Add(1)
+					cancel() // the client gave up while the handler ran
+					w.WriteHeader(tc.status)
+				}))
+
+			for _, c := range []context.Context{ctx, t.Context()} {
+				r := httptest.NewRequestWithContext(c, "POST", "/orders", strings.NewReader(`{}`))
+				r.Header.Set(api.IdempotencyHeader, "k1")
+				r.Header.Set("Authorization", "Bearer a")
+
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, r)
+
+				if rec.Code == http.StatusConflict {
+					t.Fatalf("retry = 409, want the key settled (calls=%d)", calls.Load())
+				}
+			}
+
+			if calls.Load() != tc.wantCalls {
+				t.Errorf("handler calls = %d, want %d", calls.Load(), tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestIdempotencyReleasesTheKeyWhenTheHandlerPanics(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	h := api.Idempotency(cache.NewMemory(100), api.IdempotencyOptions{})(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			calls.Add(1)
+			panic("boom")
+		}))
+
+	for range 2 {
+		func() {
+			defer func() {
+				if p := recover(); p != "boom" {
+					t.Errorf("recovered = %v, want the handler's panic re-raised unchanged", p)
+				}
+			}()
+
+			r := httptest.NewRequestWithContext(t.Context(), "POST", "/orders", strings.NewReader(`{}`))
+			r.Header.Set(api.IdempotencyHeader, "k1")
+			r.Header.Set("Authorization", "Bearer a")
+			h.ServeHTTP(httptest.NewRecorder(), r)
+		}()
+	}
+
+	if calls.Load() != 2 {
+		t.Errorf("handler calls = %d, want 2 (the key must be released after a panic)", calls.Load())
+	}
+}

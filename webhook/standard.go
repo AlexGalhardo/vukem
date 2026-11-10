@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -196,14 +197,29 @@ func Dedupe(store cache.Store, id func(*http.Request) string, o DedupeOptions) f
 			}
 
 			rec := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+
+			// A panic would leave the event "running" until LockTTL: release it,
+			// as for a failed response, and re-raise the panic untouched.
+			defer func() {
+				if p := recover(); p != nil {
+					_ = store.Delete(context.WithoutCancel(ctx), key)
+
+					panic(p)
+				}
+			}()
+
 			next.ServeHTTP(rec, r)
 
+			// The sender may be gone by now: the outcome is stored anyway, or
+			// its retry would run the handler a second time.
+			settle := context.WithoutCancel(ctx)
+
 			if rec.status >= http.StatusMultipleChoices {
-				_ = store.Delete(ctx, key)
+				_ = store.Delete(settle, key)
 				return
 			}
 
-			if err := store.Set(ctx, key, []byte("done"), o.TTL); err != nil {
+			if err := store.Set(settle, key, []byte("done"), o.TTL); err != nil {
 				if log := web.ServicesFrom(ctx).Log; log != nil {
 					log.ErrorContext(ctx, "webhook: remember event", "id", eventID, "err", err)
 				}
