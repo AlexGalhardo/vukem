@@ -10,6 +10,8 @@ func TestSecurity_A09_AdminSensitiveColumnNames(t *testing.T) {
 		"client_secret": true, "api_key": true, "apikey": true, "private_key": true,
 		"token": true, "api_token": true, "remember_token": true, "token_hash": true, "refresh_tokens": true,
 		"accesstoken": true, "authtokens": true, "userotp": true,
+		"pin_hash": true, "remember_digest": true, "salt": true, "passphrase": true, "credentials": true,
+		"access_key": true, "signing_key": true, "encryption_key": true, "secret_footprint": true,
 		"otp": true, "otp_secret": true, "totp_secret": true, "recovery_codes": true,
 		// Token and OTP words anywhere stay secret (fail closed).
 		"tokens_hash": true, "tokens_digest": true, "tokens_json": true, "tokenhash": true, "tokenvalue": true,
