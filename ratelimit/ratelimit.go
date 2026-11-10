@@ -57,14 +57,18 @@ type Memory struct {
 	calls int
 }
 
-// NewMemory allows limit requests per window for each key.
+// NewMemory allows limit requests per window for each key. A window of
+// zero or less is one second.
 func NewMemory(limit int, window time.Duration) *Memory {
 	limit = max(limit, 1)
+	if window <= 0 {
+		window = time.Second
+	}
 
 	return &Memory{
 		limit:     limit,
 		tolerance: window,
-		interval:  window / time.Duration(limit),
+		interval:  max(window/time.Duration(limit), 1),
 		now:       time.Now,
 		tat:       map[string]time.Time{},
 	}
@@ -73,15 +77,14 @@ func NewMemory(limit int, window time.Duration) *Memory {
 // NewMemoryBurst allows rate requests per window at a steady pace and up
 // to burst requests at once: NewMemoryBurst(1, time.Second, 5) lets a
 // client send 5 requests back to back, then one per second. Values below
-// 1 are raised to 1. RateLimit-Limit reports burst.
+// 1 are raised to 1, and a window of zero or less is one second.
+// RateLimit-Limit reports burst.
 func NewMemoryBurst(rate int, window time.Duration, burst int) *Memory {
 	rate, burst = max(rate, 1), max(burst, 1)
-	interval := window / time.Duration(rate)
 
 	m := NewMemory(rate, window)
 	m.limit = burst
-	m.interval = interval
-	m.tolerance = interval * time.Duration(burst)
+	m.tolerance = m.interval * time.Duration(burst)
 
 	return m
 }
