@@ -200,7 +200,7 @@ Locally, `task api:check` installs the pinned `apidiff` and runs the gate. `-maj
 
 There is no baseline file: the latest stable `v1` tag of each module is the baseline, so every new tag moves it forward. When `v1.0.0` is cut ([v1.0 API review](v1-api-review.md#the-v1-gate)):
 
-1. On the release commit, `task api:check -- -major v0 -head v1.0.0 -report docs/api/apidiff-v0.25.0-to-v1.0.0.md` (base: the last `v0` tag) lists what changed since the last `v0`; every incompatible entry must be in the [1.0 upgrade guide](upgrade/1.0.md). Commit the report.
+1. On the release commit, `task api:check -- -major v0 -head v1.0.0 -report docs/api/apidiff-<last v0 tag>-to-v1.0.0.md` (base: the last `v0` tag) lists what changed since the last `v0`; `<last v0 tag>` is the output of `git tag -l 'v0.*' --sort=-v:refname | head -1` on the release day; every incompatible entry must be in the [1.0 upgrade guide](upgrade/1.0.md). Commit the report.
 2. Tag the core `v1.0.0` and every published nested module `drivers/<name>/v1.0.0` / `contrib/<name>/v1.0.0` (after their `go.mod` requires core `v1.0.0`). A module left on `v0` stays outside the gate until its first `v1` tag.
 3. From then on the `apidiff` job fails any incompatible change. A security fix that must break an API (allowed by the [stability policy](stability.md#what-is-not-covered)) needs an entry in the [exception list](#security-exceptions), never an admin merge over the failed check. A `/v2` module needs the CI step switched to `-major v2` for that module.
 
