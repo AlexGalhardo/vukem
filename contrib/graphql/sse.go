@@ -33,7 +33,8 @@ func (h *handler) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if gerr := h.cfg.Persisted.resolve(r.Context(), &req); gerr != nil {
+	commit, gerr := h.cfg.Persisted.resolve(r.Context(), &req)
+	if gerr != nil {
 		writeResult(w, mediaJSON, http.StatusBadRequest, &Response{Errors: []*Error{gerr}})
 		return
 	}
@@ -48,6 +49,11 @@ func (h *handler) serveSSE(w http.ResponseWriter, r *http.Request) {
 	p, errs := h.s.prepare(req, h.cfg.introspection())
 	if errs != nil {
 		writeResult(w, mediaJSON, http.StatusBadRequest, &Response{Errors: errs})
+		return
+	}
+
+	if gerr := register(r.Context(), commit); gerr != nil {
+		writeResult(w, mediaJSON, http.StatusBadRequest, &Response{Errors: []*Error{gerr}})
 		return
 	}
 
