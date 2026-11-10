@@ -118,8 +118,6 @@ func RegisterWith[In, Out any](
 // register backs Register and RegisterWith: a nil schema is derived from
 // In's tags, and stays nil when In has no fields (no input to bind). who
 // names the caller, so a boot panic points at the function the app called.
-//
-//nolint:gocognit // boot-time wiring of one route; steps depend on shared locals
 func register[In, Out any](
 	who string,
 	g Registrar,
@@ -157,36 +155,14 @@ func register[In, Out any](
 	// GET, HEAD and DELETE read the query string only.
 	bodyless := method == http.MethodGet || method == http.MethodHead || method == http.MethodDelete
 
-	status := op.Status
-	switch {
-	case status != 0:
-	case noOutput:
-		status = http.StatusNoContent
-	case method == http.MethodPost:
-		status = http.StatusCreated
-	default:
-		status = http.StatusOK
-	}
+	status := responseStatus(op, method, noOutput)
 
 	h := func(c *web.Ctx) error {
 		var in In
 
 		if schema != nil {
-			input := c.QueryInput()
-			if bodyless {
-				input = maps.Clone(input)
-			} else {
-				var err error
-				if input, err = c.Input(); err != nil {
-					return err
-				}
-			}
-			for _, p := range params {
-				input[p] = c.Param(p)
-			}
-
 			var err error
-			if in, err = web.ParseMap(c, schema, input); err != nil {
+			if in, err = bindInput(c, schema, bodyless, params); err != nil {
 				return err
 			}
 		}
@@ -196,27 +172,7 @@ func register[In, Out any](
 			return err
 		}
 
-		// The handler finished the response itself (c.NotModified, a redirect):
-		// Out is ignored, neither validated nor written.
-		if c.Writer().Written() {
-			return nil
-		}
-
-		if status == http.StatusNoContent {
-			return c.NoContent()
-		}
-
-		// No output type means no body, whatever the status (202 Accepted).
-		if noOutput {
-			c.Writer().WriteHeader(status)
-			return nil
-		}
-
-		if outSchema != nil {
-			return web.JSONWith(c, status, outSchema, out)
-		}
-
-		return c.JSON(status, out)
+		return respond(c, status, noOutput, outSchema, out)
 	}
 
 	rt := g.Match([]string{method}, path, h)[0]
@@ -229,4 +185,63 @@ func register[In, Out any](
 	}
 
 	return rt.Doc(&Operation{Op: op, Method: method, Path: rt.Path(), Params: params, In: inType, Out: outType})
+}
+
+func responseStatus(op Op, method string, noOutput bool) int {
+	switch {
+	case op.Status != 0:
+		return op.Status
+	case noOutput:
+		return http.StatusNoContent
+	case method == http.MethodPost:
+		return http.StatusCreated
+	default:
+		return http.StatusOK
+	}
+}
+
+// bindInput merges the query string, the body (unless bodyless) and the path
+// parameters, then validates the result against schema.
+func bindInput[In any](c *web.Ctx, schema z.Schema[In], bodyless bool, params []string) (In, error) {
+	var in In
+
+	input := c.QueryInput()
+	if bodyless {
+		input = maps.Clone(input)
+	} else {
+		var err error
+		if input, err = c.Input(); err != nil {
+			return in, err
+		}
+	}
+
+	for _, p := range params {
+		input[p] = c.Param(p)
+	}
+
+	return web.ParseMap(c, schema, input)
+}
+
+func respond[Out any](c *web.Ctx, status int, noOutput bool, outSchema z.Schema[Out], out Out) error {
+	// The handler finished the response itself (c.NotModified, a redirect):
+	// Out is ignored, neither validated nor written.
+	if c.Writer().Written() {
+		return nil
+	}
+
+	if status == http.StatusNoContent {
+		return c.NoContent()
+	}
+
+	// No output type means no body, whatever the status (202 Accepted).
+	if noOutput {
+		c.Writer().WriteHeader(status)
+		return nil
+	}
+
+	if outSchema != nil {
+		return web.JSONWith(c, status, outSchema, out)
+	}
+
+	return c.JSON(status, out)
 }
