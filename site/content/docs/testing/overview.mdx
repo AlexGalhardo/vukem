@@ -143,7 +143,7 @@ Run the whole suite with `go test ./...`. Add `-race` to turn on Go's [race dete
 </Step>
 </Steps>
 
-When an assertion fails, the test stops and prints what it expected, the request, the status, every response header (sorted) and the first 2,000 bytes of the body (longer bodies end with `…`):
+When an assertion fails, the test stops and prints what it expected, the request, the status, every response header (sorted) and the first 2,000 bytes of the body (longer bodies end with `…`). When the status is a 5xx, it also prints the last ten `ERROR` lines of the app's log, since the body of a 5xx hides the cause:
 
 ```text
 --- FAIL: TestCreatePost (0.03s)
@@ -172,7 +172,7 @@ func New(tb testing.TB, build vukem.BuildFunc, opts ...Options) *App
    - `vukem.WithSource` with the configuration map (no `.env` file and no real environment variables are read);
    - `vukem.WithKind(vukem.KindTest)`;
    - `vukem.WithoutHTTP()` (no listener, no port);
-   - `vukem.WithLogOutput(io.Discard)` and `vukem.WithStdout(io.Discard)` (quiet logs);
+   - `vukem.WithLogOutput(...)` into an in-memory buffer that keeps the last 64 KB (the test prints nothing; see the 5xx note below) and `vukem.WithStdout(io.Discard)`;
    - `vukem.WithClock(Options.Clock)` when you set a clock.
 3. Registers `app.Shutdown` in [`t.Cleanup`](https://pkg.go.dev/testing#T.Cleanup), so the app closes when the test ends, even if it fails.
 4. Calls `app.Boot` (providers start, with `t.Context()`).
