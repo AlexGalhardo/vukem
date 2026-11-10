@@ -29,7 +29,6 @@ var scaffoldFS embed.FS
 
 var socialProviders = []string{"github", "gitlab", "discord", "google", "microsoft", "linkedin", "apple"}
 
-//nolint:gocognit // sequential scaffold steps; each step reports its own error
 func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
 	socialList := set.String("social", "", "also add social login: "+strings.Join(socialProviders, ","))
@@ -52,146 +51,215 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			return usagef("install:auth writes html/template pages; templ projects are not supported yet")
 		}
 
-		only := socialOnlyPassed(set)
-		if only && *socialList != "" {
-			return usagef("pass --social or --social-only, not both")
-		}
-
-		if only && (*twoFactor || *passkeys) {
-			return usagef("--social-only does not add two-factor or passkeys")
-		}
-
-		list := *socialList
-		if only {
-			list = *socialOnly
-		}
-
-		providers, err := parseProviders(list)
-		if err != nil {
-			return err
-		}
-
-		if only && len(providers) == 0 {
-			return usagef("--social-only needs a provider, for example google")
-		}
-
-		requested, err := parseLocales(*localeList)
-		if err != nil {
-			return err
-		}
-
-		data, err := scaffoldData(env)
-		if err != nil {
-			return err
-		}
-
-		if err := resolveLocales(env, requested, data); err != nil {
-			return err
-		}
-
-		regs, err := installCore(env, data, *force)
-		if err != nil {
-			return err
-		}
-
-		// With --social, --2fa or --passkeys on a project that already has
-		// install:auth, add only that part.
-		addOn := len(providers) > 0 || *twoFactor || *passkeys
-		switch {
-		case only:
-			if err := installSocialOnlyPages(env, data, providers, *force); err != nil {
-				return err
-			}
-
-			regs = append(regs, registration{"routes/registry.go", "All", "Auth"})
-		case !addOn || *force || !exists(env, filepath.Join("routes", "auth.go")):
-			for _, name := range authScaffolds(env) {
-				if err := installScaffold(env, name, data, *force); err != nil {
-					return err
-				}
-			}
-
-			regs = append(regs, registration{"routes/registry.go", "All", "Auth"})
-		}
-
-		if len(providers) > 0 {
-			quoted := make([]string, len(providers))
-			for i, p := range providers {
-				quoted[i] = strconv.Quote(p)
-			}
-
-			data["Providers"] = strings.Join(quoted, ", ")
-			data["FirstProvider"] = providers[0]
-
-			if err := installScaffold(env, "auth-social", data, *force); err != nil {
-				return err
-			}
-
-			regs = append(
-				regs,
-				registration{
-					"database/migrations/registry.go",
-					"All",
-					"m" + data["TS3"] + "CreateSocialAccountsTable()",
-				},
-				registration{"routes/registry.go", "All", "Social"},
-			)
-
-			if err := appendEnvExample(env, socialEnv(providers)); err != nil {
-				return err
-			}
-		}
-
-		if *twoFactor {
-			more, err := installTwoFactor(env, data, *force)
-			if err != nil {
-				return err
-			}
-
-			regs = append(regs, more...)
-		}
-
-		if *passkeys {
-			if err := installScaffold(env, "auth-passkeys", data, *force); err != nil {
-				return err
-			}
-
-			regs = append(
-				regs,
-				registration{
-					"database/migrations/registry.go",
-					"All",
-					"m" + data["TS6"] + "CreatePasskeyCredentialsTable()",
-				},
-				registration{"routes/registry.go", "All", "Passkeys"},
-			)
-		}
-
-		// Social sign-in also stops at the code step once 2FA is installed,
-		// whichever of the two came first.
-		if exists(env, filepath.Join("routes", "two_factor.go")) {
-			if err := applyPatches(env, socialTwoFactorPatch); err != nil {
-				return err
-			}
-		}
-
-		if err := finishInstall(ctx, env, regs); err != nil {
-			return err
-		}
-
-		fmt.Fprint(env.Stdout, authInstalled())
-
-		if *twoFactor {
-			fmt.Fprint(env.Stdout, "Two-factor authentication: users turn it on at /user/two-factor.\n\n")
-		}
-
-		if *passkeys {
-			fmt.Fprint(env.Stdout, "Passkeys: JSON endpoints under /user/passkeys and /passkeys/login; the browser\n"+
-				"code is in the vukem docs (authentication.md, Passkeys). APP_URL sets the RP ID and origin.\n\n")
-		}
-
-		return nil
+		return runInstallAuth(ctx, env, authOpts{
+			only:       socialOnlyPassed(set),
+			force:      *force,
+			socialList: *socialList,
+			socialOnly: *socialOnly,
+			twoFactor:  *twoFactor,
+			passkeys:   *passkeys,
+			localeList: *localeList,
+		})
 	}
+}
+
+type authOpts struct {
+	only, force, twoFactor, passkeys   bool
+	socialList, socialOnly, localeList string
+}
+
+func runInstallAuth(ctx context.Context, env *Env, o authOpts) error {
+	list := o.socialList
+	if o.only {
+		list = o.socialOnly
+	}
+
+	providers, err := authProviders(o.only, o.socialList, list, o.twoFactor || o.passkeys)
+	if err != nil {
+		return err
+	}
+
+	data, err := authData(env, o.localeList)
+	if err != nil {
+		return err
+	}
+
+	regs, err := installCore(env, data, o.force)
+	if err != nil {
+		return err
+	}
+
+	more, err := installAuthParts(env, data, providers, o)
+	if err != nil {
+		return err
+	}
+
+	regs = append(regs, more...)
+
+	// Social sign-in also stops at the code step once 2FA is installed,
+	// whichever of the two came first.
+	if exists(env, filepath.Join("routes", "two_factor.go")) {
+		if err := applyPatches(env, socialTwoFactorPatch); err != nil {
+			return err
+		}
+	}
+
+	if err := finishInstall(ctx, env, regs); err != nil {
+		return err
+	}
+
+	fmt.Fprint(env.Stdout, authInstalled())
+
+	if o.twoFactor {
+		fmt.Fprint(env.Stdout, "Two-factor authentication: users turn it on at /user/two-factor.\n\n")
+	}
+
+	if o.passkeys {
+		fmt.Fprint(env.Stdout, "Passkeys: JSON endpoints under /user/passkeys and /passkeys/login; the browser\n"+
+			"code is in the vukem docs (authentication.md, Passkeys). APP_URL sets the RP ID and origin.\n\n")
+	}
+
+	return nil
+}
+
+// authData builds the scaffold data and resolves the message catalogs.
+func authData(env *Env, localeList string) (map[string]string, error) {
+	requested, err := parseLocales(localeList)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := scaffoldData(env)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := resolveLocales(env, requested, data); err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+// installAuthParts installs what the flags ask for on top of the core.
+func installAuthParts(env *Env, data map[string]string, providers []string, o authOpts) ([]registration, error) {
+	// With --social, --2fa or --passkeys on a project that already has
+	// install:auth, add only that part.
+	addOn := len(providers) > 0 || o.twoFactor || o.passkeys
+
+	regs, err := installAuthPages(env, data, o.only, addOn, providers, o.force)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(providers) > 0 {
+		more, err := installSocial(env, data, providers, o.force)
+		if err != nil {
+			return nil, err
+		}
+
+		regs = append(regs, more...)
+	}
+
+	if o.twoFactor {
+		more, err := installTwoFactor(env, data, o.force)
+		if err != nil {
+			return nil, err
+		}
+
+		regs = append(regs, more...)
+	}
+
+	if o.passkeys {
+		more, err := installPasskeys(env, data, o.force)
+		if err != nil {
+			return nil, err
+		}
+
+		regs = append(regs, more...)
+	}
+
+	return regs, nil
+}
+
+// authProviders parses the social provider list and refuses the flag
+// combinations --social-only cannot honor.
+func authProviders(only bool, socialList, list string, extras bool) ([]string, error) {
+	if only && socialList != "" {
+		return nil, usagef("pass --social or --social-only, not both")
+	}
+
+	if only && extras {
+		return nil, usagef("--social-only does not add two-factor or passkeys")
+	}
+
+	providers, err := parseProviders(list)
+	if err != nil {
+		return nil, err
+	}
+
+	if only && len(providers) == 0 {
+		return nil, usagef("--social-only needs a provider, for example google")
+	}
+
+	return providers, nil
+}
+
+// installAuthPages writes the sign-in pages: the social-only set, or the
+// full set unless this is an add-on to a project that already has them.
+func installAuthPages(
+	env *Env, data map[string]string, only, addOn bool, providers []string, force bool,
+) ([]registration, error) {
+	switch {
+	case only:
+		if err := installSocialOnlyPages(env, data, providers, force); err != nil {
+			return nil, err
+		}
+	case !addOn || force || !exists(env, filepath.Join("routes", "auth.go")):
+		for _, name := range authScaffolds(env) {
+			if err := installScaffold(env, name, data, force); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, nil
+	}
+
+	return []registration{{"routes/registry.go", "All", "Auth"}}, nil
+}
+
+func installSocial(env *Env, data map[string]string, providers []string, force bool) ([]registration, error) {
+	quoted := make([]string, len(providers))
+	for i, p := range providers {
+		quoted[i] = strconv.Quote(p)
+	}
+
+	data["Providers"] = strings.Join(quoted, ", ")
+	data["FirstProvider"] = providers[0]
+
+	if err := installScaffold(env, "auth-social", data, force); err != nil {
+		return nil, err
+	}
+
+	if err := appendEnvExample(env, socialEnv(providers)); err != nil {
+		return nil, err
+	}
+
+	return []registration{
+		{"database/migrations/registry.go", "All", "m" + data["TS3"] + "CreateSocialAccountsTable()"},
+		{"routes/registry.go", "All", "Social"},
+	}, nil
+}
+
+func installPasskeys(env *Env, data map[string]string, force bool) ([]registration, error) {
+	if err := installScaffold(env, "auth-passkeys", data, force); err != nil {
+		return nil, err
+	}
+
+	return []registration{
+		{"database/migrations/registry.go", "All", "m" + data["TS6"] + "CreatePasskeyCredentialsTable()"},
+		{"routes/registry.go", "All", "Passkeys"},
+	}, nil
 }
 
 func installAPI(set *flag.FlagSet) func(context.Context, *Env, []string) error {
