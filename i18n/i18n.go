@@ -325,7 +325,7 @@ func (b *Bundle) match(tag string, allow func(string) bool) (string, bool) {
 func (b *Bundle) T(locale, key string, args ...any) string {
 	params := argMap(args)
 
-	m, ok := b.find(locale, key)
+	m, from, ok := b.find(locale, key)
 	if !ok {
 		if b.onMissing != nil {
 			b.onMissing(locale, key)
@@ -334,13 +334,13 @@ func (b *Bundle) T(locale, key string, args ...any) string {
 		return key
 	}
 
-	return interpolate(m.pick(locale, params["count"]), params)
+	return interpolate(m.pick(from, params["count"]), params)
 }
 
 // Lookup returns the raw template of key for locale (with fallback), or
 // false. A plural message returns its "other" form.
 func (b *Bundle) Lookup(locale, key string) (string, bool) {
-	m, ok := b.find(locale, key)
+	m, _, ok := b.find(locale, key)
 	if !ok {
 		return "", false
 	}
@@ -393,17 +393,19 @@ func (b *Bundle) LocalizeIssues(locale string, is z.Issues) z.Issues {
 	})
 }
 
-func (b *Bundle) find(locale, key string) (message, bool) {
+// find returns the message and the locale of the catalog it came from, whose
+// plural rules must pick the form.
+func (b *Bundle) find(locale, key string) (message, string, bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	for _, l := range b.chain(locale) {
 		if m, ok := b.catalogs[l][key]; ok {
-			return m, true
+			return m, l, true
 		}
 	}
 
-	return message{}, false
+	return message{}, "", false
 }
 
 // chain is the lookup order for locale: its truncations, then the
