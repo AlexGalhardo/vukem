@@ -50,7 +50,7 @@ func Auth(r *router.Router, app *vukem.App) error {
 
 	r.Get("/forgot-password", h.ShowForgot).Name("password.request").Use(guest)
 	r.Post("/forgot-password", h.SendResetLink).Name("password.email").Use(guest, mails)
-	r.Get("/reset-password/{token}", h.ShowReset).Name("password.reset").Use(guest)
+	r.Get("/reset-password/{token}", h.ShowReset).Name("password.reset").Use(guest).SecretParams("token")
 	r.Post("/reset-password", h.Reset).Name("password.update").Use(guest)
 
 	r.Get("/email/verify", h.Notice).Name("verification.notice").Use(required)
