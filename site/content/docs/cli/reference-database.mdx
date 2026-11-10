@@ -157,7 +157,9 @@ MIGRATION                                     STATUS   BATCH
 20261024221120_create_comments_table          Pending  
 ```
 
-With `-json` each entry has `id`, `ran`, `batch` and `ran_at` (UTC):
+A migration recorded in the database but absent from the code shows `Ran (missing from code)`. One whose SQL changed after it ran shows `Ran (CHANGED since applied)`.
+
+With `-json` each entry has `id` and `ran`, plus `batch` and `ran_at` (UTC) once it ran, and `changed` or `missing` (both `true`) when they apply:
 
 ```json
 [{"id":"20260101000000_create_posts_table","ran":true,"batch":1,"ran_at":"2026-10-24T22:08:10.2232772Z"}]
@@ -201,7 +203,9 @@ Seeded: TagSeeder
 
 | Message | Exit | Fix |
 | --- | --- | --- |
-| `db:seed: unknown seeder "Nope" (registered: PostsSeeder, TagSeeder)` | 2 | Use a listed name. The match is exact. |
+| `db:seed: unknown seeder "Nope" (registered: PostsSeeder, TagSeeder)` | 2 | Use a listed name. The match ignores case and the `Seeder` suffix (`posts` finds `PostsSeeder`). |
+| `db:seed: seeder name "Posts" is ambiguous (registered: …)` | 2 | Two seeders match; use the full name. |
+| `db:seed: -class needs a seeder name` | 2 | Pass a name after `-class`. |
 | `db:seed: unexpected argument "x" (seeder names go before the flags)` | 2 | Move names before flags. |
 | `refusing to run a destructive command in production without --force` | 1 | Add `-force` on purpose. |
 | `No seeders registered (vukem make:seeder).` | 0 | Create one. |
@@ -253,7 +257,7 @@ vukem db:run -file <path|-> [-commit]
 
 - The whole file runs in one transaction. A failing statement rolls everything back, committed or not, and the command exits with an error.
 - It has no `-force`: the default is a dry run, and `-commit` is the explicit step. The script may not hold `BEGIN`, `COMMIT`, `ROLLBACK` or `START TRANSACTION`. On MySQL it refuses DDL (`ALTER`, `CREATE`, `DROP`, `TRUNCATE`, `RENAME`), which commits implicitly, and it needs `multiStatements=true` in `DATABASE_URL` for more than one statement.
-- It reports only the outcome (`dry run, rolled back` or `committed`), not per-statement counts. Use `psql` when you need the output of each statement.
+- It reports only the outcome, not per-statement counts: `db:run: dry run, rolled back. Pass -commit to apply.` or `db:run: committed.`. A failing script prints `db:run: rolled back: <error>`. An empty script is refused. Use `psql` when you need the output of each statement.
 
 ```bash
 vukem db:run -file fix-users.sql
@@ -284,6 +288,11 @@ Keep the snapshot off the volume that holds the live database. The command does 
 ```bash
 vukem db:backup -to /var/backups/app.sqlite
 vukem db:backup -restore -from /var/backups/app.sqlite -to /tmp/restore/app.sqlite
+```
+
+```text
+db:backup: wrote /var/backups/app.sqlite
+db:backup: restored /tmp/restore/app.sqlite
 ```
 
 ## Troubleshooting
