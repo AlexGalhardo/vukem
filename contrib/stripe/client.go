@@ -503,7 +503,6 @@ func encodeParams(p Params) (string, error) {
 // recursion: each level grows the key, so memory grows quadratically.
 const maxParamDepth = 32
 
-//nolint:gocognit // form encoding of nested values; one case per reflect kind
 func flatten(v url.Values, prefix string, x reflect.Value, depth int) error {
 	if depth > maxParamDepth {
 		return fmt.Errorf("param %q: nested deeper than %d levels", prefix, maxParamDepth)
@@ -529,31 +528,50 @@ func flatten(v url.Values, prefix string, x reflect.Value, depth int) error {
 	case reflect.Pointer:
 		return flatten(v, prefix, x.Elem(), depth+1)
 	case reflect.Map:
-		if x.Type().Key().Kind() != reflect.String {
-			return fmt.Errorf("param %q: unsupported map key type %s", prefix, x.Type().Key())
-		}
-
-		for it := x.MapRange(); it.Next(); {
-			key := it.Key().String()
-			if prefix != "" {
-				key = prefix + "[" + key + "]"
-			}
-
-			if err := flatten(v, key, it.Value(), depth+1); err != nil {
-				return err
-			}
-		}
+		return flattenMap(v, prefix, x, depth)
 	case reflect.Slice, reflect.Array:
-		if x.Kind() == reflect.Slice && x.Type().Elem().Kind() == reflect.Uint8 {
-			v.Set(prefix, string(x.Bytes()))
-			return nil
+		return flattenList(v, prefix, x, depth)
+	default:
+		return flattenScalar(v, prefix, x)
+	}
+}
+
+func flattenMap(v url.Values, prefix string, x reflect.Value, depth int) error {
+	if x.Type().Key().Kind() != reflect.String {
+		return fmt.Errorf("param %q: unsupported map key type %s", prefix, x.Type().Key())
+	}
+
+	for it := x.MapRange(); it.Next(); {
+		key := it.Key().String()
+		if prefix != "" {
+			key = prefix + "[" + key + "]"
 		}
 
-		for i := range x.Len() {
-			if err := flatten(v, prefix+"["+strconv.Itoa(i)+"]", x.Index(i), depth+1); err != nil {
-				return err
-			}
+		if err := flatten(v, key, it.Value(), depth+1); err != nil {
+			return err
 		}
+	}
+
+	return nil
+}
+
+func flattenList(v url.Values, prefix string, x reflect.Value, depth int) error {
+	if x.Kind() == reflect.Slice && x.Type().Elem().Kind() == reflect.Uint8 {
+		v.Set(prefix, string(x.Bytes()))
+		return nil
+	}
+
+	for i := range x.Len() {
+		if err := flatten(v, prefix+"["+strconv.Itoa(i)+"]", x.Index(i), depth+1); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func flattenScalar(v url.Values, prefix string, x reflect.Value) error {
+	switch x.Kind() {
 	case reflect.String:
 		v.Set(prefix, x.String())
 	case reflect.Bool:
