@@ -868,3 +868,55 @@ func TestMessagesSingular(t *testing.T) {
 		})
 	}
 }
+
+func TestMultipleOf_Exactness(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		ok   func() error
+		want bool
+	}{
+		{
+			"0.07 of 0.01",
+			func() error { _, err := Float().MultipleOf(0.01).Parse(json.Number("0.07")); return err },
+			true,
+		},
+		{
+			"1.1 of 0.01",
+			func() error { _, err := Float().MultipleOf(0.01).Parse(json.Number("1.1")); return err },
+			true,
+		},
+		{
+			"0.3 of 0.01",
+			func() error { _, err := Float().MultipleOf(0.01).Parse(json.Number("0.3")); return err },
+			true,
+		},
+		{
+			"0.075 of 0.01",
+			func() error { _, err := Float().MultipleOf(0.01).Parse(json.Number("0.075")); return err },
+			false,
+		},
+		{"0.3 of 0.1", func() error { _, err := Float().MultipleOf(0.1).Parse(json.Number("0.3")); return err }, true},
+		{
+			"2^53+1 of 2",
+			func() error { _, err := Int64().MultipleOf(2).Parse(json.Number("9007199254740993")); return err },
+			false,
+		},
+		{
+			"2^53+2 of 2",
+			func() error { _, err := Int64().MultipleOf(2).Parse(json.Number("9007199254740994")); return err },
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := tt.ok(); (err == nil) != tt.want {
+				t.Fatalf("err = %v, want accepted=%v", err, tt.want)
+			}
+		})
+	}
+}
