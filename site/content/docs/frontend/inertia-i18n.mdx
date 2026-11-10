@@ -279,8 +279,15 @@ To **remember** the choice, set the `lang` cookie (or the session value `locale`
 
 ```go title="routes/web.go"
 r.Post("/locale", func(c *web.Ctx) error {
+	// Inertia posts JSON, which FormValue does not read; Input reads JSON and forms.
+	in, err := c.Input()
+	if err != nil {
+		return err
+	}
+
 	// Only locales that have a catalog match.
-	l, ok := app.I18n.Match(c.FormValue("locale"))
+	loc, _ := in["locale"].(string)
+	l, ok := app.I18n.Match(loc)
 	if !ok {
 		return errs.ErrNotFound
 	}

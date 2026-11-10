@@ -149,6 +149,13 @@ var (
 	ErrProvider = &errs.HTTPError{
 		Status: http.StatusBadRequest, Message: "Sign-in failed. Please try again.", Key: "social.failed",
 	}
+	// ErrNotAllowed is returned when [Social.Allow] refuses the user; the
+	// refusal reason is never shown.
+	ErrNotAllowed = &errs.HTTPError{
+		Status:  http.StatusForbidden,
+		Message: "This account is not allowed to sign in here.",
+		Key:     "social.not_allowed",
+	}
 )
 
 // Social is the set of configured providers.
@@ -171,7 +178,13 @@ type Social struct {
 	// (CACHE_MAX_ENTRIES) and evicts entries, and an evicted state can be
 	// replayed until its cookie expires.
 	States cache.Store
-	now    func() time.Time
+	// Allow, when set, runs on every signed-in provider user before User or
+	// UserFromToken returns it, so the app looks up or creates no account
+	// for a refused user. A non-nil error refuses the sign-in with
+	// [ErrNotAllowed]. Nil admits everyone (private apps: check
+	// u.EmailVerified and an allowlist of emails or provider ids).
+	Allow func(ctx context.Context, u User) error
+	now   func() time.Time
 
 	mu   sync.Mutex
 	used map[string]int64 // consumed states when States is nil
@@ -363,7 +376,20 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 		u.Name = postedName(param("user"))
 	}
 
+	if err := s.allow(c.Context(), u); err != nil {
+		web.SecurityEvent(c.Request(), "social.not_allowed", "provider", provider)
+		return User{}, err
+	}
+
 	return u, nil
+}
+
+func (s *Social) allow(ctx context.Context, u User) error {
+	if s.Allow == nil || s.Allow(ctx, u) == nil {
+		return nil
+	}
+
+	return ErrNotAllowed
 }
 
 // errorCode keeps an RFC 6749 error code loggable: at most 64 characters
@@ -422,6 +448,10 @@ func (s *Social) UserFromToken(ctx context.Context, provider, accessToken string
 	}
 
 	u.Provider, u.Token = provider, Token{Access: accessToken}
+
+	if err := s.allow(ctx, u); err != nil {
+		return User{}, err
+	}
 
 	return u, nil
 }

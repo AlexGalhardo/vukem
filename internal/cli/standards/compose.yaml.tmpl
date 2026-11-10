@@ -24,7 +24,8 @@ services:
       # The catcher speaks plain SMTP on a private network, not STARTTLS.
       SMTP_INSECURE: "true"
       MAIL_FROM: {{.Name}} <hello@localhost>
-    ports: ["3000:3000"]
+    # Ports bind to 127.0.0.1 so the database and mail catcher stay off the network; drop the prefix to expose one on purpose.
+    ports: ["127.0.0.1:3000:3000"]
     volumes: ["storage:/app/storage"]
 {{- if .Database}}
     # Apply the migrations, then hand the container to the server with exec,
@@ -53,7 +54,7 @@ services:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
       POSTGRES_DB: app
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     # PostgreSQL 18 images want the mount one level above the data directory,
     # so pg_upgrade can move between major versions inside it.
     volumes: ["postgres:/var/lib/postgresql"]
@@ -68,7 +69,7 @@ services:
   mailpit:
     image: axllent/mailpit:v1.31.6
     # Only the web inbox is published; SMTP stays on the private network.
-    ports: ["8025:8025"]
+    ports: ["127.0.0.1:8025:8025"]
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: "1"
       MP_SMTP_AUTH_ALLOW_INSECURE: "1"

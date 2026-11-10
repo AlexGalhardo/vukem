@@ -284,6 +284,45 @@ func Verified(guard Checker) func(http.Handler) http.Handler {
 	}
 }
 
+// Allow ends the session of a signed-in user that allowed refuses and
+// answers 403, so a rule added later (a private app's owner allowlist)
+// also reaches accounts created before it. Place it after Required; it
+// logs out like [SessionGuard.Logout].
+func Allow[U Authenticatable](guard *SessionGuard[U], allowed func(U) bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c := ctxOf(w, r)
+
+			u, err := guard.User(c)
+			if err != nil {
+				// A failing user lookup is not a sign-out, so only a guest gets 401.
+				if errors.Is(err, ErrUnauthenticated) {
+					fail(c, false, ErrUnauthenticated)
+				} else {
+					c.HandleError(err)
+				}
+				return
+			}
+
+			if allowed(u) {
+				next.ServeHTTP(w, c.Request())
+				return
+			}
+
+			web.SecurityEvent(c.Request(), "auth.not_allowed", "guard", guard.Name())
+
+			if err := guard.Logout(c); err != nil {
+				c.HandleError(err)
+				return
+			}
+
+			c.HandleError(errs.NewKey(
+				http.StatusForbidden, "auth.not_allowed", "This account is not allowed to use this application.", nil,
+			))
+		})
+	}
+}
+
 // Ability requires the request's access token (from guard) to grant every
 // ability; 403 otherwise (problem+json when guard is an [APIGuard] or the
 // route is under [ProblemJSON]). Place it after Required.

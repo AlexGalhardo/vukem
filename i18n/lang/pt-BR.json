@@ -3,13 +3,15 @@
     "failed": "Essas credenciais não correspondem aos nossos registros.",
     "unauthenticated": "Não autenticado.",
     "unverified": "Seu endereço de e-mail não foi verificado.",
-    "token_ability": "Este token não tem permissão para {ability}."
+    "token_ability": "Este token não tem permissão para {ability}.",
+    "not_allowed": "Esta conta não tem permissão para usar este aplicativo."
   },
   "social": {
     "unknown_provider": "Provedor de login desconhecido.",
     "state": "A tentativa de login expirou ou é inválida. Tente novamente.",
     "denied": "O login foi cancelado.",
-    "failed": "Não foi possível entrar. Tente novamente."
+    "failed": "Não foi possível entrar. Tente novamente.",
+    "not_allowed": "Esta conta não pode entrar aqui."
   },
   "validation": {
     "unique": "O campo {field} já está em uso.",
