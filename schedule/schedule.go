@@ -153,6 +153,8 @@ func (t *Task) Every(d time.Duration) *Task {
 		panic(fmt.Sprintf("schedule: Every(%s) needs whole minutes", d))
 	case m < 60 && 60%m == 0:
 		return t.Cron("*/" + strconv.Itoa(m) + " * * * *")
+	case m == 24*60:
+		return t.Cron("0 0 * * *")
 	case m%60 == 0 && 24%(m/60) == 0:
 		return t.Cron("0 */" + strconv.Itoa(m/60) + " * * *")
 	default:
