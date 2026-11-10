@@ -15,9 +15,11 @@ interface Props {
   canonical?: string;
   /** Shows the reading progress bar at the top of the page. */
   progress?: boolean;
+  /** Keeps the page out of search indexes and omits the canonical link. */
+  noindex?: boolean;
 }
 
-const { title, description = "Vukem is a web framework built on net/http for REST APIs and full-stack apps.", canonical, progress = false } = Astro.props;
+const { title, description = "Vukem is a web framework built on net/http for REST APIs and full-stack apps.", canonical, progress = false, noindex = false } = Astro.props;
 const fullTitle = title.includes(site.name) ? title : `${title} — ${site.name}`;
 const groupsByVersion = getNavGroupsByVersion();
 ---
@@ -31,7 +33,7 @@ const groupsByVersion = getNavGroupsByVersion();
     <meta name="description" content={description} />
     <meta name="application-name" content={site.name} />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="canonical" href={new URL(withTrailingSlash(canonical ?? Astro.url.pathname), site.url).href} />
+    {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={new URL(withTrailingSlash(canonical ?? Astro.url.pathname), site.url).href} />}
     <meta property="og:site_name" content={site.name} />
     <meta property="og:type" content="website" />
     <meta property="og:title" content={title} />
