@@ -143,20 +143,40 @@ func requestError(code, msg string) *Error {
 	return &Error{Message: msg, Extensions: map[string]any{"code": code}}
 }
 
-// resolve fills req.Query from the store or registers it. It fails
-// closed: a store error rejects the request.
-func (p *PersistedQueries) resolve(ctx context.Context, req *Request) *Error {
+// commitFunc stores a verified document; resolve returns it for the caller
+// to run once the document has parsed and validated.
+type commitFunc func(ctx context.Context) error
+
+// register runs commit (nil is a no-op) and maps a store failure to a
+// masked request error.
+func register(ctx context.Context, commit commitFunc) *Error {
+	if commit == nil {
+		return nil
+	}
+
+	if err := commit(ctx); err != nil {
+		return requestError(CodeInternal, internalMessage)
+	}
+
+	return nil
+}
+
+// resolve fills req.Query from the store. A document sent with its hash is
+// verified but not stored: the returned commit does that, and the caller
+// must invoke it only after the document validates. It fails closed: a
+// store error rejects the request.
+func (p *PersistedQueries) resolve(ctx context.Context, req *Request) (commitFunc, *Error) {
 	hash, has, perr := persistedHash(req.Extensions)
 	if perr != nil {
-		return perr
+		return nil, perr
 	}
 
 	if p == nil {
 		if has {
-			return requestError(CodePersistedNotSupported, "PersistedQueryNotSupported")
+			return nil, requestError(CodePersistedNotSupported, "PersistedQueryNotSupported")
 		}
 
-		return nil
+		return nil, nil
 	}
 
 	store := p.Store
@@ -165,35 +185,34 @@ func (p *PersistedQueries) resolve(ctx context.Context, req *Request) *Error {
 	case has && req.Query == "":
 		q, ok, err := store.Get(ctx, hash)
 		if err != nil {
-			return requestError(CodeInternal, internalMessage)
+			return nil, requestError(CodeInternal, internalMessage)
 		}
 
 		if !ok {
 			if p.AllowlistOnly {
-				return requestError(CodePersistedRequired, "This persisted query is not in the allowlist.")
+				return nil, requestError(CodePersistedRequired, "This persisted query is not in the allowlist.")
 			}
 
-			return requestError(CodePersistedNotFound, "PersistedQueryNotFound")
+			return nil, requestError(CodePersistedNotFound, "PersistedQueryNotFound")
 		}
 
 		req.Query = q
 	case has:
 		if Hash(req.Query) != hash {
-			return requestError(CodeBadRequest, "provided sha does not match query")
+			return nil, requestError(CodeBadRequest, "provided sha does not match query")
 		}
 
 		if p.AllowlistOnly {
-			return p.allowed(ctx, hash)
+			return nil, p.allowed(ctx, hash)
 		}
 
-		if err := store.Put(ctx, hash, req.Query); err != nil {
-			return requestError(CodeInternal, internalMessage)
-		}
+		query := req.Query
+		return func(ctx context.Context) error { return store.Put(ctx, hash, query) }, nil
 	case p.AllowlistOnly:
-		return p.allowed(ctx, Hash(req.Query))
+		return nil, p.allowed(ctx, Hash(req.Query))
 	}
 
-	return nil
+	return nil, nil
 }
 
 func (p *PersistedQueries) allowed(ctx context.Context, hash string) *Error {

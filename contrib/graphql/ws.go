@@ -345,7 +345,8 @@ func (w *wsSession[C]) run(ctx context.Context, id string, op *wsOp, req Request
 		}
 	}
 
-	if gerr := w.cfg.Persisted.resolve(ctx, &req); gerr != nil {
+	commit, gerr := w.cfg.Persisted.resolve(ctx, &req)
+	if gerr != nil {
 		if release() {
 			w.sendErrors(id, []*Error{gerr})
 		}
@@ -357,6 +358,14 @@ func (w *wsSession[C]) run(ctx context.Context, id string, op *wsOp, req Request
 	if errs != nil {
 		if release() {
 			w.sendErrors(id, errs)
+		}
+
+		return
+	}
+
+	if gerr := register(ctx, commit); gerr != nil {
+		if release() {
+			w.sendErrors(id, []*Error{gerr})
 		}
 
 		return

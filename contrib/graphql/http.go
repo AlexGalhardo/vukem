@@ -114,7 +114,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if gerr := h.cfg.Persisted.resolve(r.Context(), &req); gerr != nil {
+	commit, gerr := h.cfg.Persisted.resolve(r.Context(), &req)
+	if gerr != nil {
 		writeResult(w, media, requestStatus(media), &Response{Errors: []*Error{gerr}})
 		return
 	}
@@ -133,6 +134,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if errs != nil {
 		writeResult(w, media, requestStatus(media), &Response{Errors: errs})
 		return
+	}
+
+	// GET only reads: a cross-site request must not write to the store.
+	if r.Method == http.MethodPost {
+		if gerr := register(r.Context(), commit); gerr != nil {
+			writeResult(w, media, requestStatus(media), &Response{Errors: []*Error{gerr}})
+			return
+		}
 	}
 
 	if r.Method == http.MethodGet && p.op.kind != opQuery {
