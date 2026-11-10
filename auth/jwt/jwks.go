@@ -190,7 +190,7 @@ func (r *RemoteJWKS) Key(ctx context.Context, kid string) (Key, error) {
 	select {
 	case <-f.done:
 	case <-ctx.Done():
-		return Key{}, ctx.Err()
+		return Key{}, fmt.Errorf("%w: %w", ErrKeysUnavailable, ctx.Err())
 	}
 
 	if f.err != nil {
@@ -230,7 +230,7 @@ func (r *RemoteJWKS) startFetch(ctx context.Context, at time.Time) *jwksFetch {
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 
-		keys, err := r.fetch(fctx)
+		keys, err := r.safeFetch(fctx)
 
 		r.mu.Lock()
 		if err == nil {
@@ -257,6 +257,19 @@ func (r *RemoteJWKS) lookup(kid string) (Key, bool) {
 	k, ok := r.keys[kid]
 
 	return k, ok
+}
+
+// safeFetch turns a panic (say, in a custom Client.Transport) into an
+// error: the fetch runs on its own goroutine, where nothing else recovers
+// it, and the waiters must still be released.
+func (r *RemoteJWKS) safeFetch(ctx context.Context) (keys map[string]Key, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("jwt: fetch JWKS panicked: %v", p)
+		}
+	}()
+
+	return r.fetch(ctx)
 }
 
 func (r *RemoteJWKS) fetch(ctx context.Context) (map[string]Key, error) {

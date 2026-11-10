@@ -394,3 +394,43 @@ func TestRemoteJWKSCallerCancelDoesNotAbortRefresh(t *testing.T) {
 		t.Errorf("provider calls = %d, want 1 (the refresh survives the caller)", got)
 	}
 }
+
+type panicTransport struct{}
+
+func (panicTransport) RoundTrip(*http.Request) (*http.Response, error) { panic("transport bug") }
+
+func TestRemoteJWKSFetchPanicIsAnError(t *testing.T) {
+	t.Parallel()
+
+	clock := now
+	remote := &jwt.RemoteJWKS{
+		URL:    "https://idp.test/jwks",
+		Client: &http.Client{Transport: panicTransport{}},
+		Now:    func() time.Time { return clock },
+	}
+
+	for range 2 { // the second call proves the failed fetch was cleared
+		res := await(t, keyAsync(t.Context(), remote, "k"), "fetch that panicked")
+		if !errors.Is(res.err, jwt.ErrKeysUnavailable) {
+			t.Errorf("Key(k) with a panicking transport = %v, want ErrKeysUnavailable", res.err)
+		}
+
+		clock = clock.Add(time.Minute)
+	}
+}
+
+func TestRemoteJWKSCancelledCallerIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	srv := newGatedJWKS(t, true, 0)
+	remote := &jwt.RemoteJWKS{URL: srv.URL, Now: func() time.Time { return now }}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	res := keyAsync(ctx, remote, "k")
+	<-srv.started
+	cancel()
+
+	if got := await(t, res, "cancelled caller"); !errors.Is(got.err, jwt.ErrKeysUnavailable) {
+		t.Errorf("Key(k) with a cancelled context = %v, want ErrKeysUnavailable (503, not 401)", got.err)
+	}
+}
