@@ -176,7 +176,7 @@ Every string schema also rejects invalid UTF-8 and control characters other than
 | `z.Float()`, `z.Float32()` | `float64`, `float32` |
 | `z.NumberOf[T]()` | Any numeric type, including your own (`type Cents int64`) |
 
-Rules: `Min(n)`, `Max(n)`, `Positive()` (greater than 0), `NonNegative()` (0 or more), `MultipleOf(m)` (code `not_multiple_of`) and `Transform(fn)`. Integer schemas reject fractions (`3.5`) and values that do not fit the type (`300` for an 8-bit integer); float schemas reject `NaN` and infinity. Both report `invalid_type`, with "must be an integer" or "must be a number".
+Rules: `Min(n)`, `Max(n)`, `Positive()` (greater than 0), `NonNegative()` (0 or more), `MultipleOf(m)` (code `not_multiple_of`; exact for integers, and for floats a quotient check with a relative tolerance of 1e-9, so `Float().MultipleOf(0.01)` accepts `0.07`) and `Transform(fn)`. Integer schemas reject fractions (`3.5`) and values that do not fit the type (`300` for an 8-bit integer); float schemas reject `NaN` and infinity. Both report `invalid_type`, with "must be an integer" or "must be a number".
 
 ### Booleans, times and enums
 
@@ -423,6 +423,8 @@ if _, err := z.ParseJSON(resp.Body, upstreamSchema); err != nil {
 	return errs.Wrap(http.StatusInternalServerError, err)
 }
 ```
+
+The same holds for an `*errs.ValidationError` you wrap with a 5xx status: the response carries no field errors and a form post is not redirected back.
 
 ## Errors in detail
 

@@ -255,6 +255,8 @@ A request is a **JSON client** when its `Accept` header mentions `json` and not 
 | Validation error | "Validation failed" | "2 field(s) are invalid." |
 | Any 5xx | Status text | empty, unless `APP_DEBUG=true` (then the error text) |
 
+A 5xx that wraps a validation error is a server fault: it sends no `errors` map and a form post is not redirected back.
+
 A `detail` equal to the `title` is dropped. HTML responses carry `Cache-Control: no-store`.
 
 ```json title="409 problem+json"

@@ -139,13 +139,13 @@ For each request the middleware checks, in order, and hands the request to the n
 4. Is the cleaned path valid for [`fs.ValidPath`](https://pkg.go.dev/io/fs#ValidPath)?
 5. Does a **file** exist at that path? A directory is not a file, so `/` and `/css/` go to your routes.
 
-Only then does it set `Cache-Control` and hand the request to [`http.FileServerFS`](https://pkg.go.dev/net/http#FileServerFS), which:
+Only then does it set `Cache-Control` and serve the file with [`http.ServeFileFS`](https://pkg.go.dev/net/http#ServeFileFS), which:
 
 - picks the `Content-Type` from the extension (or by sniffing the content);
 - answers `Range` requests with `206 Partial Content` (video seeking, resumed downloads);
 - sends `Last-Modified` and answers `If-Modified-Since` with `304 Not Modified` when the file has a modification time.
 
-Directory listings are never shown and `index.html` is never served for a folder. A request for a path ending in `/index.html` gets a `301` redirect to the folder (a `net/http` rule), and the folder then goes to your routes. Give your home page a route instead.
+Directory listings are never shown and a folder is never answered with its `index.html`: `GET /docs/` goes to your routes. A request that names the file itself, such as `GET /docs/index.html`, is served like any other file (it is not redirected to the folder). Give your home page a route instead.
 
 ## Caching
 
@@ -257,7 +257,7 @@ r.Use(middleware.StaticFS(resources.Public(), middleware.StaticConfig{}))
 r.UseServer(middleware.StaticFS(resources.Public(), middleware.StaticConfig{}))
 ```
 
-**Expecting `index.html` for a folder.** `GET /docs/` goes to your routes, and `GET /docs/index.html` redirects to `/docs/`. Add a route that renders the page.
+**Expecting `index.html` for a folder.** `GET /docs/` goes to your routes, while `GET /docs/index.html` serves the file. Add a route that renders the page.
 
 **A prefix with the default immutable prefix.** With `Prefix: "/assets"`, `/assets/build/app.js` does not start with `/build/`. Set `ImmutablePrefixes: []string{"/assets/build/"}`.
 

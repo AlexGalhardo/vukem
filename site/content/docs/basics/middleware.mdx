@@ -290,6 +290,7 @@ All of them live in `github.com/AlexGalhardo/vukem/middleware`.
 | `MethodOverride()` | server | `PUT`, `PATCH`, `DELETE` from HTML forms |
 | `CORS(cfg)` | server | Cross-origin requests, deny by default |
 | `Static(root, cfg)`, `StaticFS(fsys, cfg)` | server | Serves files; see [Static files](/docs/basics/static-files) |
+| `NoIndex()` | server | Sends `X-Robots-Tag: noindex, nofollow` (a staging site; `NOINDEX=true` in the default stacks) |
 | `Gzip()` | any | Compresses text responses |
 | `Timeout(d)` | any | A deadline on the request context |
 | `BodyLimit(n)` | router, group, route | Caps the request body size |
@@ -416,7 +417,7 @@ What happens on each request:
 - the response already has a `Content-Encoding`, or its status is 1xx, 204, 206 or 304;
 - the content type is not text-like (only `text/*` and types containing `json`, `javascript`, `xml` or `svg` are compressed), or it is `text/event-stream`.
 
-It supports flushing and hijacking, so streaming responses and WebSocket upgrades keep working. Images and archives are already compressed; compressing them again wastes CPU.
+It supports flushing and hijacking, so streaming responses and WebSocket upgrades keep working. A handler that calls `Flush` before its first write sends the headers with status `200`, as `net/http` does. Images and archives are already compressed; compressing them again wastes CPU.
 
 New browser apps (`vukem new`, with or without `-inertia` or `-templ`) register it as server middleware before the static files, so a deploy without a compressing proxy still ships compressed JS and HTML:
 

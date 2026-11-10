@@ -221,6 +221,18 @@ Rules that come from ServeMux:
 
 `c.Param` returns `""` for a name the pattern does not have. To validate several parameters with a schema, use `web.ParseParams` (see [Requests](/docs/basics/requests#typed-input)).
 
+### Secret parameters
+
+Request logs, error logs and security events record the request path. When a parameter carries a secret, such as a password reset token, mark it on the route and the logs (and the [dev dashboard](/docs/digging-deeper/devtools)) show `{token}` instead of the value:
+
+```go title="routes/auth.go"
+r.Get("/reset-password/{token}", h.ShowReset).
+	Name("password.reset").
+	SecretParams("token")
+```
+
+The `install:auth` scaffold does this for its reset route. The value still reaches `c.Param("token")` unchanged.
+
 ## Named routes and URL generation
 
 Typing `"/posts/" + id` everywhere breaks the day you rename the path. Give the route a name instead and ask the router for its URL:
