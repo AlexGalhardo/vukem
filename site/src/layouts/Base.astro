@@ -65,7 +65,7 @@ const groupsByVersion = getNavGroupsByVersion();
       Skip to content
     </a>
     {progress ? (
-      <div aria-hidden="true" class="pointer-events-none fixed inset-x-0 top-0 z-[60] h-[3px]">
+      <div aria-hidden="true" class="pointer-events-none fixed inset-x-0 top-0 z-[60] h-1">
         <div id="read-progress" class="h-full origin-left bg-brand" style="transform: scaleX(0)"></div>
       </div>
     ) : null}
@@ -137,7 +137,6 @@ const groupsByVersion = getNavGroupsByVersion();
         .map((link) => document.getElementById((link.getAttribute("href") ?? "").slice(1)))
         .filter((el): el is HTMLElement => el !== null);
       if (headings.length > 0) {
-        const visible = new Map<string, boolean>();
         const mark = (id: string) => {
           for (const link of tocLinks) {
             const on = link.getAttribute("href") === `#${id}`;
@@ -149,20 +148,24 @@ const groupsByVersion = getNavGroupsByVersion();
             else link.removeAttribute("aria-current");
           }
         };
-        const observer = new IntersectionObserver(
-          (entries) => {
-            for (const entry of entries) visible.set(entry.target.id, entry.isIntersecting);
-            const first = headings.find((el) => visible.get(el.id));
-            if (first) {
-              mark(first.id);
-              return;
-            }
-            const above = headings.filter((el) => el.getBoundingClientRect().top < 120);
-            mark((above.at(-1) ?? headings[0]).id);
-          },
-          { rootMargin: "-64px 0px -65% 0px", threshold: [0, 1] },
-        );
-        for (const el of headings) observer.observe(el);
+        // The active section is the last heading that has scrolled past the top band. Computed
+        // on scroll (once per frame) rather than with an IntersectionObserver, which kept stale
+        // state when a fast scroll skipped long sections such as the changelog's releases.
+        let queued = false;
+        const spy = () => {
+          queued = false;
+          const atEnd = window.scrollY >= document.documentElement.scrollHeight - window.innerHeight - 2;
+          const above = headings.filter((el) => el.getBoundingClientRect().top < 120);
+          mark((atEnd ? headings.at(-1) : (above.at(-1) ?? headings[0])).id);
+        };
+        const schedule = () => {
+          if (queued) return;
+          queued = true;
+          requestAnimationFrame(spy);
+        };
+        window.addEventListener("scroll", schedule, { passive: true });
+        window.addEventListener("resize", schedule);
+        spy();
       }
     </script>
   </body>
