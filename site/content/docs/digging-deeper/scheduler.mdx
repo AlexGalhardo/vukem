@@ -131,6 +131,7 @@ Every helper replaces the task's expression with a fixed one. A task without any
 | `EveryFiveMinutes()` | `*/5 * * * *` | |
 | `Every(15 * time.Minute)` | `*/15 * * * *` | see the rules below |
 | `Every(2 * time.Hour)` | `0 */2 * * *` | |
+| `Every(24 * time.Hour)` | `0 0 * * *` | same as `Daily()` |
 | `Hourly()` | `0 * * * *` | |
 | `HourlyAt(7)` | `7 * * * *` | minute 0–59, else panics |
 | `Daily()` | `0 0 * * *` | midnight |
@@ -163,7 +164,7 @@ An expression has five fields separated by spaces:
 
 Each field accepts `*` (every value), a value (`5`), a range (`1-5`), a step (`*/15`, `10-50/20`, `5/15` meaning 5, 20, 35, 50), and lists of those (`1,15,30`). Names are case-insensitive. Macros replace the whole expression: `@hourly`, `@daily` (and `@midnight`), `@weekly` (Sunday 00:00), `@monthly`, `@yearly` (and `@annually`).
 
-When **both** day fields are restricted, a day matches if **either** matches, as in [Vixie cron](https://man7.org/linux/man-pages/man5/crontab.5.html): `0 9 1 * MON` runs on the 1st of the month **and** on every Monday.
+When **both** day fields are restricted, a day matches if **either** matches, as in [Vixie cron](https://man7.org/linux/man-pages/man5/crontab.5.html): `0 9 1 * MON` runs on the 1st of the month **and** on every Monday. When a day field **starts with `*`**, such as `*/2`, the two day fields combine with **AND** instead, again as in Vixie cron: `0 0 */2 * 1` runs on odd days that are Mondays.
 
 A bad expression in `Cron(expr)` panics at boot with `schedule.ErrCron` in the message, for example `schedule: invalid cron expression "61 * * * *": field 1: 61 out of range 0-59`. The parser is fuzz-tested. `schedule.ParseCron(expr)` returns the error instead of panicking, and a `schedule.Cron` has `Matches(t)` and `Next(t)` (the first run strictly after `t`, or the zero time if none comes within five years).
 
@@ -183,7 +184,7 @@ s.Job(jobs.SendSalesReport{}).DailyAt("08:00").In(saoPaulo)
 
 Zone names come from the [IANA time zone database](https://www.iana.org/time-zones), loaded with [`time.LoadLocation`](https://pkg.go.dev/time#LoadLocation). Vukem embeds that database ([`time/tzdata`](https://pkg.go.dev/time/tzdata)), so names work on Windows hosts and slim containers that have none. A bad `SCHEDULE_TIMEZONE` fails with `vukem: SCHEDULE_TIMEZONE: unknown time zone ...`.
 
-Daylight-saving changes follow the wall clock: a task at a local time that is skipped when clocks jump forward does not run that day, and a task at a local time that happens twice when clocks go back runs twice.
+A task with a fixed hour (such as `30 1 * * *`) runs exactly **once** on a daylight-saving day. When the clocks go back and its time happens twice, only the first pass runs it. When the clocks jump forward over its time, it runs at the first minute after the jump. A task with a wildcard hour (`*/15 * * * *`, `0 * * * *`) follows real time and keeps its rhythm across the change.
 
 ## Commands and queue jobs as tasks
 
