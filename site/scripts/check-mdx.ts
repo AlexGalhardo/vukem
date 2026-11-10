@@ -11,6 +11,7 @@ import path from "node:path";
 import { compile } from "@mdx-js/mdx";
 import matter from "gray-matter";
 import { rehypePlugins, remarkPlugins } from "../lib/mdx-plugins.ts";
+import { checkFragment, pageAnchors } from "./link-anchors.ts";
 import { navigation } from "../content/navigation.ts";
 import { navigation as navigationV0_20 } from "../content/versions/0.20/navigation.ts";
 
@@ -44,14 +45,15 @@ function registeredComponents(): Set<string> {
   return new Set(names.filter((n): n is string => Boolean(n)));
 }
 
-/** Every page URL of a version whose file exists, e.g. /docs/basics/routing. */
-function pageHrefs(v: Snapshot): Set<string> {
-  const hrefs = new Set<string>([v.prefix ? `/docs/${v.prefix}` : "/docs"]);
+/** Every page URL of a version mapped to its file (undefined for the index), e.g. /docs/basics/routing. */
+function pageHrefs(v: Snapshot): Map<string, string | undefined> {
+  const hrefs = new Map<string, string | undefined>([[v.prefix ? `/docs/${v.prefix}` : "/docs", undefined]]);
   for (const cat of v.nav) {
     for (const page of cat.pages) {
-      if (!fs.existsSync(path.join(contentDir, v.contentDir, cat.dir, `${page}.mdx`))) continue;
+      const pageFile = path.join(contentDir, v.contentDir, cat.dir, `${page}.mdx`);
+      if (!fs.existsSync(pageFile)) continue;
       const segs = [v.prefix, cat.prefix ?? cat.dir, page].filter((s) => s !== "");
-      hrefs.add(`/docs/${segs.join("/")}`);
+      hrefs.set(`/docs/${segs.join("/")}`, pageFile);
     }
   }
   return hrefs;
@@ -102,15 +104,17 @@ function collect(found: Found) {
   };
 }
 
-function checkLink(href: string, valid: Set<string>, v: Snapshot): string | undefined {
+function checkLink(href: string, valid: Map<string, string | undefined>, v: Snapshot): string | undefined {
   let p = href.split(/[?#]/)[0].replace(/\/$/, "");
   if (p !== "/docs" && !p.startsWith("/docs/")) return undefined;
   // Snapshot pages link with current-layout URLs; lib/versions.ts moves them into the snapshot.
   if (v.prefix && !p.startsWith(`/docs/${v.prefix}/`) && p !== `/docs/${v.prefix}`) p = p === "/docs" ? `/docs/${v.prefix}` : `/docs/${v.prefix}${p.slice("/docs".length)}`;
-  return valid.has(p) ? undefined : `internal link ${href} has no page (see content/navigation.ts)`;
+  if (!valid.has(p)) return `internal link ${href} has no page (see content/navigation.ts)`;
+  const target = valid.get(p);
+  return target ? checkFragment(href, pageAnchors(matter(fs.readFileSync(target, "utf8")).content)) : undefined;
 }
 
-async function checkFile(file: string, components: Set<string>, hrefs: Map<Snapshot, Set<string>>): Promise<void> {
+async function checkFile(file: string, components: Set<string>, hrefs: Map<Snapshot, Map<string, string | undefined>>): Promise<void> {
   const raw = fs.readFileSync(file, "utf8");
   const { content } = matter(raw);
   const offset = raw.slice(0, raw.length - content.length).split("\n").length - 1;
@@ -142,7 +146,7 @@ async function checkFile(file: string, components: Set<string>, hrefs: Map<Snaps
   }
   const v = versionOf(file);
   for (const l of found.links) {
-    const msg = checkLink(l.href, hrefs.get(v) ?? new Set(), v);
+    const msg = checkLink(l.href, hrefs.get(v) ?? new Map(), v);
     if (msg) errors.push({ file: name, line: l.line + offset, message: msg });
   }
   // Frozen snapshots are not rewritten, so their long lines are not reported.
