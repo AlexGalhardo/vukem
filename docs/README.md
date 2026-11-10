@@ -36,3 +36,5 @@ Two sources, one owner per kind of content: `docs/` is canonical for contracts a
 | Documentation site | [site.md](site.md) |
 | Design decisions | [brainstorming.md](brainstorming.md) |
 | Research behind the design | [golang-web-search.md](golang-web-search.md) |
+| Security audit (2026-11-07) | [security-audit-2026-11-07.md](security-audit-2026-11-07.md) |
+| World-class documentation site workflow | [world-class-api-documentation-site-workflow.md](world-class-api-documentation-site-workflow.md) |
