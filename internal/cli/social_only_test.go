@@ -104,3 +104,50 @@ func TestInstallAuthSocialOnlySkipsPasswordPages(t *testing.T) {
 	requireNoFile(t, dir, "resources/views/auth/forgot-password.html")
 	requireNoFile(t, dir, "resources/views/auth/reset-password.html")
 }
+
+func TestInstallAuthRefusesBeforeWriting(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		files map[string]string
+		args  []string
+		want  string
+	}{
+		{
+			name:  "templ project",
+			files: map[string]string{"go.mod": "module example.com/app\n\ngo 1.27\n", "views/a.templ": "package views\n"},
+			args:  []string{"install:auth"},
+			want:  "templ projects are not supported yet",
+		},
+		{
+			name:  "unknown locale",
+			files: map[string]string{"go.mod": "module example.com/app\n\ngo 1.27\n"},
+			args:  []string{"install:auth", "--locales", "xx"},
+			want:  `no auth message catalog for locale "xx"`,
+		},
+		{
+			name: "no go.mod",
+			args: []string{"install:auth"},
+			want: "go.mod",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			writeFiles(t, dir, tt.files)
+
+			code, out, errOut := vukem(t, dir, tt.args...)
+			if code == 0 || !strings.Contains(errOut, tt.want) {
+				t.Fatalf("%s = %d\n%s%s", strings.Join(tt.args, " "), code, out, errOut)
+			}
+
+			if _, err := os.Stat(filepath.Join(dir, "routes")); err == nil {
+				t.Fatal("refused install:auth wrote routes")
+			}
+		})
+	}
+}
