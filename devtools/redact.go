@@ -11,7 +11,8 @@ import (
 )
 
 var (
-	sqlStrings      = regexp.MustCompile(`'(?:[^']|'')*'`)
+	sqlIdent        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	sqlDollarTag    = regexp.MustCompile(`^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$`)
 	sqlNumbers      = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
 	sqlDollar       = regexp.MustCompile(`\$\d+`)
 	sqlSpaces       = regexp.MustCompile(`\s+`)
@@ -23,12 +24,78 @@ var (
 // placeholders collapse to "(?...)" and whitespace is collapsed. Literal
 // values never reach the dashboard.
 func NormalizeSQL(query string) string {
-	s := sqlStrings.ReplaceAllString(query, "?")
+	s := stripStrings(query)
 	s = sqlDollar.ReplaceAllString(s, "?")
 	s = sqlNumbers.ReplaceAllString(s, "?")
 	s = sqlSpaces.ReplaceAllString(strings.TrimSpace(s), " ")
 
 	return sqlPlaceholders.ReplaceAllString(s, "(?...)")
+}
+
+// stripStrings replaces every string literal with "?": 'x' (doubled ” or
+// backslash escapes), "x" unless its content is a plain identifier, and
+// $tag$x$tag$. An unterminated literal is redacted to the end.
+func stripStrings(q string) string {
+	var b strings.Builder
+
+	for i := 0; i < len(q); {
+		end := literalEnd(q, i)
+		switch {
+		case end < 0:
+			b.WriteByte(q[i])
+
+			i++
+		case q[i] == '"' && sqlIdent.MatchString(q[i+1:end-1]):
+			b.WriteString(q[i:end])
+
+			i = end
+		default:
+			b.WriteByte('?')
+
+			i = end
+		}
+	}
+
+	return b.String()
+}
+
+// literalEnd returns the index just past the quoted run starting at q[i], or
+// -1 when q[i] does not start one.
+func literalEnd(q string, i int) int {
+	switch q[i] {
+	case '\'', '"':
+		return quotedEnd(q, i)
+	case '$':
+		tag := sqlDollarTag.FindString(q[i:])
+		if tag == "" {
+			return -1
+		}
+
+		if j := strings.Index(q[i+len(tag):], tag); j >= 0 {
+			return i + len(tag) + j + len(tag)
+		}
+
+		return len(q)
+	}
+
+	return -1
+}
+
+func quotedEnd(q string, i int) int {
+	quote := q[i]
+
+	for j := i + 1; j < len(q); j++ {
+		switch {
+		case q[j] == '\\':
+			j++
+		case q[j] == quote && j+1 < len(q) && q[j+1] == quote:
+			j++
+		case q[j] == quote:
+			return j + 1
+		}
+	}
+
+	return len(q)
 }
 
 // RedactArgs describes bound values by type (and length for strings and
