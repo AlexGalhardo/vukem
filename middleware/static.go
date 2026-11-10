@@ -52,7 +52,6 @@ func StaticFS(fsys fs.FS, cfg StaticConfig) Middleware {
 		immutable = []string{"/build/"}
 	}
 
-	files := http.FileServerFS(fsys)
 	etags := &etagCache{}
 
 	return func(next http.Handler) http.Handler {
@@ -94,9 +93,12 @@ func StaticFS(fsys fs.FS, cfg StaticConfig) Middleware {
 				w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 			}
 
+			// ServeFileFS redirects a URL path ending in /index.html to its
+			// directory, which this middleware hands to next: serve the file
+			// under a neutral path instead.
 			r2 := r.Clone(r.Context())
-			r2.URL.Path = "/" + name
-			files.ServeHTTP(w, r2)
+			r2.URL.Path = "/"
+			http.ServeFileFS(w, r2, fsys, name) //nolint:gosec // G703: a cleaned name in a rooted FS
 		})
 	}
 }

@@ -630,6 +630,7 @@ func TestSecurity_A01_StaticRejectsTraversal(t *testing.T) {
 	write(".env", "SECRET=1")
 	write("sub/.hidden", "x")
 	write("sub/index.html", "dir index")
+	write("index.html", "home")
 
 	secret := filepath.Join(filepath.Dir(dir), "outside.txt")
 	_ = os.WriteFile(secret, []byte("outside"), 0o600)
@@ -662,6 +663,13 @@ func TestSecurity_A01_StaticRejectsTraversal(t *testing.T) {
 		{path: "/../outside.txt", wantStatus: 404},
 		{path: "/missing.css", wantStatus: 404},
 		{path: "/", wantStatus: 404},
+		{path: "/index.html", wantBody: "home", wantStatus: 200, wantCache: "public, max-age=0, must-revalidate"},
+		{
+			path:       "/sub/index.html",
+			wantBody:   "dir index",
+			wantStatus: 200,
+			wantCache:  "public, max-age=0, must-revalidate",
+		},
 	}
 
 	for _, tt := range tests {
