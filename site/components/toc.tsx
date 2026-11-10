@@ -36,7 +36,7 @@ export function Toc({ headings, label = t.onThisPage }: { headings: Heading[]; l
   if (headings.length === 0) return null;
 
   return (
-    <nav aria-label={label} className="text-sm">
+    <nav aria-label={label} data-toc className="text-sm">
       <p className="mb-3 text-xs font-semibold tracking-wide text-fg">{label}</p>
       <ul className="space-y-1 border-l border-border">
         {headings.map((h) => {

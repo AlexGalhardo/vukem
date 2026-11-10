@@ -106,7 +106,7 @@ const groupsByVersion = getNavGroupsByVersion();
         }
       });
 
-      const tocLinks = [...document.querySelectorAll("nav[aria-label='On this page'] a")];
+      const tocLinks = [...document.querySelectorAll("nav[data-toc] a")];
       const headings = tocLinks
         .map((link) => document.getElementById((link.getAttribute("href") ?? "").slice(1)))
         .filter((el): el is HTMLElement => el !== null);
