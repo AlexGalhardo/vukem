@@ -64,6 +64,8 @@ type lexer struct {
 	off       int
 	line      int
 	lineStart int
+	colOff    int
+	col       int
 	count     int
 	maxTokens int
 }
@@ -73,7 +75,16 @@ func newLexer(src string, maxTokens int) *lexer {
 }
 
 func (l *lexer) loc(off int) Location {
-	return Location{Line: l.line, Column: utf8.RuneCountInString(l.src[l.lineStart:off]) + 1}
+	if off < l.colOff {
+		return Location{Line: l.line, Column: utf8.RuneCountInString(l.src[l.lineStart:off]) + 1}
+	}
+
+	// Count only the bytes since the last call: recounting from the line start
+	// made a long single-line document quadratic.
+	l.col += utf8.RuneCountInString(l.src[l.colOff:off])
+	l.colOff = off
+
+	return Location{Line: l.line, Column: l.col + 1}
 }
 
 func (l *lexer) errorf(off int, format string, args ...any) *Error {
@@ -111,6 +122,8 @@ func (l *lexer) skipIgnored() {
 func (l *lexer) newline() {
 	l.line++
 	l.lineStart = l.off
+	l.colOff = l.off
+	l.col = 0
 }
 
 func (l *lexer) next() (token, error) {
