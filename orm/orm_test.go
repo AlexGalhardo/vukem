@@ -953,3 +953,66 @@ func TestTimesAreStoredAndComparedInUTC(t *testing.T) {
 		t.Errorf("WhereBetween across zones = %d, %v, want 1", n, err)
 	}
 }
+
+func TestBulkWriteRefusesRowLimits(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		run  func(ctx context.Context, db *database.DB) error
+	}{
+		{"limit update", func(ctx context.Context, db *database.DB) error {
+			_, err := QueryOf[User](db).Where("age", ">", 0).Limit(1).Update(ctx, Set{"active": true})
+			return err
+		}},
+		{"offset update", func(ctx context.Context, db *database.DB) error {
+			_, err := QueryOf[User](db).Where("age", ">", 0).Offset(1).Update(ctx, Set{"active": true})
+			return err
+		}},
+		{"order update", func(ctx context.Context, db *database.DB) error {
+			_, err := QueryOf[User](db).Where("age", ">", 0).OrderBy("id", Asc).Update(ctx, Set{"active": true})
+			return err
+		}},
+		{"limit delete", func(ctx context.Context, db *database.DB) error {
+			_, err := QueryOf[User](db).Where("age", ">", 0).Limit(1).Delete(ctx)
+			return err
+		}},
+		{"limit soft delete", func(ctx context.Context, db *database.DB) error {
+			_, err := QueryOf[Post](db).Where("user_id", 1).Limit(1).Delete(ctx)
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			db, ctx := setup(t)
+
+			for i := range 3 {
+				u := User{Name: "n", Email: string(rune('a'+i)) + "@x.io", Age: 10}
+				if err := Create(ctx, db, &u); err != nil {
+					t.Fatal(err)
+				}
+
+				p := Post{UserID: 1, Title: "t"}
+				if err := Create(ctx, db, &p); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			err := tc.run(ctx, db)
+			if err == nil || !strings.Contains(err.Error(), "applies to every matching row") {
+				t.Fatalf("err = %v, want refusal", err)
+			}
+
+			if n, _ := QueryOf[User](db).Where("active", false).Count(ctx); n != 3 {
+				t.Fatalf("inactive users = %d, want 3", n)
+			}
+
+			if n, _ := QueryOf[Post](db).Count(ctx); n != 3 {
+				t.Fatalf("live posts = %d, want 3", n)
+			}
+		})
+	}
+}
