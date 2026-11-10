@@ -87,6 +87,7 @@ The whole program is one line. `vukem.Main` loads the configuration, handles `Ct
 ```go title="bootstrap/app.go"
 func New(opts ...vukem.Option) (*vukem.App, error) {
 	base := []vukem.Option{
+		vukem.WithName("todo"),
 		vukem.WithProviders(Providers()...),
 		vukem.WithMigrations(migrations.All()),
 		vukem.WithSeeders(seeders.All()...),

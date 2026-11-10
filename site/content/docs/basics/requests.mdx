@@ -128,7 +128,7 @@ A map becomes a list only when its keys are exactly `0`, `1`, … `n-1`. The dep
 
 ### Files in the input
 
-For multipart forms, each file field is added as a [`*multipart.FileHeader`](https://pkg.go.dev/mime/multipart#FileHeader): one file under its name, several files (or a `name[]` field) as a list. The `z.File` schema validates them; see [Validation](/docs/basics/validation#lists-maps-and-files). Up to 8 MiB of a multipart body is kept in memory; the rest goes to temporary files on disk.
+For multipart forms, each file field is added as a [`*multipart.FileHeader`](https://pkg.go.dev/mime/multipart#FileHeader): one file under its name, several files (or a `name[]` field) as a list. The `z.File` schema validates them; see [Validation](/docs/basics/validation#lists-maps-and-files). Up to 8 MiB of a multipart body is kept in memory; the rest goes to temporary files on disk. Vukem deletes those temporary files when the handler returns (and when the CSRF or rate limit middleware answers before your handler runs), so store or copy an upload before you return and never read it from a goroutine you leave running.
 
 ## JSON into a struct: `c.BindJSON`
 
@@ -268,7 +268,7 @@ A later `BodyLimit` (on a group or route) **replaces** the limit of an earlier o
 r.Post("/videos", videos.Store).Use(middleware.BodyLimit(200 << 20))
 ```
 
-The check happens when the body is read, against the innermost limit, so the router-wide default never refuses a body a route allows. Middleware and packages may set a limit themselves with `web.LimitBody(w, r, n)` (the `upload` package does, from `upload.Rules.MaxSize`), and read the current one with `web.BodyLimitOf(r)`.
+The check happens when the body is read, against the innermost limit, so the router-wide default never refuses a body a route allows. Middleware and packages may set a limit themselves with `web.LimitBody(w, r, n)` (the `upload` package does, from `upload.Rules.MaxSize`), and read the current one with `web.BodyLimitOf(r)`. A middleware that must look at a JSON field before the handler does (the login throttle keys on the email) calls `web.PeekJSON(r)`: it decodes the object the way `c.Input()` does, puts the body back, and returns an error for a body the handler would reject. The body stays readable when `LimitBody` runs again afterwards.
 
 ## Configuration
 

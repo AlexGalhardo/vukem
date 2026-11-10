@@ -160,6 +160,8 @@ It exits `0` on success, `2` on a usage error and `1` on any other failure, afte
 | `WithClock(now)` | Clock for sessions and other time-based features (`vukemtest.FakeClock`) |
 | `WithRunner(name, r)` | A long-running component started by `Run` |
 | `WithHealthCheck(name, check)` | A [readiness check](#health-checks), like `app.AddHealthCheck` |
+| `WithTLSConfig(cfg)` | Serve HTTPS with HTTP/2 from your own `*tls.Config` (a certificate source such as autocert); `MinVersion` defaults to TLS 1.2. Excludes `TLS_CERT_FILE` and `TLS_KEY_FILE`; see [HTTP/2 and HTTP/3](/docs/deployment/http2-and-http3) |
+| `WithTrustedProxies(prefixes...)` | Trusted proxy ranges as `netip.Prefix` values (such as `cloudflare.Ranges`), on top of `TRUSTED_PROXIES` |
 | `WithoutHTTP()` | Do not start the HTTP server runner (workers-only processes) |
 | `WithReady(ch)` | Receive the HTTP listen address once the server is listening (useful with `PORT=0`) |
 
@@ -376,7 +378,7 @@ When one runner returns an error, the others are cancelled and `Run` returns the
 | `MaxHeaderBytes` | 64 KiB (`HTTP_MAX_HEADER_BYTES` for the app's server) |
 | `ShutdownTimeout` | 15s drain of in-flight requests (`SHUTDOWN_TIMEOUT` for the app's server) |
 
-In-flight handlers keep the app's context values but are not cancelled when shutdown starts, so they can finish. [Server-sent event](/docs/digging-deeper/sse) streams end when shutdown starts, so the drain never waits on a connection that would never finish by itself. Set `Listener` to serve on an existing listener and `Ready` to receive the bound address (useful in tests with port `0`). Outside production, or with `HTTP_H2C=true`, the app's server also speaks HTTP/2 without TLS.
+In-flight handlers keep the app's context values but are not cancelled when shutdown starts, so they can finish. [Server-sent event](/docs/digging-deeper/sse) streams end when shutdown starts, so the drain never waits on a connection that would never finish by itself. When in-flight requests outlast `ShutdownTimeout`, `Run` closes the remaining connections, which cancels their request contexts, before the providers shut down; its error wraps `context.DeadlineExceeded`, so match it with `errors.Is`. Set `Listener` to serve on an existing listener and `Ready` to receive the bound address (useful in tests with port `0`). Outside production, or with `HTTP_H2C=true`, the app's server also speaks HTTP/2 without TLS.
 
 ### Health checks
 
@@ -397,7 +399,7 @@ GET /ready
 200 {"status":"ok","checks":{"db":"ok","storage":"ok"}}
 ```
 
-It answers `503` with `"status":"fail"` when a check fails. Failures are logged; their details never reach the client. Each check is bounded by `vukem.DefaultHealthCheckTimeout` (3 seconds); `AddHealthCheckTimeout` sets another. `GET /up?checks=1` runs the checks too.
+It answers `503` with `"status":"fail"` when a check fails. Failures are logged; their details never reach the client. Each check is bounded by `vukem.DefaultHealthCheckTimeout` (3 seconds); `AddHealthCheckTimeout` sets another. `GET /up?checks=1` runs the checks too. Probes that arrive while a check is running share that run, so concurrent probes of a healthy dependency agree. When a probe gave up on a check at its timeout, later probes of that check fail at once until the stuck run ends, instead of piling up goroutines.
 
 `vukem.WithVersion(version)` sets `app.Version` and adds a `"version"` field to `GET /up`, `GET /up?checks=1` and `ReadyHandler`, so a deploy can confirm which build answers. It is off by default: a public probe that names the build helps an attacker match known vulnerabilities. Inject the value at build time with `vukem build -ldflags "-X main.version=..."` ([`vukem build`](/docs/cli/reference-new#vukem-build)).
 
@@ -414,7 +416,7 @@ app.OnShutdown(func(ctx context.Context) error {
 })
 ```
 
-Shutdown order: runners stop first, then `OnShutdown` hooks in reverse registration order, then providers' `Shutdown` in reverse provider order. All errors are joined into one. `Shutdown` is idempotent: a second call does nothing.
+Shutdown order: runners stop first, then `OnShutdown` hooks in reverse registration order, then providers' `Shutdown` in reverse provider order. The app's event bus is one of those hooks: it waits for running async listeners, and a listener dispatched once it is closed is dropped with a warning log instead of running against providers that are already shut down. All errors are joined into one. `Shutdown` is idempotent: a second call does nothing.
 
 <Callout type="warning" title="No graceful shutdown under vukem serve on Windows">
 Windows has no `SIGTERM`, so `vukem serve` kills the app process when it rebuilds or stops, and shutdown hooks do not run there. A production binary that receives `Ctrl+C` or `SIGTERM` shuts down gracefully.

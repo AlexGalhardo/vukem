@@ -96,7 +96,7 @@ The server log shows `security event event=csrf.rejected reason=cross-origin sec
 
 `same-site` is rejected on purpose: `blog.example.com` and `shop.example.com` are the same site but different origins, and one should not post to the other unless you trust it.
 
-A rejection calls `web.Fail` with a 403 `"Cross-site request blocked."`, so the client gets the [usual error format](/docs/basics/error-handling#content-negotiation) (problem JSON, htmx fragment or HTML page). It also logs a `csrf.rejected` [security event](/docs/security/overview) at Warn, with `reason`, `origin` and `sec_fetch_site`, and dispatches it to your event listeners.
+A rejection calls `web.Fail` with a 403 `"Cross-site request blocked."`, so the client gets the [usual error format](/docs/basics/error-handling#content-negotiation) (problem JSON, htmx fragment or HTML page). It also logs a `csrf.rejected` [security event](/docs/security/overview) at Warn, with `reason`, `origin` and `sec_fetch_site`, and dispatches it to your event listeners. When `TokenFallback` reads the token from a multipart form, the check deletes that form's temporary files itself, so a rejected upload leaves nothing on disk.
 
 The session cookie's `SameSite=Lax` flag is a second, independent layer: browsers do not attach it to cross-site `POST` requests at all ([Sessions](/docs/basics/sessions#security)).
 
