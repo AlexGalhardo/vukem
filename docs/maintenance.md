@@ -52,7 +52,7 @@ After each [PLAN.md](PLAN.md) task group:
 
 Weekly, on Monday:
 
-1. Dependabot opens grouped PRs (`go-deps`, `actions`, `site-deps`, plus Docker for `docs/media`); `vuln.yml` scans every module at 06:17 UTC. Merge the PRs once CI is green. Actions stay pinned by full commit SHA with a `# vX.Y.Z` comment.
+1. Dependabot opens grouped PRs (`go-deps`, `actions`, `site-deps`, plus Docker for `docs/media` and `.config`); `vuln.yml` scans every module at 06:17 UTC. Merge the PRs once CI is green. Actions stay pinned by full commit SHA with a `# vX.Y.Z` comment. A digest PR for `.config/compose.yaml` must update the matching `services:` images (and `RUSTFS_IMAGE`) in `ci.yml` in the same PR.
 2. On every `golang.org/x/crypto` upgrade, re-check [`osv-scanner.toml`](../osv-scanner.toml) and drop `GO-2026-5932` once a fix exists.
 3. Quarterly: count third-party modules per `go.mod` (`go mod graph`); every new direct dependency needs a decision under the [dependency policy](architecture.md#dependency-policy).
 
