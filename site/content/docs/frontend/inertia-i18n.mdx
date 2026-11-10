@@ -36,6 +36,8 @@ The locale comes from the first source that holds a valid one, in this order:
 4. the `Accept-Language` header, by quality;
 5. the default locale (`APP_LOCALE`, `en` by default).
 
+With `PathPrefixes` set (see [Localization](/docs/digging-deeper/localization#locale-url-prefixes)), the URL path prefix is consulted first.
+
 A value is valid only when it is a well-formed tag (`pt-BR`, `en`) **and** a catalog exists for it, or for a related form (`pt` matches `pt-BR`). Everything else is ignored.
 
 ## Step by step
@@ -360,6 +362,7 @@ The defaults cover most apps. To change the sources, use `vukem.DefaultMiddlewar
 | `SessionKey` | `"locale"` | Session value that holds the locale (`"-"` turns it off) |
 | `Order` | query, cookie, session, header | Sources consulted, first match wins; a source left out is off |
 | `Locales` | every catalog | The subset a request may select; must include the default locale |
+| `PathPrefixes` | none | First URL path segment to locale, for `/pt-br/...` URLs; needs `SourcePath` in `Order` (a nil `Order` puts it first) |
 
 ```go title="routes/web.go"
 err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{

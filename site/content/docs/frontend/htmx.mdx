@@ -87,6 +87,10 @@ func (pc *PostController) Index(c *web.Ctx) error {
 		return err
 	}
 
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, map[string]any{"data": posts})
+	}
+
 	data := map[string]any{"Posts": posts, "Search": c.Query("q")}
 
 	return c.Render("posts/index", data, web.Block("post-list"))
