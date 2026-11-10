@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/queue"
 )
 
 // ResendConfig configures the Resend transport (https://resend.com).
@@ -75,6 +76,12 @@ func (e *ResendError) Error() string {
 // Retryable reports whether the request may succeed later.
 func (e *ResendError) Retryable() bool {
 	return e.Status == http.StatusTooManyRequests || e.Status >= 500
+}
+
+// Is makes a request that cannot succeed later match [queue.ErrPermanent],
+// so a queued mail job that returns it fails once instead of retrying.
+func (e *ResendError) Is(target error) bool {
+	return target == queue.ErrPermanent && !e.Retryable()
 }
 
 type resendAttachment struct {

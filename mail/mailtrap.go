@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/queue"
 )
 
 // mailtrapUserAgent is sent on every request: Mailtrap's edge protection
@@ -119,6 +120,12 @@ func sanitizeMailtrapErrors(errs []string) []string {
 // Retryable reports whether the request may succeed later.
 func (e *MailtrapError) Retryable() bool {
 	return e.Status == http.StatusTooManyRequests || e.Status >= 500
+}
+
+// Is makes a request that cannot succeed later match [queue.ErrPermanent],
+// so a queued mail job that returns it fails once instead of retrying.
+func (e *MailtrapError) Is(target error) bool {
+	return target == queue.ErrPermanent && !e.Retryable()
 }
 
 type mailtrapAddress struct {
