@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { t } from "@/lib/ui-text";
 import type { Heading } from "@/lib/toc";
 
-/** "On this page" with scroll-spy over the page's h2/h3 headings. */
-export function Toc({ headings }: { headings: Heading[] }) {
+/** "On this page" (or another label) with scroll-spy over the page's h2/h3 headings. */
+export function Toc({ headings, label = t.onThisPage }: { headings: Heading[]; label?: string }) {
   const [active, setActive] = useState<string | null>(null);
 
   useEffect(() => {
@@ -36,8 +36,8 @@ export function Toc({ headings }: { headings: Heading[] }) {
   if (headings.length === 0) return null;
 
   return (
-    <nav aria-label={t.onThisPage} className="text-sm">
-      <p className="mb-3 text-xs font-semibold tracking-wide text-fg">{t.onThisPage}</p>
+    <nav aria-label={label} className="text-sm">
+      <p className="mb-3 text-xs font-semibold tracking-wide text-fg">{label}</p>
       <ul className="space-y-1 border-l border-border">
         {headings.map((h) => {
           const on = h.id === active;
