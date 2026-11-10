@@ -820,10 +820,13 @@ func (p *Panel) audit(c *web.Ctx) error {
 
 	// Entries carry record values, so only resources the reader may list are shown (A01).
 	allowed := []any{}
+	bases := map[string]*base{}
 
 	for _, r := range p.resources {
 		if p.can(c, AbilityViewAny, r.subject()) {
-			allowed = append(allowed, r.info().slug)
+			b := r.info()
+			allowed = append(allowed, b.slug)
+			bases[b.slug] = b
 		}
 	}
 
@@ -850,8 +853,16 @@ func (p *Panel) audit(c *web.Ctx) error {
 			Resource: e.Resource, RecordID: e.RecordID,
 		}
 
+		// Entries written before a column became hidden or sensitive still hold its values.
+		b := bases[e.Resource]
+
 		for _, col := range sortedKeys(e.Changes.V) {
-			row.Changes = append(row.Changes, changeRows(col, e.Changes.V[col])...)
+			ch := e.Changes.V[col]
+			if b != nil && (b.hidden[col] || b.sensitive[col]) {
+				ch = Change{Redacted: true}
+			}
+
+			row.Changes = append(row.Changes, changeRows(col, ch)...)
 		}
 
 		av.Entries = append(av.Entries, row)
