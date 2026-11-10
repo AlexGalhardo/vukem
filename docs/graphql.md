@@ -170,7 +170,7 @@ graphql.Serve(app, r, "/graphql", schema, graphql.Config{
 
 ### Persisted queries
 
-- **APQ** (`PersistedQueries{}`): a request with `extensions.persistedQuery {version: 1, sha256Hash}` and no query gets `PERSISTED_QUERY_NOT_FOUND`; the client resends with the query, whose SHA-256 is verified before it is stored. Stores: `NewMemoryStore(n)` (bounded, default) or `NewCacheStore(app.Cache, ttl)` (shared across instances).
+- **APQ** (`PersistedQueries{}`): a request with `extensions.persistedQuery {version: 1, sha256Hash}` and no query gets `PERSISTED_QUERY_NOT_FOUND`; the client resends with the query, whose SHA-256 is verified. The document is stored only after it parses and validates, and only for POST requests (a GET never registers). A document larger than `MaxDocumentBytes` (default `DefaultMaxPersistedBytes`, 64 KiB) still runs but is not stored. Stores: `NewMemoryStore(n)` (bounded by entry count and by 16 MiB of document bytes, oldest evicted first; the default) or `NewCacheStore(app.Cache, ttl)` (shared across instances; a zero TTL never expires, so set one).
 - **Allowlist** (`AllowlistOnly: true` with `NewAllowlist(docs...)`): only listed hashes or documents run; nothing is registered; a missing store rejects everything (fail closed).
 
 ## Known gaps
