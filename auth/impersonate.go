@@ -48,13 +48,13 @@ func (g *SessionGuard[U]) Impersonate(c *web.Ctx, target U, ttl time.Duration) e
 	s := c.Session()
 	actorVersion := s.Get(versionKey(g.name))
 
-	// The actor's remember-me token must not outlive the impersonation: it
-	// would sign the actor back in once the session ends.
-	g.dropRemember(c, actor.AuthID())
-
 	if err := g.Login(c, target); err != nil {
 		return err
 	}
+
+	// The actor's remember-me token must not outlive the impersonation: it
+	// would sign the actor back in once the session ends.
+	g.dropRemember(c, actor.AuthID())
 
 	s.Put(g.impersonatorKey(), actor.AuthID())
 	s.Put(g.impersonateUntilKey(), time.Now().Add(ttl).UTC().Format(time.RFC3339))
