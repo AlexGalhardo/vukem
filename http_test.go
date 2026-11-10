@@ -2339,6 +2339,23 @@ func TestCodegenTypesCommand_DashWritesToStdout(t *testing.T) {
 	}
 }
 
+func TestServeOpenAPIRepeatedGetsMatch(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(openAPIRoutes))
+
+	first := doReq(t, app, "/openapi.json")
+	second := doReq(t, app, "/openapi.json")
+
+	if first.Code != 200 || second.Code != 200 {
+		t.Fatalf("GET /openapi.json = %d, %d", first.Code, second.Code)
+	}
+
+	if first.Body.String() != second.Body.String() {
+		t.Errorf("second GET body differs from the first")
+	}
+}
+
 func TestServeOpenAPIWithPrefix(t *testing.T) {
 	t.Parallel()
 
