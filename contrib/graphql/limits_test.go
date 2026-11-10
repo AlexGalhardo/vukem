@@ -234,3 +234,25 @@ func TestSecurity_A06_GraphQLComplexityUsesSDLDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestSecurity_A06_GraphQLIntrospectionBoundedWithLimitsOff(t *testing.T) {
+	t.Parallel()
+
+	s := nodeSchema(t, WithLimits(Limits{MaxDepth: -1, MaxComplexity: -1, MaxAliases: -1}))
+
+	deep := "{ __schema { types { " + strings.Repeat("fields { type { ", 10) + "name" +
+		strings.Repeat(" } }", 10) + " } } }"
+	if r := s.Execute(t.Context(), Request{Query: deep}); firstCode(r) != CodeLimitExceeded {
+		t.Errorf("deep introspection with limits off: code = %q, want %s", firstCode(r), CodeLimitExceeded)
+	}
+
+	viaFragment := "{ ...Root }\nfragment Root on Query { __schema { types { " +
+		strings.Repeat("fields { type { ", 10) + "name" + strings.Repeat(" } }", 10) + " } } }"
+	if r := s.Execute(t.Context(), Request{Query: viaFragment}); firstCode(r) != CodeLimitExceeded {
+		t.Errorf("deep introspection through a fragment: code = %q, want %s", firstCode(r), CodeLimitExceeded)
+	}
+
+	if r := s.Execute(t.Context(), Request{Query: "{ node { id } }"}); len(r.Errors) > 0 {
+		t.Errorf("plain query with limits off: errors = %v", r.Errors)
+	}
+}

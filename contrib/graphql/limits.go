@@ -31,7 +31,10 @@ type limitWalker struct {
 // one.
 func (s *Schema) checkLimits(doc *document, op *operation, vars map[string]any) []*Error {
 	l := s.limits
-	if l.MaxDepth == 0 && l.MaxComplexity == 0 && l.MaxAliases == 0 {
+	// With the other limits off, only introspection needs the walk; its
+	// depth bound stays on (docs/security.md, A06).
+	if l.MaxDepth == 0 && l.MaxComplexity == 0 && l.MaxAliases == 0 &&
+		!rootIntrospects(op.sel, doc, map[string]bool{}) {
 		return nil
 	}
 
@@ -217,4 +220,35 @@ func (w *limitWalker) argValue(f *field, name string) (any, bool) {
 	}
 
 	return nil, false
+}
+
+// rootIntrospects reports a __schema or __type field among sel, which is
+// where they can appear (the query root), following fragments.
+func rootIntrospects(sel []selection, doc *document, seen map[string]bool) bool {
+	for _, s := range sel {
+		switch s := s.(type) {
+		case *field:
+			if s.name == "__schema" || s.name == "__type" {
+				return true
+			}
+		case *inlineFragment:
+			if rootIntrospects(s.sel, doc, seen) {
+				return true
+			}
+		case *fragmentSpread:
+			if seen[s.name] {
+				continue
+			}
+
+			seen[s.name] = true
+
+			for _, f := range doc.fragments {
+				if f.name == s.name && rootIntrospects(f.sel, doc, seen) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
