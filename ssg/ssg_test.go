@@ -423,3 +423,40 @@ func TestSecurity_A01_SSGRefusesCollidingPaths(t *testing.T) {
 		t.Fatalf("collision error = %v, want both paths named", err)
 	}
 }
+
+func TestSSGDecodesPathOnce(t *testing.T) {
+	t.Parallel()
+
+	var got string
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Path
+		_, _ = w.Write([]byte("x"))
+	})
+
+	for _, p := range []string{"/x%2541", "/50%25"} {
+		_, err := ssg.Generate(t.Context(), h, []ssg.Page{{Path: p}}, ssg.Options{OutDir: t.TempDir()})
+		if !errors.Is(err, ssg.ErrInvalidPath) {
+			t.Fatalf("Generate(%q) = %v, want ErrInvalidPath", p, err)
+		}
+	}
+
+	dir := t.TempDir()
+
+	report, err := ssg.Generate(t.Context(), h, []ssg.Page{{Path: "/a%20b"}}, ssg.Options{OutDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(report.Files) != 1 || report.Files[0].Path != "a b/index.html" {
+		t.Fatalf("files = %+v, want a b/index.html", report.Files)
+	}
+
+	if got != "/a b" {
+		t.Fatalf("handler path = %q, want %q", got, "/a b")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "a b", "index.html")); err != nil {
+		t.Fatal(err)
+	}
+}
