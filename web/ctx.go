@@ -410,6 +410,14 @@ func (c *Ctx) HandleError(err error) {
 // Serve runs h with c and routes a returned error to the error handler.
 // A status set with Status and not yet sent is sent when h returns nil.
 func (c *Ctx) Serve(h HandlerFunc) {
+	// net/http removes the multipart files of the connection's own request
+	// only; handlers get a copy (WithContext), so its form is ours to clean.
+	defer func() {
+		if f := c.r.MultipartForm; f != nil {
+			_ = f.RemoveAll()
+		}
+	}()
+
 	if err := h(c); err != nil {
 		c.HandleError(err)
 		return
