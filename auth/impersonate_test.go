@@ -7,6 +7,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/vukemtest"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -88,6 +89,53 @@ func TestSecurity_A01_ImpersonationExpiresClosed(t *testing.T) {
 		"_auth_impersonate_until_web": time.Now().Add(time.Minute).UTC().Format(time.RFC3339),
 	}
 	withSession(ta.Client(t), m.Cookies(t.Context(), data)).Get("/whoami").AssertSee("bob@example.com")
+}
+
+// An expired impersonation must not be undone by the actor's remember-me
+// cookie, and starting one drops that cookie and its stored token.
+func TestSecurity_A01_ImpersonationExpiryIgnoresRememberMe(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	admin := ta.user(t, "ada@example.com", "s3cret-pass", true)
+	bob := ta.user(t, "bob@example.com", "s3cret-pass", true)
+
+	login := func() (*vukemtest.Client, string) {
+		c := ta.Client(t)
+		c.PostForm("/login", url.Values{"email": {"ada@example.com"}, "password": {"s3cret-pass"}, "remember": {"on"}}).
+			AssertRedirect("/dashboard")
+
+		token := c.CookieValue("remember_web")
+		if token == "" {
+			t.Fatal("no remember-me cookie")
+		}
+
+		return c, token
+	}
+
+	// Expired deadline with the remember-me cookie still in the browser.
+	c, _ := login()
+	c.WithSession(map[string]any{
+		"auth_web":                    bob.AuthID(),
+		web.SessionUserKey:            "web:" + bob.AuthID(),
+		"_auth_impersonator_web":      admin.AuthID(),
+		"_auth_impersonate_until_web": time.Now().Add(-time.Second).UTC().Format(time.RFC3339),
+	})
+	c.Get("/whoami").AssertSee("guest")
+
+	if got := c.CookieValue("remember_web"); got != "" {
+		t.Errorf("remember-me cookie kept after an expired impersonation: %q", got)
+	}
+
+	// Starting one removes the actor's remember-me token for good.
+	c, token := login()
+	c.PostForm("/impersonate/"+bob.AuthID(), nil).AssertRedirect("/whoami")
+
+	if got := c.CookieValue("remember_web"); got != "" {
+		t.Errorf("remember-me cookie kept by Impersonate: %q", got)
+	}
+
+	ta.Client(t).WithCookie("remember_web", token).Get("/dashboard").AssertRedirect("/login")
 }
 
 // Ending the actor's sessions (password reset) during an impersonation
