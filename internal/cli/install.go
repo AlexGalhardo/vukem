@@ -560,17 +560,52 @@ func appendEnvExample(env *Env, keys []string) error {
 
 // installScaffold renders scaffolds/<name> into the project. It checks
 // every destination first, so nothing is written when a file exists.
-//
-//nolint:gocognit // sequential scaffold steps; each step reports its own error
 func installScaffold(env *Env, name string, data map[string]string, force bool) error {
-	root := "scaffolds/" + name
-
-	type file struct {
-		rel     string
-		content []byte
+	files, err := collectScaffold(name, data)
+	if err != nil {
+		return err
 	}
 
-	var files []file
+	// A doc.go carries nothing but the package comment, so an existing one
+	// already does its job: a make:* command that created the package
+	// first wrote it. Replacing it would say the same thing, and refusing
+	// over it would block the installer on nothing.
+	files = slices.DeleteFunc(files, func(f scaffoldFile) bool {
+		return path.Base(f.rel) == "doc.go" && exists(env, filepath.FromSlash(f.rel))
+	})
+
+	if !force {
+		if err := refuseExisting(env, files); err != nil {
+			return err
+		}
+	}
+
+	for _, f := range files {
+		dst := env.path(filepath.FromSlash(f.rel))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+			return err
+		}
+
+		if err := writeFile(dst, f.content); err != nil {
+			return err
+		}
+
+		fmt.Fprintln(env.Stdout, "created", f.rel)
+	}
+
+	return ensureScaffoldPackageDocs(env, files)
+}
+
+type scaffoldFile struct {
+	rel     string
+	content []byte
+}
+
+// collectScaffold renders every file of scaffolds/<name> in memory.
+func collectScaffold(name string, data map[string]string) ([]scaffoldFile, error) {
+	root := "scaffolds/" + name
+
+	var files []scaffoldFile
 
 	locales, wanted := data[localeKey]
 
@@ -609,57 +644,40 @@ func installScaffold(env *Env, name string, data map[string]string, force bool) 
 			}
 		}
 
-		files = append(files, file{rel, content})
+		files = append(files, scaffoldFile{rel, content})
 
 		return nil
 	})
-	if err != nil {
-		return err
-	}
 
-	// A doc.go carries nothing but the package comment, so an existing one
-	// already does its job: a make:* command that created the package
-	// first wrote it. Replacing it would say the same thing, and refusing
-	// over it would block the installer on nothing.
-	files = slices.DeleteFunc(files, func(f file) bool {
-		return path.Base(f.rel) == "doc.go" && exists(env, filepath.FromSlash(f.rel))
-	})
+	return files, err
+}
 
-	if !force {
-		var taken []string
-
-		for _, f := range files {
-			if exists(env, filepath.FromSlash(f.rel)) {
-				taken = append(taken, f.rel)
-			}
-		}
-
-		if len(taken) > 0 {
-			return fmt.Errorf(
-				"these files already exist (use --force to overwrite):\n  %s",
-				strings.Join(taken, "\n  "),
-			)
-		}
-	}
+func refuseExisting(env *Env, files []scaffoldFile) error {
+	var taken []string
 
 	for _, f := range files {
-		dst := env.path(filepath.FromSlash(f.rel))
-		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
-			return err
+		if exists(env, filepath.FromSlash(f.rel)) {
+			taken = append(taken, f.rel)
 		}
-
-		if err := writeFile(dst, f.content); err != nil {
-			return err
-		}
-
-		fmt.Fprintln(env.Stdout, "created", f.rel)
 	}
 
-	// After the loop, so a doc.go the scaffold ships is already on disk and
-	// keeps its own wording. A scaffold is the first to create a package in
-	// any project that does not ship it — a hand-rolled one, or a starter
-	// whose demo and its doc.go were deleted — and the package comment
-	// never rides on a generated file (the same rule as the generators).
+	if len(taken) > 0 {
+		return fmt.Errorf(
+			"these files already exist (use --force to overwrite):\n  %s",
+			strings.Join(taken, "\n  "),
+		)
+	}
+
+	return nil
+}
+
+// ensureScaffoldPackageDocs runs after the files are written, so a doc.go
+// the scaffold ships is already on disk and keeps its own wording. A scaffold
+// is the first to create a package in any project that does not ship it — a
+// hand-rolled one, or a starter whose demo and its doc.go were deleted — and
+// the package comment never rides on a generated file (the same rule as the
+// generators).
+func ensureScaffoldPackageDocs(env *Env, files []scaffoldFile) error {
 	seen := map[string]bool{}
 
 	for _, f := range files {
