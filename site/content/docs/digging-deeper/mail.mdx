@@ -445,7 +445,7 @@ Each send is one `POST https://api.resend.com/emails` with a JSON body.
 - Each tag becomes a Resend tag `{name, value}`. Resend accepts only ASCII letters, digits, `_` and `-` (at most 256 characters), so the transport refuses any other tag before the request: `mail: resend tag "kind": names and values take only ASCII letters, digits, _ and -`. The error is not retried.
 - The message `ID` goes in the `Idempotency-Key` header. When a retry repeats a request Resend already accepted, Resend does not send the email twice.
 - A `429` or `5xx` answer and a network error (DNS, connection refused, a connection reset, a timeout) are retried up to 2 times. The wait is the `Retry-After` header when present, otherwise 200 ms, then 400 ms, and never more than 5 seconds. The idempotency key makes a retry safe even when the first request reached Resend. A cancelled `ctx` stops at once.
-- An error answer becomes a `*mail.ResendError` with `Status`, `Name` and `Message`, for example `mail: resend 422 validation_error: Invalid from field.`. Its `Retryable()` method is true for 429 and 5xx.
+- An error answer becomes a `*mail.ResendError` with `Status`, `Name` and `Message`, for example `mail: resend 422 validation_error: Invalid from field.`. Its `Retryable()` method is true for 429 and 5xx. Any other answer also matches `queue.ErrPermanent` (`errors.Is`), so a queue job that returns it fails once instead of retrying.
 - Each request has a 10-second timeout.
 
 ### Bounces, complaints and a suppression list
@@ -518,7 +518,7 @@ How the message maps to the API:
 - `429` and `5xx` answers are retried exactly like Resend (2 retries, `Retry-After` honoured, 5-second cap). Mailtrap has no idempotency key, so a `5xx` that arrives after Mailtrap already delivered the email can make a retry send it twice.
 - Of the network errors, only a failed connection (DNS, connection refused) is retried, with the same backoff: the request never left. A connection that breaks after the request was sent (a reset, a timeout) is returned at once, because Mailtrap may already have delivered the email.
 - A `2xx` answer whose body says `"success": false` is an error, and it is not retried.
-- Errors are `*mail.MailtrapError` with `Status` and `Errors`, for example `mail: mailtrap 401: Unauthorized`. At most 5 errors of 200 characters each are kept, on one line, so an upstream message cannot forge or flood log lines. The token is replaced by `[redacted]` if Mailtrap echoes it; addresses that Mailtrap quotes may remain.
+- Errors are `*mail.MailtrapError` with `Status` and `Errors`, for example `mail: mailtrap 401: Unauthorized`. Like `*mail.ResendError`, it has `Retryable()` (429 and 5xx) and matches `queue.ErrPermanent` otherwise. At most 5 errors of 200 characters each are kept, on one line, so an upstream message cannot forge or flood log lines. The token is replaced by `[redacted]` if Mailtrap echoes it; addresses that Mailtrap quotes may remain.
 - Redirects are never followed, because following one would send your token and the email to another server.
 - Each request has a 10-second timeout and sends a `User-Agent: vukem-mail` header.
 
@@ -557,7 +557,7 @@ err = mailer.SendLater(
 
 1. The mailable is rendered **now**, so a broken view or a missing recipient returns an error to you, not to a worker later. `EnvelopeContext` sees the context of this call.
 2. The rendered message is encrypted with `app.Crypt` (your `APP_KEY`) and stored as a `vukem.mail` job. Reset links and other secrets in the body never sit in clear text in the jobs table, in logs or in `queue:failed` output.
-3. A worker opens the job and sends the message through the transport. A failure is retried with the queue's backoff (3 retries by default).
+3. A worker opens the job and sends the message through the transport. A failure is retried with the queue's backoff (3 retries by default), except an answer the provider will refuse again (a 4xx other than 429), which matches `queue.ErrPermanent` and fails the job at once.
 4. The message `ID` stays the same on every retry, so Resend's idempotency key sends it once.
 
 Every [queue option](/docs/digging-deeper/queue) applies to the mail job: `queue.OnQueue`, `queue.Retries`, `queue.Backoff`, `queue.Timeout` and `queue.Delay`.
