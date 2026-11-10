@@ -177,27 +177,34 @@ Values are always bound parameters; column names come only from the allowlist.
 `routes/tasks.go` (appended to `routes/registry.go`) registers the typed routes behind the token guard with 60 requests per minute per token, and serves the OpenAPI document outside production:
 
 ```go
-limit := ratelimit.Middleware(ratelimit.NewMemory(60, time.Minute), ratelimit.ByToken)
+// RATE_LIMIT_STORE=cache shares the limits between servers (CACHE_STORE=database or Redis).
+limiters, err := app.RateLimiters()
+if err != nil {
+	return err
+}
+
+limit := ratelimit.Middleware(limiters("tasks.token", 60, time.Minute), ratelimit.ByToken)
+write := auth.Ability(acc.API, apiv1.AbilityWrite)
 bearer := []string{"bearer"}
 tags := []string{"tasks"}
 
 r.Group("/api/v1", func(g *router.Group) {
-	g.Use(middleware.JSONOnly(), limit, auth.Required(acc.API))
+	g.Use(middleware.JSONOnly(), auth.Required(acc.API), limit)
 
 	api.Register(g, "GET /tasks", api.Op{
 		Name: "tasks.index", Summary: "List your tasks", Tags: tags, Security: bearer,
 	}, tasks.Index)
 	api.Register(g, "POST /tasks", api.Op{
 		Name: "tasks.store", Summary: "Create a task", Tags: tags, Security: bearer,
-	}, tasks.Store)
-	// GET, PUT and DELETE /tasks/{task} the same way
+	}, tasks.Store).Use(write)
+	// GET /tasks/{task} has no write guard; PUT and DELETE /tasks/{task} also use .Use(write).
 }).Name("api.v1.")
 
 // Not registered in production unless OPENAPI_IN_PRODUCTION=true.
 vukem.ServeOpenAPI(app, r, "/openapi.json")
 ```
 
-`ratelimit.NewMemory` keeps counters in the process; use a shared store when you run several instances.
+Writes need a token issued with the `write` ability. The example takes its limiters from `app.RateLimiters()`: with `RATE_LIMIT_STORE=cache` (and `CACHE_STORE=database` or Redis) the budgets are shared between instances; the default `memory` keeps them per process.
 
 ## 8. Try it with curl
 

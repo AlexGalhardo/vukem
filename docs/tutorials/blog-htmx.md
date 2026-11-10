@@ -18,7 +18,7 @@ vukem migrate
 vukem serve
 ```
 
-`vukem new` writes the HTMX + SQLite starter: a vendored htmx, Tailwind, a `posts` CRUD to start from and a test suite. `install:auth` adds registration, login, password reset and email verification (see [authentication.md](../authentication.md)). Open <http://localhost:3000>.
+`vukem new` writes the HTMX + SQLite starter: a vendored htmx, Tailwind, a `posts` CRUD to start from and a test suite. `install:auth` adds registration, login, password reset and email verification (see [authentication.md](../authentication.md)). Sign-up does not log in: it answers the same for new and existing emails and shows `/register/check-email`; sign-up is limited per IP and per address. Open <http://localhost:3000>.
 
 ## 2. Posts belong to authors, comments to posts
 
@@ -80,12 +80,14 @@ func (pc *PostController) Index(c *web.Ctx) error {
 	}
 
 	if c.WantsJSON() {
-		return c.JSON(http.StatusOK, map[string]any{"data": posts})
+		return c.JSON(http.StatusOK, map[string]any{"data": resources.Posts(posts)})
 	}
 
 	return c.Render("posts/index", map[string]any{"Posts": posts, "Search": c.Query("q")}, web.Block("post-list"))
 }
 ```
+
+`app/resources/post.go` shapes the JSON: the author is `{id, name}`, never the email.
 
 `Store` takes the author from the session guard, and `Destroy` answers an empty 200 to HTMX so the row can be swapped out:
 
@@ -157,14 +159,16 @@ r.Services().Authorizer = gate
 
 posts := controllers.NewPostController(acc.DB)
 optional, required := auth.Optional(acc.Web), auth.Required(acc.Web)
+// Unverified accounts read but do not publish or comment.
+verified := auth.Verified(acc.Web)
 
 r.Get("/", controllers.Home).Name("home")
 r.Resource("posts", posts).Only("index", "show").Use(optional)
-r.Resource("posts", posts).Except("index", "show").Use(required)
-r.Post("/posts/{post}/comments", posts.Comment).Name("posts.comments.store").Use(required)
+r.Resource("posts", posts).Except("index", "show").Use(required, verified)
+r.Post("/posts/{post}/comments", posts.Comment).Name("posts.comments.store").Use(required, verified)
 ```
 
-`auth.Optional` lets guests read while templates still know who is signed in.
+`auth.Optional` lets guests read while templates still know who is signed in. Unverified accounts can read but not publish or comment.
 
 ## 6. Demo data
 
