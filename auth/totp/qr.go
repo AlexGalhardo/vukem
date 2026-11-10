@@ -541,91 +541,118 @@ func (q *qr) format(mask int) {
 	q.dark[q.size-8][8] = true
 }
 
-//nolint:gocognit // QR mask penalty rules straight from ISO/IEC 18004
+// penalty scores a masked symbol with the four rules of ISO/IEC 18004.
 func (q *qr) penalty() int {
 	p := 0
-	n := q.size
-
-	at := func(x, y int, col bool) bool {
-		if col {
-			return q.dark[x][y]
-		}
-
-		return q.dark[y][x]
-	}
-
-	pattern := []bool{true, false, true, true, true, false, true}
 
 	for _, col := range []bool{false, true} {
-		for y := range n {
-			run := 1
-
-			for x := 1; x < n; x++ {
-				if at(x, y, col) == at(x-1, y, col) {
-					run++
-					continue
+		for y := range q.size {
+			line := func(x int) bool {
+				if col {
+					return q.dark[x][y]
 				}
 
-				if run >= 5 {
-					p += run - 2
-				}
-
-				run = 1
+				return q.dark[y][x]
 			}
 
-			if run >= 5 {
-				p += run - 2
+			p += runPenalty(line, q.size) + finderPenalty(line, q.size)
+		}
+	}
+
+	return p + q.blockPenalty() + q.balancePenalty()
+}
+
+// runPenalty scores runs of five or more same-colour modules in one line.
+func runPenalty(at func(int) bool, n int) int {
+	p := 0
+	run := 1
+
+	for x := 1; x < n; x++ {
+		if at(x) == at(x-1) {
+			run++
+			continue
+		}
+
+		if run >= 5 {
+			p += run - 2
+		}
+
+		run = 1
+	}
+
+	if run >= 5 {
+		p += run - 2
+	}
+
+	return p
+}
+
+// finderPenalty scores 1:1:3:1:1 finder-like patterns with four light
+// modules on either side.
+func finderPenalty(at func(int) bool, n int) int {
+	pattern := []bool{true, false, true, true, true, false, true}
+	p := 0
+
+	for x := 0; x+7 <= n; x++ {
+		match := true
+		for i, want := range pattern {
+			if at(x+i) != want {
+				match = false
+				break
+			}
+		}
+
+		if !match {
+			continue
+		}
+
+		light := func(from, to int) bool {
+			for i := from; i < to; i++ {
+				if i >= 0 && i < n && at(i) {
+					return false
+				}
 			}
 
-			for x := 0; x+7 <= n; x++ {
-				match := true
-				for i, want := range pattern {
-					if at(x+i, y, col) != want {
-						match = false
-						break
-					}
-				}
+			return true
+		}
 
-				if !match {
-					continue
-				}
+		if light(x-4, x) || light(x+7, x+11) {
+			p += 40
+		}
+	}
 
-				light := func(from, to int) bool {
-					for i := from; i < to; i++ {
-						if i >= 0 && i < n && at(i, y, col) {
-							return false
-						}
-					}
+	return p
+}
 
-					return true
-				}
+// blockPenalty scores 2x2 blocks of one colour.
+func (q *qr) blockPenalty() int {
+	p := 0
 
-				if light(x-4, x) || light(x+7, x+11) {
-					p += 40
-				}
+	for y := range q.size - 1 {
+		for x := range q.size - 1 {
+			c := q.dark[y][x]
+			if q.dark[y][x+1] == c && q.dark[y+1][x] == c && q.dark[y+1][x+1] == c {
+				p += 3
 			}
 		}
 	}
 
+	return p
+}
+
+// balancePenalty scores the deviation of the dark share from 50%.
+func (q *qr) balancePenalty() int {
 	darkCount := 0
 
-	for y := range n {
-		for x := range n {
+	for y := range q.size {
+		for x := range q.size {
 			if q.dark[y][x] {
 				darkCount++
 			}
-
-			if x+1 < n && y+1 < n {
-				c := q.dark[y][x]
-				if q.dark[y][x+1] == c && q.dark[y+1][x] == c && q.dark[y+1][x+1] == c {
-					p += 3
-				}
-			}
 		}
 	}
 
-	pct := darkCount * 100 / (n * n)
-	p += abs(pct-50) / 5 * 10
+	pct := darkCount * 100 / (q.size * q.size)
 
-	return p
+	return abs(pct-50) / 5 * 10
 }
