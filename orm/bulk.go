@@ -52,7 +52,6 @@ func CreateMany[T any](ctx context.Context, ex database.Executor, models []T) er
 	return createMany(ctx, ex, models, maxParams(ex.Dialect()))
 }
 
-//nolint:gocognit // batching with per-dialect limits; kept in one pass
 func createMany[T any](ctx context.Context, ex database.Executor, models []T, limit int) error {
 	if len(models) == 0 {
 		return nil
@@ -76,48 +75,20 @@ func createMany[T any](ctx context.Context, ex database.Executor, models []T, li
 		return err
 	}
 
-	var fields []field
-
-	for _, f := range m.fields {
-		if !f.readonly && (!genID || f.column != m.pk) {
-			fields = append(fields, f)
-		}
-	}
-
+	fields := insertFields(m, genID)
 	if len(fields) == 0 {
 		return fmt.Errorf("orm: CreateMany %s: no columns to insert besides the generated key", m.table)
 	}
 
 	insert := func(ex database.Executor) error {
-		if genID && ex.Dialect().Name() == "mysql" {
-			for i := range models {
-				if err := insertOne(ctx, ex, m, reflect.ValueOf(&models[i]).Elem()); err != nil {
-					return err
-				}
-			}
-
-			return nil
-		}
-
-		perBatch := max(1, limit/len(fields))
-
-		for batch := range slices.Chunk(models, perBatch) {
-			if err := insertBatch(ctx, ex, m, fields, batch, genID); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return insertAll(ctx, ex, m, fields, models, genID, limit)
 	}
 
 	if err := inTx(ctx, ex, insert); err != nil {
 		// Only a transaction started here is surely rolled back; elsewhere
 		// written rows may persist, so their ids stay.
 		if _, own := ex.(*database.DB); own && genID {
-			for i := range models {
-				pk := reflect.ValueOf(&models[i]).Elem().FieldByIndex(m.byColumn[m.pk].index)
-				pk.SetZero()
-			}
+			clearIDs(m, models)
 		}
 
 		return err
@@ -130,6 +101,53 @@ func createMany[T any](ctx context.Context, ex database.Executor, models []T, li
 	}
 
 	return nil
+}
+
+// insertFields lists the columns CreateMany writes: every writable one,
+// minus the primary key when the database generates it.
+func insertFields(m *meta, genID bool) []field {
+	var fields []field
+
+	for _, f := range m.fields {
+		if !f.readonly && (!genID || f.column != m.pk) {
+			fields = append(fields, f)
+		}
+	}
+
+	return fields
+}
+
+// insertAll writes models in batches under limit bound parameters, or one
+// row per INSERT on MySQL when the ids are generated.
+func insertAll[T any](
+	ctx context.Context, ex database.Executor, m *meta, fields []field, models []T, genID bool, limit int,
+) error {
+	if genID && ex.Dialect().Name() == "mysql" {
+		for i := range models {
+			if err := insertOne(ctx, ex, m, reflect.ValueOf(&models[i]).Elem()); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	perBatch := max(1, limit/len(fields))
+
+	for batch := range slices.Chunk(models, perBatch) {
+		if err := insertBatch(ctx, ex, m, fields, batch, genID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func clearIDs[T any](m *meta, models []T) {
+	for i := range models {
+		pk := reflect.ValueOf(&models[i]).Elem().FieldByIndex(m.byColumn[m.pk].index)
+		pk.SetZero()
+	}
 }
 
 // generatedIDs reports whether the database assigns the primary keys:
