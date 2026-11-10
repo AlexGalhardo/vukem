@@ -818,10 +818,24 @@ func (p *Panel) audit(c *web.Ctx) error {
 		return err
 	}
 
-	q := orm.QueryOf[AuditLog](p.cfg.DB).OrderBy("id", orm.Desc)
-	if res := c.Query("resource"); res != "" && (p.slugs[res] || res == FlagsResource) {
-		q = q.Where("resource", res)
+	// Entries carry record values, so only resources the reader may list are shown (A01).
+	allowed := []any{}
+
+	for _, r := range p.resources {
+		if p.can(c, AbilityViewAny, r.subject()) {
+			allowed = append(allowed, r.info().slug)
+		}
 	}
+
+	if p.hasFlags() && p.can(c, AbilityFlags, nil) {
+		allowed = append(allowed, FlagsResource)
+	}
+
+	if res := c.Query("resource"); res != "" && (p.slugs[res] || res == FlagsResource) {
+		allowed = slices.DeleteFunc(allowed, func(s any) bool { return s != res })
+	}
+
+	q := orm.QueryOf[AuditLog](p.cfg.DB).WhereIn("resource", allowed...).OrderBy("id", orm.Desc)
 
 	pg, err := q.Paginate(c.Context(), max(c.QueryInt("page", 1), 1), 50)
 	if err != nil {
