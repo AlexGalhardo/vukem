@@ -16,11 +16,12 @@ export async function ChangelogPage(): Promise<React.ReactElement> {
     .filter((h) => h.depth === 2 && /^\[\d/.test(h.text))
     .map((h) => ({ ...h, text: h.text.replace(/^\[([^\]]+)\]\s+-\s+/, "$1 — ") }));
   return (
-    <div className="mx-auto flex max-w-[90rem] justify-center gap-12 px-4 sm:px-6">
-      <aside className="sticky top-(--header-h) hidden h-[calc(100dvh-var(--header-h))] w-56 shrink-0 overflow-y-auto py-10 scroll-slim xl:block">
+    // Same frame as the docs (DocsFrame): the release index sits where the docs sidebar does.
+    <div className="mx-auto flex max-w-[90rem] px-4 sm:px-6">
+      <aside className="sticky top-(--header-h) hidden h-[calc(100dvh-var(--header-h))] w-64 shrink-0 overflow-y-auto py-8 pr-6 scroll-slim lg:block">
         <Toc headings={releases} label={t.releases} />
       </aside>
-      <main id="content" className="min-w-0 w-full max-w-3xl py-10">
+      <main id="content" className="min-w-0 flex-1 py-10 lg:pl-8 xl:max-w-4xl">
         <header className="mb-10">
           <h1 className="text-3xl font-semibold tracking-tight text-fg sm:text-[2.125rem]">{t.changelogTitle}</h1>
           <p className="mt-3 text-lg leading-relaxed text-muted">{t.changelogDescription}</p>
