@@ -2,6 +2,7 @@ package tests
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/AlexGalhardo/vukem/examples/blog/app/accounts"
@@ -43,7 +44,7 @@ func user(t *testing.T, app *vukemtest.App, email string) models.User {
 		t.Fatal(err)
 	}
 
-	u := models.User{Name: email, Email: email, Password: h}
+	u := models.User{Name: strings.Split(email, "@")[0], Email: email, Password: h}
 	u.EmailVerifiedAt.Valid = true
 
 	if err := orm.Create(t.Context(), acc.DB, &u); err != nil {
