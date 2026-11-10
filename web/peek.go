@@ -28,6 +28,12 @@ func PeekJSON(r *http.Request) (map[string]any, error) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 
+	// A later LimitBody rebuilds the limit from the original body: put the
+	// bytes read here back in front of it too.
+	if bl, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit); ok {
+		bl.body = replayBody{Reader: io.MultiReader(bytes.NewReader(body), bl.body), Closer: bl.body}
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -50,4 +56,9 @@ func PeekJSON(r *http.Request) (map[string]any, error) {
 	}
 
 	return out, nil
+}
+
+type replayBody struct {
+	io.Reader
+	io.Closer
 }
