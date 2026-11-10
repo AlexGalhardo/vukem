@@ -376,3 +376,50 @@ func linkDir(t *testing.T, target, link string) {
 		t.Fatalf("mklink /J: %v: %s", jerr, out)
 	}
 }
+
+func TestSecurity_A01_SSGRefusesCollidingPaths(t *testing.T) {
+	t.Parallel()
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("x"))
+	})
+
+	tests := []struct {
+		name  string
+		pages []string
+	}{
+		{"case", []string{"/About", "/about"}},
+		{"trailing dot", []string{"/about."}},
+		{"trailing space", []string{"/about%20"}},
+		{"con", []string{"/con"}},
+		{"nul", []string{"/docs/NUL"}},
+		{"aux", []string{"/aux"}},
+		{"prn", []string{"/prn"}},
+		{"com1", []string{"/com1"}},
+		{"lpt1", []string{"/lpt1"}},
+		{"device with extension", []string{"/con.txt"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pages := make([]ssg.Page, len(tt.pages))
+			for i, p := range tt.pages {
+				pages[i] = ssg.Page{Path: p}
+			}
+
+			_, err := ssg.Generate(t.Context(), h, pages, ssg.Options{OutDir: t.TempDir()})
+			if !errors.Is(err, ssg.ErrInvalidPath) {
+				t.Fatalf("Generate(%v) = %v, want ErrInvalidPath", tt.pages, err)
+			}
+		})
+	}
+
+	both := []ssg.Page{{Path: "/About"}, {Path: "/about"}}
+
+	_, err := ssg.Generate(t.Context(), h, both, ssg.Options{OutDir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "/About") || !strings.Contains(err.Error(), "/about") {
+		t.Fatalf("collision error = %v, want both paths named", err)
+	}
+}

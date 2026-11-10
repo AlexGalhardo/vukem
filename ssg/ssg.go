@@ -126,6 +126,8 @@ func Generate(ctx context.Context, h http.Handler, pages []Page, opt Options) (R
 
 	cleaned := make([]string, len(pages))
 	rels := make([]string, len(pages))
+	// Lower-cased: Windows and macOS file systems treat names that differ by case as one file.
+	seen := make(map[string]int, len(pages))
 
 	for i, page := range pages {
 		c, err := cleanPath(page.Path)
@@ -133,8 +135,16 @@ func Generate(ctx context.Context, h http.Handler, pages []Page, opt Options) (R
 			return Report{}, err
 		}
 
+		rel := relFile(c)
+		key := strings.ToLower(rel)
+
+		if j, dup := seen[key]; dup {
+			return Report{}, fmt.Errorf("%w: %q and %q write the same file", ErrInvalidPath, pages[j].Path, page.Path)
+		}
+
+		seen[key] = i
 		cleaned[i] = c
-		rels[i] = relFile(c)
+		rels[i] = rel
 	}
 
 	root, err := prepareOut(opt.OutDir)
@@ -213,7 +223,32 @@ func cleanPath(raw string) (string, error) {
 		return "", fmt.Errorf("%w: %q", ErrInvalidPath, raw)
 	}
 
+	for seg := range strings.SplitSeq(strings.Trim(cleaned, "/"), "/") {
+		if unsafeSegment(seg) {
+			return "", fmt.Errorf("%w: %q", ErrInvalidPath, raw)
+		}
+	}
+
 	return cleaned, nil
+}
+
+// unsafeSegment reports names Windows cannot store as written: a trailing dot or
+// space is dropped, and device names (with or without an extension) are reserved.
+func unsafeSegment(seg string) bool {
+	if strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " ") {
+		return true
+	}
+
+	base, _, _ := strings.Cut(seg, ".")
+	base = strings.ToLower(strings.TrimRight(base, " "))
+
+	switch base {
+	case "con", "prn", "aux", "nul", "conin$", "conout$":
+		return true
+	}
+
+	return len(base) == 4 && (strings.HasPrefix(base, "com") || strings.HasPrefix(base, "lpt")) &&
+		base[3] >= '1' && base[3] <= '9'
 }
 
 func relFile(cleaned string) string {
