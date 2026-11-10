@@ -180,9 +180,11 @@ type Social struct {
 	States cache.Store
 	// Allow, when set, runs on every signed-in provider user before User or
 	// UserFromToken returns it, so the app looks up or creates no account
-	// for a refused user. A non-nil error refuses the sign-in with
-	// [ErrNotAllowed]. Nil admits everyone (private apps: check
-	// u.EmailVerified and an allowlist of emails or provider ids).
+	// for a refused user. Return [ErrNotAllowed] (or an error wrapping it)
+	// to refuse the sign-in; any other error means the check itself failed
+	// (a database outage, say) and answers 503, not a refusal. Nil admits
+	// everyone (private apps: check u.EmailVerified and an allowlist of
+	// emails or provider ids).
 	Allow func(ctx context.Context, u User) error
 	now   func() time.Time
 
@@ -377,19 +379,38 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 	}
 
 	if err := s.allow(c.Context(), u); err != nil {
-		web.SecurityEvent(c.Request(), "social.not_allowed", "provider", provider)
+		if errors.Is(err, ErrNotAllowed) {
+			web.SecurityEvent(c.Request(), "social.not_allowed", "provider", provider)
+		}
+
 		return User{}, err
 	}
 
 	return u, nil
 }
 
+// allow maps the hook result: nil admits, ErrNotAllowed refuses, any other
+// error is a failed check (a 503), not a refusal. The log carries the
+// provider and the error, never the user.
 func (s *Social) allow(ctx context.Context, u User) error {
-	if s.Allow == nil || s.Allow(ctx, u) == nil {
+	if s.Allow == nil {
 		return nil
 	}
 
-	return ErrNotAllowed
+	err := s.Allow(ctx, u)
+
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrNotAllowed):
+		return ErrNotAllowed
+	}
+
+	if log := web.ServicesFrom(ctx).Log; log != nil {
+		log.WarnContext(ctx, "social: allow hook failed", "provider", u.Provider, "error", err)
+	}
+
+	return errs.Wrap(http.StatusServiceUnavailable, fmt.Errorf("social: allow: %w", err))
 }
 
 // errorCode keeps an RFC 6749 error code loggable: at most 64 characters
