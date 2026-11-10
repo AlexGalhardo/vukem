@@ -27,12 +27,14 @@ func Auth(r *router.Router, app *vukem.App) error {
 	guest := auth.Guest(acc.Web)
 	required := auth.Required(acc.Web)
 	throttle := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.LoginThrottleKey)
+	// One address trying many accounts never fills the per-email budget.
+	loginByIP := ratelimit.Middleware(ratelimit.NewMemory(30, time.Minute), ratelimit.ByIP)
 	mails := ratelimit.Middleware(ratelimit.NewMemory(3, time.Minute), ratelimit.ByIP)
 
 	r.Use(shareAuth(acc))
 
 	r.Get("/login", h.ShowLogin).Name("login").Use(guest)
-	r.Post("/login", h.Login).Use(guest, throttle)
+	r.Post("/login", h.Login).Use(guest, loginByIP, throttle)
 	r.Get("/register", h.ShowRegister).Name("register").Use(guest)
 	r.Post("/register", h.Register).Use(guest)
 	r.Post("/logout", h.Logout).Name("logout").Use(required)
