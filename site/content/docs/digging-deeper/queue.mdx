@@ -294,6 +294,8 @@ CREATE INDEX jobs_queue_available ON jobs (queue, available_at);
 
 Redis comes from the `drivers/redis` module: `vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{}))`. See [Redis](/docs/database/redis) for the lazy `WithQueueDriverFunc` form that reads `REDIS_URL` from configuration.
 
+The Redis driver is also at least once, with the same reservation rule as the database driver. Each `Pop` records the score (the reservation deadline) it handed the worker, and `Ack`, `Release` and `Fail` act only while that score is still the job's. A worker that outlived its reservation, because another worker took the job over, gets `queue.ErrReservationLost` and its result is dropped, instead of deleting or requeueing the new worker's job. The driver does not support `queue.Unique` (see above).
+
 Any type implementing `queue.Driver` (`Push`, `Pop`, `Ack`, `Release`, `Fail`) can be a driver. Optional interfaces add features: `queue.FailedStore` (the failed-job commands), `queue.TxPusher` (insert inside a transaction), `queue.Clock` (follow the app clock) and `queue.Inline` (run during `Dispatch`, like `sync`). Run the conformance suite `queue/queuetest.Run(t, driver, queuetest.Options{...})` against it.
 
 ## Running workers
