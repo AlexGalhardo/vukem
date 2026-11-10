@@ -142,6 +142,8 @@ func Generate(ctx context.Context, h http.Handler, pages []Page, opt Options) (R
 		return Report{}, err
 	}
 
+	defer root.Close()
+
 	var report Report
 
 	for i := range pages {
@@ -222,23 +224,23 @@ func relFile(cleaned string) string {
 	return strings.TrimPrefix(cleaned, "/") + "/index.html"
 }
 
-func prepareOut(dir string) (string, error) {
+func prepareOut(dir string) (*os.Root, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return "", fmt.Errorf("ssg: output directory: %w", err)
+		return nil, fmt.Errorf("ssg: output directory: %w", err)
 	}
 
 	// Published pages must stay readable by a static server running as another user.
 	if err := os.MkdirAll(abs, 0o755); err != nil { //nolint:gosec // G301: world-traversable output dir
-		return "", fmt.Errorf("ssg: output directory: %w", err)
+		return nil, fmt.Errorf("ssg: output directory: %w", err)
 	}
 
-	resolved, err := filepath.EvalSymlinks(abs)
+	root, err := os.OpenRoot(abs)
 	if err != nil {
-		return "", fmt.Errorf("ssg: output directory: %w", err)
+		return nil, fmt.Errorf("ssg: output directory: %w", err)
 	}
 
-	return resolved, nil
+	return root, nil
 }
 
 func render(ctx context.Context, h http.Handler, host, pagePath string) ([]byte, error) {
@@ -270,59 +272,52 @@ func render(ctx context.Context, h http.Handler, host, pagePath string) ([]byte,
 	return rec.body.Bytes(), nil
 }
 
-func writePage(root, rel string, body []byte) error {
+func writePage(root *os.Root, rel string, body []byte) error {
 	if !filepath.IsLocal(rel) {
 		return fmt.Errorf("%w: %s", ErrEscape, rel)
 	}
 
-	dest := filepath.Join(root, filepath.FromSlash(rel))
-	if err := inside(root, dest); err != nil {
-		return err
+	if err := root.MkdirAll(path.Dir(rel), 0o755); err != nil {
+		return rootErr(rel, err)
 	}
 
-	parent := filepath.Dir(dest)
-	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // G301: world-traversable output dir
-		return err
-	}
-
-	resolvedParent, err := filepath.EvalSymlinks(parent)
-	if err != nil {
-		return err
-	}
-
-	resolved := filepath.Join(resolvedParent, filepath.Base(dest))
-	if err := inside(root, resolvedParent); err != nil {
-		return err
-	}
-
-	if err := inside(root, resolved); err != nil {
-		return err
-	}
-
-	info, err := os.Lstat(dest)
-	if err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%w: %s", ErrEscape, rel)
-	}
-
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	// Write beside the target and rename, so an existing hard link is replaced, not truncated.
+	tmp := rel + ".ssg-tmp"
+	if err := root.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return rootErr(rel, err)
 	}
 
 	// Public pages, not secrets: a static server running as another user must be able to read them.
-	if err := os.WriteFile(dest, body, 0o644); err != nil { //nolint:gosec // G306: prerendered HTML is public
-		return err
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return rootErr(rel, err)
+	}
+
+	_, err = f.Write(body)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+
+	if err == nil {
+		err = root.Rename(tmp, rel)
+	}
+
+	if err != nil {
+		_ = root.Remove(tmp)
+
+		return rootErr(rel, err)
 	}
 
 	return nil
 }
 
-func inside(root, target string) error {
-	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(target))
-	if err != nil || (rel != "." && !filepath.IsLocal(rel)) {
-		return fmt.Errorf("%w: %s", ErrEscape, target)
+// rootErr maps the os.Root escape error, which has no exported sentinel, to ErrEscape.
+func rootErr(rel string, err error) error {
+	if strings.Contains(err.Error(), "escapes from parent") {
+		return fmt.Errorf("%w: %s", ErrEscape, rel)
 	}
 
-	return nil
+	return err
 }
 
 // capture buffers a response up to MaxBody without a socket.
