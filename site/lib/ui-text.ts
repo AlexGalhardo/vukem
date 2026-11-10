@@ -4,6 +4,7 @@ export const t = {
   logoLabel: "Vukem documentation",
   githubTooltip: "GitHub repository",
   githubLabel: "Vukem on GitHub",
+  agents: "Agents",
   changelog: "Changelog",
   changelogTitle: "Changelog",
   changelogDescription: "Every release of Vukem, with a link to the commit behind each change.",

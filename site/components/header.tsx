@@ -31,6 +31,14 @@ export function Header({ groupsByVersion }: { groupsByVersion: Record<string, Na
           <SearchDialog />
         </div>
         <div className="flex items-center justify-end gap-1 sm:gap-2">
+          <a
+            href="/llms.txt"
+            target="_blank"
+            rel="noreferrer"
+            className="hidden h-8 items-center rounded-lg px-2.5 text-sm font-medium text-muted transition-colors hover:bg-hover hover:text-fg sm:inline-flex"
+          >
+            {t.agents}
+          </a>
           <Link
             href="/changelog"
             className="hidden h-8 items-center rounded-lg px-2.5 text-sm font-medium text-muted transition-colors hover:bg-hover hover:text-fg sm:inline-flex"
