@@ -300,6 +300,10 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 		return 0, q.err
 	}
 
+	if err := q.limited("Update"); err != nil {
+		return 0, err
+	}
+
 	if len(set) == 0 {
 		return 0, errors.New("orm: Update needs at least one column")
 	}
@@ -356,12 +360,25 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 	return res.RowsAffected()
 }
 
+// limited reports a write that would silently ignore its row limit.
+func (q Query[T]) limited(op string) error {
+	if len(q.orders) > 0 || q.limit >= 0 || q.offset > 0 {
+		return fmt.Errorf("orm: %s applies to every matching row; remove OrderBy, Limit and Offset", op)
+	}
+
+	return nil
+}
+
 // Delete removes every matching row (soft-deleting for SoftDeletes models
 // unless WithTrashed/OnlyTrashed was used, which deletes for real) and
 // returns the count.
 func (q Query[T]) Delete(ctx context.Context) (int64, error) {
 	if q.err != nil {
 		return 0, q.err
+	}
+
+	if err := q.limited("Delete"); err != nil {
+		return 0, err
 	}
 
 	if q.m.soft && q.trashed == 0 {
