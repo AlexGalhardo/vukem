@@ -6,8 +6,9 @@
 // (PNG, GIF and WebP orientation is ignored); every other metadata (EXIF,
 // GPS) is dropped on re-encoding. Animated GIFs become a still of their
 // first frame. WebP is decoded only: there is no encoder in the standard
-// library or golang.org/x/image. Output is deterministic for one Go toolchain (same bytes and Options give the same
-// file), not across Go releases. Peak memory per call is roughly the
+// library or golang.org/x/image. Output is deterministic for one Go
+// toolchain (same bytes and Options give the same file), not across Go
+// releases. Peak memory per call is roughly the
 // source file plus its decoded pixels (up to ~8 bytes per pixel for 16-bit
 // PNG): bound concurrency, for example by making thumbnails in a queue job.
 //
