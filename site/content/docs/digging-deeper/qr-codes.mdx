@@ -56,7 +56,7 @@ func main() {
 
 `Scale` is the size of one module in pixels. `0` means 8, and the accepted range is 1 to 32. `Level` is `Low`, `Medium`, `Quartile` or `High`. The zero value is `Low`.
 
-The quiet zone defaults to 4 modules. Pass a pointer when you want another width, including zero:
+The quiet zone defaults to 4 modules and accepts 0 to 16. Pass a pointer when you want another width, including zero:
 
 ```go title="quiet.go"
 package main
@@ -93,4 +93,4 @@ func main() {
 }
 ```
 
-`GET /qr?data=https%3A%2F%2Fexample.com` returns the image. A missing `data` value is 400. Any method other than GET or HEAD is 405. A payload that cannot be encoded is 400, and the response does not echo it. This example is a plain `ServeMux`. It is not wired into an application.
+`GET /qr?data=https%3A%2F%2Fexample.com` returns the image. A missing `data` value is 400. Any method other than GET or HEAD is 405. A payload that cannot be encoded is 400, and the response does not echo it. Invalid `Options` (a `Scale` or `Quiet` out of range) are 500, because they are your configuration, not the request. This example is a plain `ServeMux`. It is not wired into an application.
