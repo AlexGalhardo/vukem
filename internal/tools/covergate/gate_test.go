@@ -101,7 +101,9 @@ func TestExcluded(t *testing.T) {
 
 	tests := map[string]bool{
 		"": false, "router": false, "auth/jwt": false, "vukemtest": false, "cmdline": false,
-		"cmd": true, "cmd/vukem": true, "internal/tools/release": true,
+		"cmd": true, "cmd/vukem": true, "internal/tools/release": true, "internal/tools": true,
+		"internal/bench": true, "internal/testutil": true, "internal/cli": true, "internal/cli/starter": true,
+		"internal/disposition": false, "internal/principal": false, "internal/sqlscan": false, "internal": false,
 		"cache/cachetest": true, "queue/queuetest": true, "storage/storagetest": true, "database/dbtest": true,
 		"session/sessiontest": true,
 	}
@@ -149,7 +151,7 @@ func TestRun(t *testing.T) {
 		{
 			name:       "all pass",
 			content:    strictProfile(m + "/cache/c.go:1.1,2.2 1 1"),
-			wantStdout: []string{"covergate: 17 core packages meet their gate"},
+			wantStdout: []string{"covergate: 22 core packages meet their gate"},
 		},
 		{
 			name:       "verbose lists every package",
@@ -169,7 +171,7 @@ func TestRun(t *testing.T) {
 			content:    profile(m + "/cache/c.go:1.1,2.2 1 1"),
 			wantCode:   1,
 			wantStdout: []string{"FAIL router", "missing from the profile"},
-			wantStderr: "16 package(s) below",
+			wantStderr: "21 package(s) below",
 		},
 		{name: "no args", wantCode: 2, wantStderr: "usage"},
 		{name: "bad flag", flags: []string{"-x", "f"}, wantCode: 2},
