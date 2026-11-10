@@ -65,6 +65,7 @@ Return errors the way you do in any handler. The server turns them into JSON-RPC
 | --- | --- | --- |
 | `*jsonrpc.Error{Code, Message, Data}` | your code | your message, plus `data` |
 | `*errs.ValidationError`, or params that fail validation | `-32602` | `Invalid params`, with `data.fields` |
+| a `*errs.ValidationError` wrapped as a 5xx (`errs.Wrap(500, verr)`) | `-32603` | `Internal error`, with no `data.fields`: internal data never reaches the client |
 | a 4xx `*errs.HTTPError`, such as `errs.ErrNotFound` | `-32000 - (status - 400)`, so 404 is `-32004` | the error's client-safe message, with `data.status` |
 | any other error, or a panic | `-32603` | `Internal error`, nothing else |
 
