@@ -153,7 +153,13 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeResult(w, media, http.StatusOK, h.s.run(r.Context(), p))
+	// run refuses a subscription here: answer it like the other request errors.
+	status = http.StatusOK
+	if p.op.kind == opSubscription {
+		status = requestStatus(media)
+	}
+
+	writeResult(w, media, status, h.s.run(r.Context(), p))
 }
 
 // requestStatus is the status of a request error (parse, validation,
