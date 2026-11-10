@@ -3,6 +3,8 @@
 package account
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
 
@@ -21,6 +23,24 @@ type Handlers struct {
 
 // New returns the handlers.
 func New(a *accounts.Accounts) *Handlers { return &Handlers{a: a} }
+
+// RegisterThrottleKey limits sign-ups per address. It keys on a hash of
+// the normalized email, so the limiter store holds no addresses.
+func RegisterThrottleKey(r *http.Request) string {
+	if r.Method != http.MethodPost {
+		return ""
+	}
+
+	email := auth.RequestEmail(r, "email")
+	if email == "" {
+		// Unreadable email: a bucket per IP, never one shared by everybody.
+		return "register-unparsed:" + ratelimit.ByIP(r)
+	}
+
+	sum := sha256.Sum256([]byte(email))
+
+	return "register:" + hex.EncodeToString(sum[:])
+}
 
 // LoginThrottleKey limits login attempts per email and IP.
 func LoginThrottleKey(r *http.Request) string {
@@ -54,24 +74,24 @@ func (h *Handlers) Login(c *web.Ctx) error {
 // ShowRegister renders the registration form.
 func (*Handlers) ShowRegister(c *web.Ctx) error { return c.Render("auth/register", nil) }
 
-// Register creates the account, logs in and asks for email verification.
+// Register answers the same for new and existing emails (no account
+// enumeration) and does not log in: the user is asked to check the inbox,
+// where the verification link waits.
 func (h *Handlers) Register(c *web.Ctx) error {
 	in, err := web.Parse(c, requests.RegisterSchema)
 	if err != nil {
 		return err
 	}
 
-	u, err := h.a.Register(c.Context(), in)
-	if err != nil {
+	if err := h.a.Register(c.Context(), in); err != nil {
 		return err
 	}
 
-	if err := h.a.Web.Login(c, u); err != nil {
-		return err
-	}
-
-	return c.Redirect("/email/verify")
+	return c.Redirect("/register/check-email")
 }
+
+// CheckEmail is the page shown after every sign-up attempt.
+func (*Handlers) CheckEmail(c *web.Ctx) error { return c.Render("auth/check-email", nil) }
 
 // Logout signs the user out.
 func (h *Handlers) Logout(c *web.Ctx) error {
