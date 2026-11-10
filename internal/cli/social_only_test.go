@@ -115,10 +115,13 @@ func TestInstallAuthRefusesBeforeWriting(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "templ project",
-			files: map[string]string{"go.mod": "module example.com/app\n\ngo 1.27\n", "views/a.templ": "package views\n"},
-			args:  []string{"install:auth"},
-			want:  "templ projects are not supported yet",
+			name: "templ project",
+			files: map[string]string{
+				"go.mod":        "module example.com/app\n\ngo 1.27\n",
+				"views/a.templ": "package views\n",
+			},
+			args: []string{"install:auth"},
+			want: "templ projects are not supported yet",
 		},
 		{
 			name:  "unknown locale",
