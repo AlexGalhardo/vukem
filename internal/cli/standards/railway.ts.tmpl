@@ -19,6 +19,12 @@ export default defineRailway(() => {
   const env = {
     APP_KEY: preserve(),
     APP_URL: preserve(),
+    // The Postgres driver defaults remote hosts to sslmode=verify-full, and
+    // Railway's Postgres serves TLS with its own certificate on the private
+    // network. If the boot fails with a TLS error, set DATABASE_URL in
+    // Railway to the Postgres DATABASE_URL reference followed by
+    // ?sslmode=require (TLS without certificate checks) and keep it here
+    // with preserve().
     DATABASE_URL: db.env.DATABASE_URL,
 
     // Railway's edge is observed at 100.64.0.x and sets X-Real-IP. Without
