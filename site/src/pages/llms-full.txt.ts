@@ -6,7 +6,7 @@ import { site } from "@/lib/site";
 export const prerender = true;
 
 export const GET: APIRoute = () => {
-  const parts = [`# ${site.name} documentation`, "", `> ${site.tagline}`, ""];
+  const parts = [`# ${site.name} documentation`, ""];
 
   for (const doc of getAllDocs()) {
     parts.push("---", "", `# ${doc.title}`, "", `Source: ${site.url}${doc.href}/`, "", `> ${doc.description}`, "", mdxToMarkdown(doc.body), "");

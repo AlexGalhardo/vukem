@@ -9,7 +9,7 @@ export const GET: APIRoute = () => {
   const lines = [
     `# ${site.name}`,
     "",
-    `> ${site.tagline} Vukem is a web framework built on net/http for REST APIs and full-stack apps.`,
+    `> Vukem is a web framework built on net/http for REST APIs and full-stack apps.`,
     "",
     `Full documentation in one file: ${site.url}/llms-full.txt`,
     "",

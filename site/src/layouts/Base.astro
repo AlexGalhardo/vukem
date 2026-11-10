@@ -17,7 +17,7 @@ interface Props {
   progress?: boolean;
 }
 
-const { title, description = site.tagline, canonical, progress = false } = Astro.props;
+const { title, description = "Vukem is a web framework built on net/http for REST APIs and full-stack apps.", canonical, progress = false } = Astro.props;
 const fullTitle = title.includes(site.name) ? title : `${title} — ${site.name}`;
 const groupsByVersion = getNavGroupsByVersion();
 ---
