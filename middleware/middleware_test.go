@@ -948,6 +948,10 @@ func TestGzip(t *testing.T) {
 			fmt.Fprint(w, "chunk")
 			_ = http.NewResponseController(w).Flush()
 			fmt.Fprint(w, big)
+		case "/flushfirst":
+			w.Header().Set("Content-Type", "text/plain")
+			_ = http.NewResponseController(w).Flush()
+			fmt.Fprint(w, big)
 		case "/empty":
 			w.WriteHeader(http.StatusNoContent)
 		}
@@ -987,6 +991,10 @@ func TestGzip(t *testing.T) {
 	rec = req("/stream", true)
 	if rec.Header().Get("Content-Encoding") != "" || !rec.Flushed {
 		t.Errorf("stream: encoding=%q flushed=%v", rec.Header().Get("Content-Encoding"), rec.Flushed)
+	}
+
+	if rec := req("/flushfirst", true); rec.Code != http.StatusOK || rec.Body.String() != big {
+		t.Errorf("flushfirst = %d, body length %d, want 200 and the plain body", rec.Code, rec.Body.Len())
 	}
 
 	if rec := req("/empty", true); rec.Code != 204 || rec.Header().Get("Content-Encoding") != "" {
