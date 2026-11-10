@@ -78,29 +78,14 @@ func New(cfg Config) (*Vite, error) {
 
 // Tags returns the HTML that loads entries (manifest keys such as
 // "resources/js/app.ts"). nonce is the request's CSP nonce ("" for none).
-//
-//nolint:gocognit // manifest walk with dedupe; steps share state
 func (v *Vite) Tags(nonce string, entries ...string) (template.HTML, error) {
 	hot, err := v.hot()
 	if err != nil {
 		return "", err
 	}
 
-	var b strings.Builder
-
 	if hot != "" {
-		b.WriteString(script(hot+"/@vite/client", "", nonce))
-
-		for _, e := range entries {
-			u := hot + "/" + strings.TrimPrefix(e, "/")
-			if isCSS(e) {
-				b.WriteString(stylesheet(u, "", nonce))
-			} else {
-				b.WriteString(script(u, "", nonce))
-			}
-		}
-
-		return trustedHTML(b.String()), nil
+		return trustedHTML(hotTags(hot, nonce, entries)), nil
 	}
 
 	m, err := v.load()
@@ -114,6 +99,33 @@ func (v *Vite) Tags(nonce string, entries ...string) (template.HTML, error) {
 		return "", err
 	}
 
+	out, err := v.manifestTags(m, nonce, entries)
+	if err != nil {
+		return "", err
+	}
+
+	return trustedHTML(out), nil
+}
+
+func hotTags(hot, nonce string, entries []string) string {
+	var b strings.Builder
+
+	b.WriteString(script(hot+"/@vite/client", "", nonce))
+
+	for _, e := range entries {
+		u := hot + "/" + strings.TrimPrefix(e, "/")
+		if isCSS(e) {
+			b.WriteString(stylesheet(u, "", nonce))
+		} else {
+			b.WriteString(script(u, "", nonce))
+		}
+	}
+
+	return b.String()
+}
+
+// manifestTags renders preloads, then styles, then scripts, each file once.
+func (v *Vite) manifestTags(m manifest, nonce string, entries []string) (string, error) {
 	var preloads, styles, scripts []string
 
 	seen := map[string]bool{}
@@ -152,13 +164,15 @@ func (v *Vite) Tags(nonce string, entries ...string) (template.HTML, error) {
 		}
 	}
 
+	var b strings.Builder
+
 	for _, tags := range [][]string{preloads, styles, scripts} {
 		for _, t := range tags {
 			b.WriteString(t)
 		}
 	}
 
-	return trustedHTML(b.String()), nil
+	return b.String(), nil
 }
 
 // ReactRefresh returns the @vitejs/plugin-react preamble while the dev
