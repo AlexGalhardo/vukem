@@ -14,7 +14,7 @@ You will learn:
 
 ## Versions
 
-Vukem uses [Semantic Versioning](https://semver.org/): `vMAJOR.MINOR.PATCH`. Until `v1.0.0`, a minor release (`v0.34.0`) may still change APIs; each such change is listed in the changelog with an upgrade guide. From `v1.0.0` on, the promise below applies.
+Vukem uses [Semantic Versioning](https://semver.org/): `vMAJOR.MINOR.PATCH`. Until `v1.0.0`, a minor release (`v0.40.0`) may still change APIs; each such change is listed in the changelog with an upgrade guide. From `v1.0.0` on, the promise below applies.
 
 Every release:
 
@@ -27,7 +27,7 @@ Optional modules (`drivers/*`, `contrib/*`) are released with their own tags (`c
 To upgrade an app:
 
 ```bash title="terminal"
-go get github.com/AlexGalhardo/vukem@v0.34.0
+go get github.com/AlexGalhardo/vukem@v0.40.0
 go mod tidy
 go test ./...
 ```
@@ -63,7 +63,7 @@ Any other breaking change waits for a new major version with a new module path (
 
 ## Supported Go versions
 
-Each release supports the **two latest Go releases**, like the Go project itself. The minimum Go version in `go.mod` only moves forward in a minor release, and its upgrade guide says so.
+The minimum Go version is the one in `go.mod` (Go 1.27 today). From `v1.0.0`, each release supports the **two latest Go releases**, like the Go project itself; the window starts to apply when Go 1.28 ships. The minimum version in `go.mod` only moves forward in a minor release, and its upgrade guide says so.
 
 ## Security fixes
 
