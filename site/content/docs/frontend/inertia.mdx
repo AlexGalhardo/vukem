@@ -77,6 +77,10 @@ func (pc *PostController) Index(c *web.Ctx) error {
 		return err
 	}
 
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, map[string]any{"data": posts})
+	}
+
 	return inertia.Render(c, "Posts/Index", inertia.Props{
 		"posts":   posts,
 		"filters": map[string]string{"q": c.Query("q")},
@@ -135,10 +139,13 @@ The root view is a normal `html/template` view. It receives `inertia.RootData`:
 
 ```html title="resources/views/app.html"
 {{/* layout: none */}}<!doctype html>
-<html lang="{{or locale "en"}}">
+<html lang="{{or locale "en"}}" data-hydrating>
 <head>
 	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Vukem</title>
 	<meta property="csp-nonce" nonce="{{cspNonce}}">
+	{{analytics}}
 	{{viteReactRefresh}}
 	{{vite "resources/css/app.css" "resources/js/app.tsx"}}
 	{{.Head}}
@@ -148,6 +155,8 @@ The root view is a normal `html/template` view. It receives `inertia.RootData`:
 </body>
 </html>
 ```
+
+`{{analytics}}` writes the head tags of the enabled [analytics](/docs/digging-deeper/analytics) providers, and nothing when none is on. The starter's `<body>` also carries Tailwind classes for the light and dark theme.
 
 | `RootData` field | Contains |
 | --- | --- |

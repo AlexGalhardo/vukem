@@ -120,7 +120,8 @@ The plugin takes three options:
 What the plugin does:
 
 - On `vite build` it writes to `resources/public/build`, with `manifest: true` and `base: "/build/"`, and empties the folder first.
-- On `vite` (dev) it writes `resources/public/hot` with the server URL once the server listens, and deletes it on exit (`SIGINT`, `SIGTERM`, `SIGHUP`).
+- On `vite` (dev) it writes `resources/public/hot` with the server URL once the server listens, and deletes it on exit (`exit`, `SIGINT`, `SIGTERM`, `SIGHUP`).
+- On `vite build --ssr` (`vukem build -ssr`) it writes the Inertia server bundle to `bootstrap/ssr` and leaves the client build alone; see [Inertia](/docs/frontend/inertia#server-side-rendering).
 - It turns Vite's own `publicDir` off. The Go app serves `resources/public`; the dev server does not.
 - It rewrites asset URLs inside CSS and JS to point at the dev server.
 
