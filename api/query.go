@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"slices"
 	"strconv"
@@ -118,8 +119,6 @@ func (r Request[T]) CursorPaginate(ctx context.Context, dir orm.Direction) (orm.
 // field or include is a 400 problem naming the allowed values, so request
 // input never chooses columns freely. A ?page above MaxPage or a filter
 // with more than MaxFilterValues values is a 400 too.
-//
-//nolint:gocognit // one pass over each allowlisted query parameter; kept flat to read top-down
 func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error) {
 	s := spec{perPage: 20, maxPerPage: 100, maxPage: DefaultMaxPage, maxFilterValues: DefaultMaxFilterValues}
 	for _, o := range opts {
@@ -134,66 +133,17 @@ func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error
 
 	req.PerPage = min(max(c.QueryInt("per_page", s.perPage), 1), s.maxPerPage)
 
-	for key, vals := range values {
-		col, ok := strings.CutPrefix(key, "filter[")
-		if !ok {
-			continue
-		}
-
-		col, ok = strings.CutSuffix(col, "]")
-		if !ok || !slices.Contains(s.filters, col) {
-			return req, unknown("filter", col, s.filters)
-		}
-
-		parts := strings.Split(vals[len(vals)-1], ",")
-		if len(parts) > s.maxFilterValues {
-			return req, errs.New(http.StatusBadRequest,
-				fmt.Sprintf("Query parameter filter[%s] accepts at most %d values.", col, s.maxFilterValues))
-		}
-		args := make([]any, len(parts))
-
-		for i, p := range parts {
-			args[i] = filterValue(p)
-		}
-
-		if len(args) == 1 {
-			q = q.Where(col, args[0])
-		} else {
-			q = q.WhereIn(col, args...)
-		}
+	q, err := applyFilters(q, values, s)
+	if err != nil {
+		return req, err
 	}
 
-	if f := values.Get("fields"); f != "" {
-		cols := strings.Split(f, ",")
-		for _, col := range cols {
-			if !slices.Contains(s.fields, col) {
-				return req, unknown("field", col, s.fields)
-			}
-		}
-
-		q = q.Select(cols...)
+	if q, err = applyFields(q, values.Get("fields"), s); err != nil {
+		return req, err
 	}
 
-	if inc := values.Get("include"); inc != "" {
-		relations := relationNames[T]()
-
-		var loaded []string
-
-		for rel := range strings.SplitSeq(inc, ",") {
-			if !slices.Contains(s.includes, rel) {
-				return req, unknown("include", rel, s.includes)
-			}
-
-			req.Includes = append(req.Includes, rel)
-
-			if name, ok := relations[rel]; ok && !slices.Contains(loaded, name) {
-				loaded = append(loaded, name)
-			}
-		}
-
-		if len(loaded) > 0 {
-			q = q.With(loaded...)
-		}
+	if q, err = applyIncludes(q, &req, values.Get("include"), s); err != nil {
+		return req, err
 	}
 
 	// The endpoint's maximum replaces orm.DefaultMaxPerPage, which would
@@ -210,6 +160,92 @@ func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error
 		sorts = s.sorts[len(s.sorts)-1]
 	}
 
+	if q, err = applySorts(q, sorts, s); err != nil {
+		return req, err
+	}
+
+	req.Query = q
+
+	return req, nil
+}
+
+func applyFilters[T any](q orm.Query[T], values url.Values, s spec) (orm.Query[T], error) {
+	for key, vals := range values {
+		col, ok := strings.CutPrefix(key, "filter[")
+		if !ok {
+			continue
+		}
+
+		col, ok = strings.CutSuffix(col, "]")
+		if !ok || !slices.Contains(s.filters, col) {
+			return q, unknown("filter", col, s.filters)
+		}
+
+		parts := strings.Split(vals[len(vals)-1], ",")
+		if len(parts) > s.maxFilterValues {
+			return q, errs.New(http.StatusBadRequest,
+				fmt.Sprintf("Query parameter filter[%s] accepts at most %d values.", col, s.maxFilterValues))
+		}
+		args := make([]any, len(parts))
+
+		for i, p := range parts {
+			args[i] = filterValue(p)
+		}
+
+		if len(args) == 1 {
+			q = q.Where(col, args[0])
+		} else {
+			q = q.WhereIn(col, args...)
+		}
+	}
+
+	return q, nil
+}
+
+func applyFields[T any](q orm.Query[T], f string, s spec) (orm.Query[T], error) {
+	if f == "" {
+		return q, nil
+	}
+
+	cols := strings.Split(f, ",")
+	for _, col := range cols {
+		if !slices.Contains(s.fields, col) {
+			return q, unknown("field", col, s.fields)
+		}
+	}
+
+	return q.Select(cols...), nil
+}
+
+func applyIncludes[T any](q orm.Query[T], req *Request[T], inc string, s spec) (orm.Query[T], error) {
+	if inc == "" {
+		return q, nil
+	}
+
+	relations := relationNames[T]()
+
+	var loaded []string
+
+	for rel := range strings.SplitSeq(inc, ",") {
+		if !slices.Contains(s.includes, rel) {
+			return q, unknown("include", rel, s.includes)
+		}
+
+		req.Includes = append(req.Includes, rel)
+
+		if name, ok := relations[rel]; ok && !slices.Contains(loaded, name) {
+			loaded = append(loaded, name)
+		}
+	}
+
+	if len(loaded) > 0 {
+		q = q.With(loaded...)
+	}
+
+	return q, nil
+}
+
+func applySorts[T any](q orm.Query[T], sorts string, s spec) (orm.Query[T], error) {
 	for item := range strings.SplitSeq(sorts, ",") {
 		if item == "" {
 			continue
@@ -217,7 +253,7 @@ func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error
 
 		col, desc := strings.CutPrefix(item, "-")
 		if !slices.Contains(s.sorts, col) && !slices.Contains(s.sorts, "-"+col) {
-			return req, unknown("sort", item, s.sorts)
+			return q, unknown("sort", item, s.sorts)
 		}
 
 		dir := orm.Asc
@@ -228,9 +264,7 @@ func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error
 		q = q.OrderBy(col, dir)
 	}
 
-	req.Query = q
-
-	return req, nil
+	return q, nil
 }
 
 // relationNames maps the public spellings of T's relations (Go field name,
