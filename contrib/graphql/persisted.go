@@ -107,6 +107,10 @@ func (s *MemoryStore) Put(_ context.Context, hash, query string) error {
 	}
 
 	if s.max > 0 {
+		if len(query) > MaxMemoryStoreBytes {
+			return nil // evicting everything would still not make room
+		}
+
 		for len(s.order) > 0 && (len(s.order) >= s.max || s.bytes+len(query) > MaxMemoryStoreBytes) {
 			s.bytes -= len(s.m[s.order[0]])
 			delete(s.m, s.order[0])
