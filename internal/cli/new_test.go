@@ -189,6 +189,17 @@ func TestNewUsage(t *testing.T) {
 	if code, _, errOut := vukem(t, dir, "new", "taken"); code != 1 || !strings.Contains(errOut, "already exists") {
 		t.Errorf("existing dir = %d %q", code, errOut)
 	}
+
+	for _, flagName := range []string{"--api", "--templ"} {
+		if code, _, errOut := vukem(t, dir, "new", "app", "--minimal", flagName); code != 2 ||
+			!strings.Contains(errOut, "--minimal is an HTMX starter") {
+			t.Errorf("--minimal %s = %d %q", flagName, code, errOut)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "app")); err == nil {
+		t.Error("refused new wrote the project directory")
+	}
 }
 
 // TestNewProjectEndToEnd creates a project, runs its own tests and builds
