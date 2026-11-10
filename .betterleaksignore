@@ -53,3 +53,8 @@ fc3b71bd2af8a8e68120dd4aadd7680c36fa7519:contrib/stripe/stripe_test.go:stripe-ac
 # 2026-10-30: generic-password on the admin row of docs/security.md is the
 # test name TestSecurity_A01_AdminRequiresAbility next to the word "login".
 2399debb61f419fc44e1221a3aa41d92292a635f:docs/security.md:generic-password:46
+# 2026-11-10: the passkey scaffold translations from its first commit (#57),
+# "The password is incorrect." labels, as the later commits already listed.
+89505dcc58b9d4a36088244e07c8eb9e918adbaa:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/en/passkeys.json:generic-password:5
+89505dcc58b9d4a36088244e07c8eb9e918adbaa:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/es/passkeys.json:generic-password:5
+89505dcc58b9d4a36088244e07c8eb9e918adbaa:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/pt-BR/passkeys.json:generic-password:5
