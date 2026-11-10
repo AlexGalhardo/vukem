@@ -31,12 +31,15 @@ export function ThemeToggle() {
     const initial: Theme = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
     setThemeState(initial);
     applyTheme(initial);
-    if (initial !== "system") return;
+  }, []);
+
+  useEffect(() => {
+    if (theme !== "system") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => applyTheme("system");
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
-  }, []);
+  }, [theme]);
 
   const setTheme = (value: Theme) => {
     localStorage.setItem(STORAGE_KEY, value);
