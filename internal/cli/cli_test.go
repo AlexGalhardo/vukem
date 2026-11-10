@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/AlexGalhardo/vukem/config"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -1035,5 +1037,65 @@ func TestDownUp(t *testing.T) {
 
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
 		t.Errorf("down file still there: %v", err)
+	}
+}
+
+func TestKeyGenerateIfMissingForms(t *testing.T) {
+	t.Parallel()
+
+	valid := config.GenerateKey()
+
+	tests := []struct {
+		name    string
+		env     string
+		changed bool
+	}{
+		{"export", "export APP_KEY=" + valid + "\n", false},
+		{"spaces", "APP_KEY = " + valid + "\n", false},
+		{"crlf", "APP_KEY=" + valid + "\r\nX=1\r\n", false},
+		{"empty double quotes", "APP_KEY=\"\"\nX=1\n", true},
+		{"empty single quotes", "APP_KEY=''\nX=1\n", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(tt.env), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			code, out, errOut := vukem(t, dir, "key:generate", "--if-missing")
+			if code != 0 {
+				t.Fatalf("exit %d out=%q err=%q", code, out, errOut)
+			}
+
+			got := read(t, dir, ".env")
+			if !tt.changed {
+				if got != tt.env || !strings.Contains(errOut, "APP_KEY already set") {
+					t.Fatalf(".env = %q stderr = %q, want unchanged", got, errOut)
+				}
+
+				return
+			}
+
+			if strings.Count(got, "APP_KEY") != 1 || !strings.HasSuffix(got, "\nX=1\n") {
+				t.Fatalf(".env = %q, want the existing line rewritten in place", got)
+			}
+
+			entries, err := config.ParseEnv(strings.NewReader(got))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, e := range entries {
+				if e.Key == "APP_KEY" {
+					if _, err := config.ParseKey(config.NewSecret(e.Value)); err != nil {
+						t.Fatalf("ParseKey(written key) = %v", err)
+					}
+				}
+			}
+		})
 	}
 }
