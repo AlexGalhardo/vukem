@@ -1,6 +1,7 @@
 package graphql
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -275,8 +276,13 @@ func (w *wsSession[C]) subscribe(m wsMessage) error {
 		return w.fail(CloseUnauthorized, "Unauthorized")
 	}
 
+	// UseNumber, as over HTTP: a float64 would round IDs above 2^53.
 	var req Request
-	if m.ID == "" || json.Unmarshal(m.Payload, &req) != nil {
+
+	dec := json.NewDecoder(bytes.NewReader(m.Payload))
+	dec.UseNumber()
+
+	if m.ID == "" || dec.Decode(&req) != nil {
 		return w.fail(CloseBadRequest, "Invalid message received")
 	}
 

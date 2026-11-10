@@ -470,13 +470,13 @@ func toInt(v any) (int64, bool) {
 		}
 
 		f, err := v.Float64()
-		if err != nil || f != math.Trunc(f) || math.Abs(f) > math.MaxInt64 {
+		if err != nil || !fitsInt64(f) {
 			return 0, false
 		}
 
 		return int64(f), true
 	case float64:
-		if v != math.Trunc(v) || math.Abs(v) > math.MaxInt64 {
+		if !fitsInt64(v) {
 			return 0, false
 		}
 
@@ -650,4 +650,12 @@ func stringValue(v any) (string, bool) {
 	}
 
 	return "", false
+}
+
+// fitsInt64 reports a whole f in the int64 range. float64(math.MaxInt64)
+// rounds up to 2^63, so the bound is checked against 2^63 itself.
+func fitsInt64(f float64) bool {
+	const twoTo63 = float64(1 << 63)
+
+	return f == math.Trunc(f) && f >= -twoTo63 && f < twoTo63
 }
