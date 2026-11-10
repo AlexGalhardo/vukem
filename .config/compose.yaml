@@ -4,7 +4,7 @@
 name: vukem
 services:
   postgres:
-    image: postgres:17
+    image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
     environment:
       POSTGRES_USER: vukem
       POSTGRES_PASSWORD: vukem
@@ -15,7 +15,7 @@ services:
       interval: 2s
       retries: 30
   mysql:
-    image: mysql:8.4
+    image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
     environment:
       MYSQL_ROOT_PASSWORD: vukem
       MYSQL_USER: vukem
@@ -27,7 +27,7 @@ services:
       interval: 2s
       retries: 60
   mariadb:
-    image: mariadb:11.8
+    image: mariadb:11.8@sha256:c4124d1afa875e47f2892edf26b482fa54f796e2f342d3717a04ca091a22a9bd
     environment:
       MARIADB_ROOT_PASSWORD: vukem
       MARIADB_USER: vukem
@@ -39,14 +39,14 @@ services:
       interval: 2s
       retries: 60
   redis:
-    image: redis:7
+    image: redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
     ports: ["127.0.0.1:56379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       retries: 30
   mongo:
-    image: mongo:9.0.4
+    image: mongo:9.0.4@sha256:452bdaf2127b8ff851e31410a267809b9829eded219979f2210e7c7efb85a058
     ports: ["127.0.0.1:57017:27017"]
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
@@ -55,7 +55,7 @@ services:
   rustfs:
     # S3-compatible server for drivers/s3 (MinIO stopped publishing images and
     # archived its repository). Pin a stable release, never latest or preview.
-    image: rustfs/rustfs:1.0.2
+    image: rustfs/rustfs:1.0.2@sha256:7e948dad4748bda48f8985fda7195f8cf2e4259427011f6120acc2c9acf51587
     environment:
       RUSTFS_ACCESS_KEY: vukem
       RUSTFS_SECRET_KEY: vukem-secret
