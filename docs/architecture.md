@@ -16,10 +16,10 @@ How Vukem is put together: modules, packages, application lifecycle, request lif
 ```text
 vukem/                            module github.com/AlexGalhardo/vukem
 ├── app.go                        package vukem: Config, App, Option, New
-├── options_*.go                  With* options by subsystem (routes, views, runtime); the rest sit beside their subsystem
+├── options.go                    With* options; the rest sit beside their subsystem
 ├── validate_config.go            boot-time config checks, key derivation, logger setup
-├── boot.go / serve.go            Boot and route registration; Run, Shutdown, HTTPServer
-├── providers.go / instrument.go  Provider and Runner contracts; query, job and mail instrumentation
+├── boot.go / serve.go            Boot and route registration; Provider and Runner contracts; Run, Shutdown, HTTPServer
+├── services.go / instrument.go   With* service options, lazy cache/session/mail/flags accessors; query, job and mail instrumentation
 ├── router/                       ServeMux wrapper, groups, names, resources, URLFor
 ├── web/                          *web.Ctx: request/response helpers, Parse/Bind[T], Render
 ├── middleware/                   built-in middleware (recover, logger, request id, timeout, cors…)
@@ -37,7 +37,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── authz/                        gates, Policy[T]                               (ALPHA)
 ├── admin/                        admin panel from ORM models + z schemas, audit log (BETA)
 ├── social/                       OAuth2/OIDC social login (Ally-style)           (ALPHA)
-├── mail/ cache/ storage/ event/                                                 (ALPHA)
+├── mail/ cache/ storage/ events/                                                (ALPHA)
 ├── openapi/ apidocs/             OpenAPI 3.1 generator, TS/Zod codegen, Scalar API reference
 ├── queue/ schedule/ ratelimit/   typed jobs (sync/memory/database drivers), cron scheduler, GCRA limiter
 ├── vite/                         Vite tags: hot file (dev), manifest, CSP nonce, SRI
@@ -49,10 +49,10 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── crypt/                        AES-256-GCM encryption, key rotation, encrypted cookies
 ├── i18n/                         JSON catalogs, CLDR plurals, locale middleware, translated validation
 ├── devtools/                     /_vukem dev dashboard: requests, SQL (N+1), jobs, events, mail, logs
-├── testing/                      fluent HTTP test client, DB helpers, fakes
+├── vukemtest/                    fluent HTTP test client, DB helpers, fakes
 ├── cmd/vukem/                 global CLI
 ├── internal/
-│   ├── stubs/                    embedded generator templates
+│   ├── cli/stubs/                embedded generator templates
 │   ├── codemod/                  go/ast edits for bootstrap/*.go
 │   └── tools/commitlint/         Conventional Commits validator
 ├── drivers/
@@ -65,14 +65,16 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   └── websocket/                module …/drivers/websocket (coder/websocket, broadcast protocol)
 ├── contrib/
 │   ├── cloudflare/               module …/contrib/cloudflare (client IP, origin lock, visitor headers, edge cache, purge, Access JWT)
+│   ├── engine/                   module …/contrib/engine (external binaries: clean env, cwd limits, bounded output, process-tree cancel)
 │   ├── graphql/                  module …/contrib/graphql (stdlib GraphQL server)
 │   ├── grpc/                     module …/contrib/grpc (gRPC, gRPC-Web, Connect on connect-go)
 │   ├── http3/                    module …/contrib/http3 (HTTP/3 over QUIC on quic-go)
+│   ├── imaging/                  module …/contrib/imaging (thumbnails from storage.Disk: bounded decode, EXIF orientation)
 │   ├── qrcode/                   module …/contrib/qrcode (PNG and SVG QR codes, rsc.io/qr)
 │   └── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
-├── starters/                     app skeletons embedded by `vukem new`
+├── internal/cli/starter/         app skeletons embedded by `vukem new`
 ├── docs/
-└── go.work                       local development only (CI uses GOWORK=off)
+└── go.work                       local development; nested-module CI jobs run with GOWORK=off
 ```
 
 Package names are short, lowercase, singular and never `util`/`common`/`helpers`. The request context package is named `web` (not `ctx`) so it never shadows the conventional `ctx context.Context` variable.

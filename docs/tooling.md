@@ -134,7 +134,7 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 | `release.yml` | tag `v*`, manual (`version` input) | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
 | `codeql.yml` | push, weekly | CodeQL Go |
 | `scorecard.yml` | push to `main`, weekly | OpenSSF Scorecard |
-| `site.yml` | push to `main` and PRs touching `site/**` or `CHANGELOG.md` | docs site `npm ci`, lint, `next build`, and `Last updated` (every docs page, full git history) |
+| `site.yml` | push to `main` and PRs touching `site/**` or `CHANGELOG.md` | docs site `npm ci`, lint, `astro build`, and `Last updated` (every docs page, full git history) |
 | `docs-last-updated.yml` | every push to `main`, every PR, manual | `Last updated` for every docs page, so a missing date fails even when the PR does not touch `site/` |
 | Dependabot | weekly | `gomod` (all modules, prefix `build(deps)`), `npm` (`site/`), `docker` (`docs/media`), `github-actions` (prefix `ci`) |
 
@@ -268,7 +268,7 @@ Add a new file to the root only when a tool cannot be pointed elsewhere; new roo
 - Git Bash rewrites arguments that start with `/` into Windows paths: `railway ssh -- /app/rifa …` becomes `C:/Program Files/Git/app/rifa`. Prefix the command with `MSYS_NO_PATHCONV=1`, or double the slash for Windows flags (`taskkill //PID 123 //F`).
 - Never kill processes by image name (`taskkill /IM app.exe`): other projects' servers share the name. Stop your own background task, or a PID you started.
 - The first `railway ssh` needs the host key in `~/.ssh/known_hosts`; non-interactive shells cannot answer the prompt (`Host key verification failed`).
-- A stale `site/.next` from `next dev` breaks `next build` type checks; delete it before a local production build.
+- A stale `site/.astro` cache left by `astro dev` can break `astro build`; delete `site/.astro` and `site/out` before a local production build.
 
 ## Agent configuration
 
