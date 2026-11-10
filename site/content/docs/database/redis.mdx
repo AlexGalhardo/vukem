@@ -132,6 +132,8 @@ redis://[user:password@]host:port/db?option=value
 rediss://...   (TLS)
 ```
 
+A plain `redis://` URL to a host that is not loopback (`localhost`, `127.0.0.1`, `::1`) is refused with `redis: plaintext connection to a remote host refused: use rediss:// or add insecure_plaintext=true`. Use `rediss://`, or on a trusted private network (Railway's `redis.railway.internal`, a Fly `.internal` address, a Compose service name) add `?insecure_plaintext=true`. The option is removed before the URL reaches go-redis, so it is not in the table below. `rediss://`, `unix://`, `localhost` and loopback IPs are not affected.
+
 | Query option | Example | What it does |
 | --- | --- | --- |
 | `dial_timeout` | `1s` | How long to wait for a connection |
@@ -391,7 +393,7 @@ err = rc.Publish(ctx, "posts", []byte(`{"id":42,"event":"updated"}`))
 
 ## Security
 
-- **Never expose Redis to the internet.** Bind it to a private network, require a password (`redis://:password@host:6379/0`), and use `rediss://` (TLS) across networks.
+- **Never expose Redis to the internet.** Bind it to a private network, require a password (`redis://:password@host:6379/0`), and use `rediss://` (TLS) across networks; a plain `redis://` URL to a remote host is refused unless it carries `?insecure_plaintext=true`.
 - Keep the password in an environment variable, never in code or in a committed `.env`.
 - Anyone with Redis access can read cached data, read or forge session data and enqueue jobs. Treat Redis credentials like database credentials.
 - Session keys are hashed, so a leaked keyspace gives no usable cookie, but the session **data** is stored as is.

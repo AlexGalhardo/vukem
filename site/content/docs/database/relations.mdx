@@ -188,6 +188,8 @@ s.Create("post_tag", func(t *schema.Table) {
 
 The unique index stops the same tag from being linked twice, even when two requests race.
 
+Keys can be any type the database driver accepts, including `uuid.UUID`: a `ManyToMany` whose models use UUID primary keys links and loads the same way as one with integer ids.
+
 ### The `orm` tag
 
 | Option | Used by | Meaning |

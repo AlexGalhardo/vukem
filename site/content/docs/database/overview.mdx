@@ -183,7 +183,7 @@ base := []vukem.Option{
 DATABASE_URL=postgres://blog:secret@localhost:5432/blog?sslmode=disable
 ```
 
-The URL goes to pgx unchanged, so every [pgx connection parameter](https://pkg.go.dev/github.com/jackc/pgx/v5/pgconn#ParseConfig) works (`sslmode`, `connect_timeout`, `search_path`...). Use `sslmode=disable` only for a local server; across a network use `sslmode=verify-full`.
+The URL goes to pgx unchanged, so every [pgx connection parameter](https://pkg.go.dev/github.com/jackc/pgx/v5/pgconn#ParseConfig) works (`sslmode`, `connect_timeout`, `search_path`...). The one thing the driver adds: a URL whose host is not loopback or a unix socket and that has no `sslmode` gets `sslmode=verify-full`, so a server without TLS, or with a certificate that does not verify, fails at boot instead of falling back to plaintext. On a trusted private network, say so with `?sslmode=disable`; any explicit `sslmode` passes through unchanged.
 
 ### MySQL and MariaDB
 
@@ -595,7 +595,7 @@ What Vukem does for you:
 
 - The ORM and the schema builder bind every value as a parameter and validate every column and table name against the model or an identifier pattern; input never becomes SQL.
 - `RebindChecked` and `WhereRaw` refuse SQL that ends inside a literal or comment, so a broken fragment cannot swallow the conditions after it.
-- MySQL connections to non-loopback hosts require TLS with a verified certificate unless you opt out.
+- PostgreSQL connections to non-loopback hosts default to `sslmode=verify-full`, and MySQL connections to non-loopback hosts require TLS with a verified certificate, unless you opt out.
 - Error messages never include the MySQL URL, and `RebindChecked` errors quote at most 80 bytes of the query.
 - Observers receive arguments, but the documented rule (and devtools) never displays them.
 
@@ -603,7 +603,7 @@ What stays your job:
 
 - Keep `DATABASE_URL` in the environment, never in code or a committed `.env`.
 - Give the app a database user with only the rights it needs; run migrations with the same user only if it may change the schema.
-- Use TLS across networks (`sslmode=verify-full` on PostgreSQL).
+- Keep TLS on across networks (the PostgreSQL default is `sslmode=verify-full`; opt out only on a trusted private network).
 - Write raw SQL with `?` arguments only.
 
 See the [security overview](/docs/security/overview) for the full picture.

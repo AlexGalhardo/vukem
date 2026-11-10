@@ -257,7 +257,7 @@ What happens under the hood:
 | `Update` | Writes **all** columns, not only the ones you changed: load the row first, then change it. Always refreshes `UpdatedAt`. Returns `orm.ErrNotFound` when no row has that id |
 | `Delete` | With `SoftDeletes`: sets `deleted_at` to now and fills `post.DeletedAt`; deleting an already deleted row returns `orm.ErrNotFound`. Without: same as `ForceDelete`. Runs `BeforeDelete` |
 | `ForceDelete` | `DELETE` even for soft-deleted rows; `orm.ErrNotFound` when nothing matched. Does not run `BeforeDelete` |
-| `Restore` | Clears `deleted_at`; a model without `SoftDeletes` returns `orm: posts does not use soft deletes` |
+| `Restore` | Clears `deleted_at`; `orm.ErrNotFound` when no trashed row has that key (the record is live or does not exist); a model without `SoftDeletes` returns `orm: posts does not use soft deletes` |
 
 ### Composite primary keys
 
@@ -414,7 +414,7 @@ posts, err := orm.QueryOf[models.Post](db).
 | `First(ctx)` | `T` | The first row; orders by primary key when you gave no order; `orm.ErrNotFound` when empty |
 | `Find(ctx, id)` | `T` | The row with that primary key, or `orm.ErrNotFound` |
 | `Count(ctx)` | `int64` | `COUNT(*)` |
-| `Exists(ctx)` | `bool` | |
+| `Exists(ctx)` | `bool` | Whether any row matches; stops at the first one (`LIMIT 1`) and ignores `OrderBy` and `Offset` |
 | `GroupCount[K](ctx, col)` | `map[K]int64` | Rows per value of `col`: `SELECT col, COUNT(*) ... GROUP BY col`. Honours `Where` and soft deletes, ignores `OrderBy`, `Limit` and locks; a `NULL` group is an error, so add `WhereNotNull(col)` for nullable columns; encrypted columns are refused |
 | `Pluck[V](ctx, col)` | `[]V` | One column of every row |
 | `Each(ctx)` | an iterator | Streams rows without loading them all |
@@ -582,6 +582,7 @@ n, err = orm.QueryOf[models.Post](db).
 - `updated_at` is refreshed unless the `Set` names it.
 - On a soft-delete model, `Delete` sets `deleted_at`; after `WithTrashed()` or `OnlyTrashed()` it deletes for real.
 - Hooks do not run for bulk writes, and encrypted columns in a `Set` are sealed.
+- `Update` and `Delete` apply to every matching row, so a query with `Limit`, `Offset` or `OrderBy` returns `orm: update applies to every matching row; remove OrderBy, Limit and Offset` instead of writing more rows than you asked for. To write a bounded set, select the keys first (`Pluck`) and filter with `WhereIn`.
 
 ### Counters and claiming work
 
