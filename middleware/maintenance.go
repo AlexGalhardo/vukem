@@ -81,8 +81,6 @@ type MaintenanceConfig struct {
 // Maintenance answers 503 (Retry-After, the "errors/503" view or
 // problem+json) while the state file exists. Visiting /<secret> sets a
 // signed bypass cookie. A file that cannot be read keeps the app down.
-//
-//nolint:gocognit // bypass rules are order-sensitive; kept in one function
 func Maintenance(cfg MaintenanceConfig) Middleware {
 	if cfg.File == "" {
 		cfg.File = DefaultMaintenanceFile
@@ -105,30 +103,8 @@ func Maintenance(cfg MaintenanceConfig) Middleware {
 				return
 			}
 
-			if m.SecretHash != "" && len(cfg.Key) > 0 {
-				token := bypassToken(cfg.Key, m.SecretHash)
-
-				if c, err := r.Cookie(MaintenanceCookie); err == nil {
-					if hmac.Equal([]byte(c.Value), []byte(token)) {
-						next.ServeHTTP(w, r)
-						return
-					}
-
-					if previousBypass(cfg.PreviousKeys, m.SecretHash, c.Value) {
-						setBypassCookie(w, token, cfg.Secure)
-						next.ServeHTTP(w, r)
-
-						return
-					}
-				}
-
-				sum := sha256.Sum256([]byte(strings.TrimPrefix(r.URL.Path, "/"))) // "" for "*" targets
-				if hmac.Equal([]byte(hex.EncodeToString(sum[:])), []byte(m.SecretHash)) {
-					setBypassCookie(w, token, cfg.Secure)
-					http.Redirect(w, r, "/", http.StatusSeeOther)
-
-					return
-				}
+			if m.SecretHash != "" && len(cfg.Key) > 0 && bypass(w, r, next, cfg, m.SecretHash) {
+				return
 			}
 
 			err := errs.New(http.StatusServiceUnavailable, "We are doing some maintenance. Please come back soon.")
@@ -139,6 +115,37 @@ func Maintenance(cfg MaintenanceConfig) Middleware {
 			web.Fail(w, r, err)
 		})
 	}
+}
+
+// bypass serves the request when it carries a valid bypass cookie (current
+// key first, then a previous key, re-issued under the current one) or visits
+// the secret path, and reports whether it answered.
+func bypass(w http.ResponseWriter, r *http.Request, next http.Handler, cfg MaintenanceConfig, secretHash string) bool {
+	token := bypassToken(cfg.Key, secretHash)
+
+	if c, err := r.Cookie(MaintenanceCookie); err == nil {
+		if hmac.Equal([]byte(c.Value), []byte(token)) {
+			next.ServeHTTP(w, r)
+			return true
+		}
+
+		if previousBypass(cfg.PreviousKeys, secretHash, c.Value) {
+			setBypassCookie(w, token, cfg.Secure)
+			next.ServeHTTP(w, r)
+
+			return true
+		}
+	}
+
+	sum := sha256.Sum256([]byte(strings.TrimPrefix(r.URL.Path, "/"))) // "" for "*" targets
+	if hmac.Equal([]byte(hex.EncodeToString(sum[:])), []byte(secretHash)) {
+		setBypassCookie(w, token, cfg.Secure)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+
+		return true
+	}
+
+	return false
 }
 
 // readMaintenance reports whether the app is down; any read or parse error
