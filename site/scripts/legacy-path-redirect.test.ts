@@ -37,3 +37,9 @@ test("a protocol-relative or backslash remainder never leaves the origin", () =>
   }
   assert.equal(at("/pt-br//evil.com"), "/evil.com");
 });
+
+test("the inline script on the 404 page applies the same-origin check", () => {
+  const page = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "pages", "404.astro"), "utf8");
+  assert.ok(page.includes(String.raw`replace(/^[\/\\]+/`), "404.astro must strip leading slashes and backslashes");
+  assert.ok(page.includes("url.origin !== location.origin"), "404.astro must check the origin");
+});
