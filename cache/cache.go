@@ -162,6 +162,8 @@ func (c *Cache) Increment(ctx context.Context, key string, delta int64, ttl time
 	return c.store.Increment(ctx, c.key(key), delta, ttl)
 }
 
+var errRememberPanicked = errors.New("cache: Remember callback panicked")
+
 type call struct {
 	done chan struct{}
 	val  []byte
@@ -192,6 +194,12 @@ func Remember[T any](ctx context.Context, c *Cache, key string, ttl time.Duratio
 		}
 
 		if cl.err != nil {
+			// The leader's context ended, not ours: compute it ourselves.
+			if ctx.Err() == nil &&
+				(errors.Is(cl.err, context.Canceled) || errors.Is(cl.err, context.DeadlineExceeded)) {
+				return Remember(ctx, c, key, ttl, fn)
+			}
+
 			return zero, cl.err
 		}
 
@@ -207,10 +215,19 @@ func Remember[T any](ctx context.Context, c *Cache, key string, ttl time.Duratio
 	c.mu.Unlock()
 
 	defer func() {
+		r := recover()
+		if r != nil {
+			cl.err = errRememberPanicked
+		}
+
 		c.mu.Lock()
 		delete(c.flight, key)
 		c.mu.Unlock()
 		close(cl.done)
+
+		if r != nil {
+			panic(r)
+		}
 	}()
 
 	v, err := fn(ctx)

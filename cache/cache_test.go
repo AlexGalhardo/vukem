@@ -2,9 +2,11 @@ package cache_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/cache"
@@ -200,6 +202,100 @@ func TestRememberCancelledWaiter(t *testing.T) {
 	if c.Store() == nil {
 		t.Fatal("Store")
 	}
+}
+
+func TestRememberWaiterSurvivesLeaderCancellation(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		c := cache.New(cache.NewMemory(0), "")
+		leaderCtx, cancel := context.WithCancel(context.Background())
+		started := make(chan struct{})
+		leaderDone := make(chan struct{})
+
+		go func() {
+			defer close(leaderDone)
+
+			_, _ = cache.Remember(leaderCtx, c, "hot", time.Minute, func(ctx context.Context) (int, error) {
+				close(started)
+				<-ctx.Done()
+
+				return 0, ctx.Err()
+			})
+		}()
+
+		<-started
+
+		var (
+			got        int
+			err        error
+			waiterDone = make(chan struct{})
+		)
+
+		go func() {
+			defer close(waiterDone)
+
+			got, err = cache.Remember(context.Background(), c, "hot", time.Minute,
+				func(context.Context) (int, error) { return 7, nil })
+		}()
+
+		synctest.Wait()
+		cancel()
+		<-waiterDone
+		<-leaderDone
+
+		if err != nil || got != 7 {
+			t.Errorf("Remember() = %d, %v, want 7, nil", got, err)
+		}
+	})
+}
+
+func TestRememberWaiterOnLeaderPanic(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		c := cache.New(cache.NewMemory(0), "")
+		started := make(chan struct{})
+		release := make(chan struct{})
+		recovered := make(chan any, 1)
+
+		go func() {
+			defer func() { recovered <- recover() }()
+
+			_, _ = cache.Remember(context.Background(), c, "hot", time.Minute, func(context.Context) (int, error) {
+				close(started)
+				<-release
+				panic("boom")
+			})
+		}()
+
+		<-started
+
+		var (
+			err        error
+			waiterDone = make(chan struct{})
+		)
+
+		go func() {
+			defer close(waiterDone)
+
+			_, err = cache.Remember(context.Background(), c, "hot", time.Minute,
+				func(context.Context) (int, error) { return 7, nil })
+		}()
+
+		synctest.Wait()
+		close(release)
+		<-waiterDone
+
+		if r := <-recovered; r != "boom" {
+			t.Errorf("leader recovered %v, want boom", r)
+		}
+
+		var syn *json.SyntaxError
+		if err == nil || errors.As(err, &syn) {
+			t.Errorf("waiter error = %v, want a non-JSON error", err)
+		}
+	})
 }
 
 func openSQLiteStore(t *testing.T) (*database.DB, *cache.Database) {
