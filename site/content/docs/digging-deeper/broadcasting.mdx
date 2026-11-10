@@ -305,7 +305,7 @@ b := broadcast.New(broadcast.Config{
 })
 ```
 
-Each channel becomes a pub/sub topic named `broadcast:<channel>`. An instance holds one Redis subscription per topic while it has local subscribers and drops it when the last one leaves.
+Each channel becomes a pub/sub topic named `broadcast:<channel>`. An instance holds one Redis subscription per topic while it has local subscribers and drops it when the last one leaves. If Redis drops that subscription (the connection is lost), the instance ends every stream of the channel, so the browsers reconnect and the next subscriber opens a new subscription.
 
 ## Subscriptions
 

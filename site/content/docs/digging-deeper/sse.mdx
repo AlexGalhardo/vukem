@@ -202,7 +202,8 @@ Replaying missed events is your job: neither the stream nor the hub keeps histor
 
 - the client disconnects (the browser tab closes, the network drops) or a heartbeat fails;
 - your function returns;
-- the server starts shutting down.
+- the server starts shutting down;
+- with a broker, the topic's broker subscription drops (for example the Redis connection is lost): the hub ends every stream of that topic, so browsers reconnect and the next subscriber opens a new subscription.
 
 On shutdown, the app's HTTP server signals every open stream through `sse.WithShutdown`, so `Shutdown` does not wait `SHUTDOWN_TIMEOUT` for connections that would never finish by themselves. Browsers then reconnect to the next instance. You only need `sse.WithShutdown(ctx, stop)` and `sse.ShutdownSignal(ctx)` when you run your own `http.Server`; the [WebSocket](/docs/digging-deeper/broadcasting) driver listens to the same signal.
 
