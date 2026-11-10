@@ -200,7 +200,7 @@ The app logs `shutting down` and cancels the context every runner observes. The 
 </Step>
 <Step title="Finish in-flight work">
 
-In-flight requests keep running; their context is not cancelled, so a handler can finish its database write. The HTTP drain, running scheduled tasks and queue jobs each get up to `SHUTDOWN_TIMEOUT`. Tasks and jobs still running then are cancelled through their `ctx`, and interrupted jobs go back to the queue.
+In-flight requests keep running; their context is not cancelled, so a handler can finish its database write. The HTTP drain, running scheduled tasks and queue jobs each get up to `SHUTDOWN_TIMEOUT`. When requests outlast the drain, the server closes the remaining connections, which cancels their request contexts, before the database pool and other providers shut down; the error from `Run` still wraps `context.DeadlineExceeded` (match it with `errors.Is`). Tasks and jobs still running then are cancelled through their `ctx`, and interrupted jobs go back to the queue.
 
 </Step>
 <Step title="Leave stuck runners behind">
@@ -270,7 +270,7 @@ Under the hood:
 
 - `app.DB()` registers a `db` check by itself, so the starter reports its database without code.
 - Every check runs in parallel, bounded by its own timeout: `vukem.DefaultHealthCheckTimeout` (3 seconds) for `AddHealthCheck`, or the duration you pass to `AddHealthCheckTimeout` (zero or negative means the default).
-- A check that ignores its context is abandoned at the deadline. While that abandoned run is still going, the next probe fails the check at once instead of starting another goroutine, so a hung dependency never piles up goroutines. A panic in a check counts as a failure.
+- A check that ignores its context is abandoned at the deadline. Probes that arrive while a check is still running within its deadline share that run instead of failing; once a run was abandoned, the next probe fails the check at once instead of starting another goroutine, so a hung dependency never piles up goroutines. A panic in a check counts as a failure.
 - A check with the same name replaces the earlier one.
 - The answer is `200` when all pass and `503` when any fails. Errors are logged as `health check failed` with the check name; they never reach the client, because they may contain hosts or credentials.
 - `app.CheckHealth(ctx)` returns the raw `map[string]error` for a custom endpoint.
