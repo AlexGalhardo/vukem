@@ -46,8 +46,6 @@ type WorkOptions struct {
 // reserving new jobs and waits for running ones (graceful drain): they
 // keep a context that is not cancelled, bounded by their timeout and by
 // StopTimeout.
-//
-//nolint:gocognit // worker loop with shutdown, retry and backoff paths that share state
 func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 	if len(o.Queues) == 0 {
 		o.Queues = []string{"default"}
@@ -65,14 +63,9 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 		}
 	}
 
-	slots := newQueueSlots(o.Queues, o.Limits)
+	s := &workState{o: o, slots: newQueueSlots(o.Queues, o.Limits)}
 
-	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
-		done     int
-		firstErr error
-	)
+	var wg sync.WaitGroup
 
 	// Running jobs outlive ctx so a shutdown does not abort them mid-way;
 	// settling always uses a context that is never cancelled.
@@ -83,111 +76,135 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 
 	var stopping atomic.Bool
 
-	interrupted := func() bool { return stopping.Load() && jobCtx.Err() != nil }
-
-	take := func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-
-		if o.MaxJobs > 0 && done >= o.MaxJobs {
-			return false
-		}
-
-		done++
-
-		return true
-	}
+	s.interrupted = func() bool { return stopping.Load() && jobCtx.Err() != nil }
 
 	for range o.Concurrency {
-		wg.Go(func() {
-			for ctx.Err() == nil {
-				queues, held := slots.claim()
-
-				var (
-					m   *Message
-					err error
-				)
-
-				if len(queues) > 0 {
-					m, err = q.driver.Pop(ctx, queues)
-				}
-
-				// Keep only the slot of the queue the job came from.
-				used := ""
-				if m != nil {
-					used = m.Queue
-				}
-
-				slots.release(held, used)
-
-				if err != nil {
-					if ctx.Err() != nil {
-						return
-					}
-
-					q.log.ErrorContext(ctx, "queue: reserve job", "err", err)
-
-					// A store error is not an empty queue: report it rather
-					// than exiting cleanly with jobs left behind.
-					if o.StopWhenEmpty {
-						mu.Lock()
-						if firstErr == nil {
-							firstErr = fmt.Errorf("queue: reserve job: %w", err)
-						}
-						mu.Unlock()
-
-						return
-					}
-				}
-
-				if m == nil {
-					if o.StopWhenEmpty {
-						return
-					}
-
-					sleep(ctx, o.Sleep)
-
-					continue
-				}
-
-				if !take() {
-					// Over the limit: give the job back untouched.
-					rctx, cancel := context.WithTimeout(settleCtx, settleTimeout)
-					_ = q.driver.Release(rctx, m)
-
-					cancel()
-					slots.release([]string{m.Queue}, "")
-
-					return
-				}
-
-				err = q.process(jobCtx, settleCtx, m, interrupted, settleTimeout)
-				slots.release([]string{m.Queue}, "")
-
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-					}
-					mu.Unlock()
-
-					q.log.ErrorContext(ctx, "queue: settle job", "job", m.Kind, "id", m.ID, "err", err)
-				}
-
-				mu.Lock()
-				limit := o.MaxJobs > 0 && done >= o.MaxJobs
-				mu.Unlock()
-
-				if limit {
-					return
-				}
-			}
-		})
+		wg.Go(func() { q.workLoop(ctx, jobCtx, settleCtx, s) })
 	}
 
 	q.drain(ctx, &wg, o.StopTimeout, func() { stopping.Store(true); cancelJobs() })
 
-	return firstErr
+	return s.firstErr
+}
+
+// workState is what the workers of one Work call share.
+type workState struct {
+	o           WorkOptions
+	slots       *queueSlots
+	interrupted func() bool
+
+	mu       sync.Mutex
+	done     int
+	firstErr error
+}
+
+// take counts one more job, or reports false once MaxJobs is reached.
+func (s *workState) take() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.o.MaxJobs > 0 && s.done >= s.o.MaxJobs {
+		return false
+	}
+
+	s.done++
+
+	return true
+}
+
+func (s *workState) limitReached() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.o.MaxJobs > 0 && s.done >= s.o.MaxJobs
+}
+
+// recordErr keeps the first error Work returns.
+func (s *workState) recordErr(err error) {
+	s.mu.Lock()
+	if s.firstErr == nil {
+		s.firstErr = err
+	}
+	s.mu.Unlock()
+}
+
+// workLoop is one worker: it reserves and processes jobs until ctx is
+// cancelled, the queues are empty (StopWhenEmpty) or MaxJobs is reached.
+func (q *Queue) workLoop(ctx, jobCtx, settleCtx context.Context, s *workState) {
+	for ctx.Err() == nil {
+		m, err := q.reserve(ctx, s.slots)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
+			q.log.ErrorContext(ctx, "queue: reserve job", "err", err)
+
+			// A store error is not an empty queue: report it rather
+			// than exiting cleanly with jobs left behind.
+			if s.o.StopWhenEmpty {
+				s.recordErr(fmt.Errorf("queue: reserve job: %w", err))
+				return
+			}
+		}
+
+		if m == nil {
+			if s.o.StopWhenEmpty {
+				return
+			}
+
+			sleep(ctx, s.o.Sleep)
+
+			continue
+		}
+
+		if !s.take() {
+			// Over the limit: give the job back untouched.
+			rctx, cancel := context.WithTimeout(settleCtx, settleTimeout)
+			_ = q.driver.Release(rctx, m)
+
+			cancel()
+			s.slots.release([]string{m.Queue}, "")
+
+			return
+		}
+
+		err = q.process(jobCtx, settleCtx, m, s.interrupted, settleTimeout)
+		s.slots.release([]string{m.Queue}, "")
+
+		if err != nil {
+			s.recordErr(err)
+			q.log.ErrorContext(ctx, "queue: settle job", "job", m.Kind, "id", m.ID, "err", err)
+		}
+
+		if s.limitReached() {
+			return
+		}
+	}
+}
+
+// reserve pops the next job from the queues with a free slot, keeping only
+// the slot of the queue the job came from.
+func (q *Queue) reserve(ctx context.Context, slots *queueSlots) (*Message, error) {
+	queues, held := slots.claim()
+
+	var (
+		m   *Message
+		err error
+	)
+
+	if len(queues) > 0 {
+		m, err = q.driver.Pop(ctx, queues)
+	}
+
+	used := ""
+	if m != nil {
+		used = m.Queue
+	}
+
+	slots.release(held, used)
+
+	return m, err
 }
 
 // ErrInvalidLimit is returned by Work for a WorkOptions.Limits entry
