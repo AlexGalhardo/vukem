@@ -45,7 +45,7 @@ jobs:
       # //nolint:gocognit appears. Lower the number when you remove one.
       - name: gocognit suppression budget
         env:
-          GOCOGNIT_BUDGET: "26"
+          GOCOGNIT_BUDGET: "6"
         run: |
           n=$(grep -rn --include='*.go' --exclude='*_test.go' 'nolint:gocognit' . | wc -l)
           echo "nolint:gocognit in non-test code: $n (budget $GOCOGNIT_BUDGET)"
