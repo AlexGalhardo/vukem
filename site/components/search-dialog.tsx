@@ -192,7 +192,7 @@ export function SearchDialog() {
             <kbd className="rounded border border-border px-1.5 py-0.5 text-[0.6875rem] text-faint">Esc</kbd>
           </div>
 
-          <div ref={listRef} id="docs-search-results" role="listbox" aria-label="Results" className="flex-1 overflow-y-auto p-2">
+          <div ref={listRef} id="docs-search-results" role="listbox" aria-label="Results" className="flex-1 overflow-y-auto p-2 scroll-slim">
             {failed ? (
               <p className="px-3 py-8 text-center text-sm text-muted">Search index could not be loaded.</p>
             ) : !index ? (

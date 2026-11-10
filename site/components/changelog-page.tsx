@@ -17,7 +17,7 @@ export async function ChangelogPage(): Promise<React.ReactElement> {
     .map((h) => ({ ...h, text: h.text.replace(/^\[([^\]]+)\]\s+-\s+/, "$1 — ") }));
   return (
     <div className="mx-auto flex max-w-[90rem] justify-center gap-12 px-4 sm:px-6">
-      <aside className="sticky top-(--header-h) hidden h-[calc(100dvh-var(--header-h))] w-56 shrink-0 overflow-y-auto py-10 xl:block">
+      <aside className="sticky top-(--header-h) hidden h-[calc(100dvh-var(--header-h))] w-56 shrink-0 overflow-y-auto py-10 scroll-slim xl:block">
         <Toc headings={releases} label={t.releases} />
       </aside>
       <main id="content" className="min-w-0 w-full max-w-3xl py-10">

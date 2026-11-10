@@ -29,7 +29,7 @@ export function MobileNav({ groupsByVersion }: { groupsByVersion: Record<string,
               <X aria-hidden className="size-4" />
             </Dialog.Close>
           </div>
-          <div className="flex-1 overflow-y-auto px-3 py-4">
+          <div className="flex-1 overflow-y-auto px-3 py-4 scroll-slim">
             <Link
               href="/changelog"
               onClick={() => setOpen(false)}
