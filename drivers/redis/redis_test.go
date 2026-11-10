@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -99,5 +100,46 @@ func TestCacheStoreIsShared(t *testing.T) {
 	s, ok := st.(interface{ Shared() bool })
 	if !ok || !s.Shared() {
 		t.Fatalf("CacheStore() Shared = %v (declared %v), want true", ok && s.Shared(), ok)
+	}
+}
+
+func TestSecurity_A04_RedisRemoteRequiresTLS(t *testing.T) {
+	t.Parallel()
+
+	ok := []string{
+		"rediss://cache.example.com:6379/0",
+		"redis://localhost",
+		"redis://127.0.0.1:6379/0",
+		"redis://[::1]:6379/0",
+		"redis://cache.example.com/0?insecure_plaintext=true",
+		"rediss://cache.example.com/0?insecure_plaintext=false",
+		"unix:///var/run/redis.sock",
+	}
+	for _, u := range ok {
+		c, err := OpenLazy(u)
+		if err != nil {
+			t.Errorf("OpenLazy(%q): %v", u, err)
+			continue
+		}
+
+		_ = c.Close()
+	}
+
+	refused := []string{
+		"redis://:hunter2@cache.example.com:6379/0",
+		"redis://:hunter2@cache.example.com/0?insecure_plaintext=false",
+		"redis://:hunter2@cache.example.com/0?insecure_plaintext=maybe",
+		"redis://:hunter2@cache.example.com:bad/0",
+	}
+	for _, u := range refused {
+		_, err := OpenLazy(u)
+		if err == nil {
+			t.Errorf("OpenLazy(%q) succeeded", u)
+			continue
+		}
+
+		if strings.Contains(err.Error(), "hunter2") || strings.Contains(err.Error(), "cache.example.com") {
+			t.Errorf("error for %q echoes the URL: %v", u, err)
+		}
 	}
 }

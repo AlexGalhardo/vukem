@@ -14,6 +14,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
+	neturl "net/url"
+	"strings"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -25,7 +28,8 @@ type Client struct {
 }
 
 // Open connects to url (redis://[user:pass@]host:port/db or rediss:// for
-// TLS) and pings the server, so a server that is down fails boot. Use
+// TLS; a plain redis:// to a host that is not loopback is refused unless the
+// url carries insecure_plaintext=true) and pings the server, so a server that is down fails boot. Use
 // OpenLazy to start without it.
 func Open(ctx context.Context, url string) (*Client, error) {
 	c, err := OpenLazy(url)
@@ -47,12 +51,52 @@ func Open(ctx context.Context, url string) (*Client, error) {
 // 3 times with backoff, so add dial_timeout and max_retries=-1 to url when
 // a readiness check must answer fast.
 func OpenLazy(url string) (*Client, error) {
+	url, err := checkTLS(url)
+	if err != nil {
+		return nil, err
+	}
+
 	opts, err := goredis.ParseURL(url)
 	if err != nil {
 		return nil, fmt.Errorf("redis: parse url: %w", err)
 	}
 
 	return New(goredis.NewClient(opts)), nil
+}
+
+// checkTLS refuses plaintext redis:// to a non-loopback host and strips the
+// insecure_plaintext option, which go-redis does not know. Errors never echo
+// the url, which may hold a password.
+func checkTLS(rawURL string) (string, error) {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return "", errors.New("redis: parse url: invalid url")
+	}
+
+	q := u.Query()
+	plaintext := q.Get("insecure_plaintext") == "true"
+
+	if q.Has("insecure_plaintext") {
+		q.Del("insecure_plaintext")
+		u.RawQuery = q.Encode()
+	}
+
+	if u.Scheme == "redis" && !plaintext && !isLoopback(u.Hostname()) {
+		return "", errors.New("redis: plaintext connection to a remote host refused: " +
+			"use rediss:// or add insecure_plaintext=true")
+	}
+
+	return u.String(), nil
+}
+
+func isLoopback(host string) bool {
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return true
+	}
+
+	ip, err := netip.ParseAddr(host)
+
+	return err == nil && ip.IsLoopback()
 }
 
 // New wraps an existing go-redis client (cluster, sentinel, custom
