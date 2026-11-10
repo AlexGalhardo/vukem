@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,6 +34,11 @@ type Queue struct {
 	prefix string
 	grace  time.Duration
 	now    atomic.Pointer[func() time.Time]
+	// held maps each *queue.Message Pop returned to the score of its
+	// reservation: Ack, Release and Fail settle only while that score is
+	// still the job's, so a worker that outlived its reservation cannot
+	// settle the job another worker has taken over.
+	held sync.Map
 }
 
 // Queue returns a queue driver.
@@ -108,16 +114,68 @@ redis.call("ZREM", KEYS[1], id)
 local job = redis.call("GET", ARGV[3] .. id)
 if not job then return false end
 local timeout = tonumber(cjson.decode(job)["timeout"]) or 0
-redis.call("ZADD", KEYS[2], now + math.floor(timeout / 1000000) + tonumber(ARGV[2]), id)
-return job`)
+local deadline = now + math.floor(timeout / 1000000) + tonumber(ARGV[2])
+redis.call("ZADD", KEYS[2], deadline, id)
+return {job, deadline}`)
+
+// The settle scripts act only while the job's reservation score is the one
+// its worker got from Pop (ARGV[2]); they return 0 otherwise.
+//
+//nolint:gochecknoglobals // compiled once, read-only
+var (
+	ackScript = goredis.NewScript(`
+if tonumber(redis.call("ZSCORE", KEYS[1], ARGV[1])) ~= tonumber(ARGV[2]) then return 0 end
+redis.call("ZREM", KEYS[1], ARGV[1])
+redis.call("DEL", KEYS[2])
+return 1`)
+	releaseScript = goredis.NewScript(`
+if tonumber(redis.call("ZSCORE", KEYS[1], ARGV[1])) ~= tonumber(ARGV[2]) then return 0 end
+redis.call("SET", KEYS[2], ARGV[3])
+redis.call("ZREM", KEYS[1], ARGV[1])
+redis.call("ZADD", KEYS[3], ARGV[4], ARGV[1])
+return 1`)
+	failScript = goredis.NewScript(`
+if tonumber(redis.call("ZSCORE", KEYS[1], ARGV[1])) ~= tonumber(ARGV[2]) then return 0 end
+redis.call("ZREM", KEYS[1], ARGV[1])
+redis.call("DEL", KEYS[2])
+redis.call("SET", KEYS[3], ARGV[3])
+redis.call("ZADD", KEYS[4], ARGV[4], ARGV[1])
+return 1`)
+)
+
+// settle runs script for m when Pop handed m out and reports whether it
+// did; messages from elsewhere are settled by id, as before.
+func (q *Queue) settle(
+	ctx context.Context,
+	m *queue.Message,
+	script *goredis.Script,
+	keys []string,
+	args ...any,
+) (bool, error) {
+	at, ok := q.held.LoadAndDelete(m)
+	if !ok {
+		return false, nil
+	}
+
+	n, err := script.Run(ctx, q.rdb, keys, append([]any{m.ID, at}, args...)...).Int()
+	if err != nil {
+		return true, err
+	}
+
+	if n == 0 {
+		return true, queue.ErrReservationLost
+	}
+
+	return true, nil
+}
 
 // Pop implements queue.Driver.
 func (q *Queue) Pop(ctx context.Context, queues []string) (*queue.Message, error) {
 	now := q.clock().UnixMilli()
 
 	for _, name := range queues {
-		raw, err := popScript.Run(ctx, q.rdb, []string{q.ready(name), q.reserved(name)},
-			now, q.grace.Milliseconds(), q.prefix+"job:").Text()
+		res, err := popScript.Run(ctx, q.rdb, []string{q.ready(name), q.reserved(name)},
+			now, q.grace.Milliseconds(), q.prefix+"job:").Slice()
 		if errors.Is(err, goredis.Nil) {
 			continue
 		}
@@ -126,10 +184,15 @@ func (q *Queue) Pop(ctx context.Context, queues []string) (*queue.Message, error
 			return nil, err
 		}
 
+		raw, _ := res[0].(string)
+		deadline, _ := res[1].(int64)
+
 		var m queue.Message
 		if err := json.Unmarshal([]byte(raw), &m); err != nil {
 			return nil, err
 		}
+
+		q.held.Store(&m, deadline)
 
 		return &m, nil
 	}
@@ -139,6 +202,10 @@ func (q *Queue) Pop(ctx context.Context, queues []string) (*queue.Message, error
 
 // Ack implements queue.Driver.
 func (q *Queue) Ack(ctx context.Context, m *queue.Message) error {
+	if done, err := q.settle(ctx, m, ackScript, []string{q.reserved(m.Queue), q.job(m.ID)}); done {
+		return err
+	}
+
 	_, err := q.rdb.TxPipelined(ctx, func(p goredis.Pipeliner) error {
 		p.ZRem(ctx, q.reserved(m.Queue), m.ID)
 		p.Del(ctx, q.job(m.ID))
@@ -153,6 +220,11 @@ func (q *Queue) Ack(ctx context.Context, m *queue.Message) error {
 func (q *Queue) Release(ctx context.Context, m *queue.Message) error {
 	b, err := json.Marshal(m)
 	if err != nil {
+		return err
+	}
+
+	keys := []string{q.reserved(m.Queue), q.job(m.ID), q.ready(m.Queue)}
+	if done, err := q.settle(ctx, m, releaseScript, keys, b, ms(m.AvailableAt)); done {
 		return err
 	}
 
@@ -173,6 +245,11 @@ func (q *Queue) Fail(ctx context.Context, m *queue.Message) error {
 
 	b, err := json.Marshal(queue.FailedJob{Message: *m, FailedAt: now})
 	if err != nil {
+		return err
+	}
+
+	keys := []string{q.reserved(m.Queue), q.job(m.ID), q.failedKey(m.ID), q.failedSet()}
+	if done, err := q.settle(ctx, m, failScript, keys, b, ms(now)); done {
 		return err
 	}
 
