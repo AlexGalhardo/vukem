@@ -290,19 +290,26 @@ func (g *SessionGuard[U]) Logout(c *web.Ctx) error {
 		s.Invalidate()
 	}
 
-	if g.remember != nil {
-		// Only the signed-out user's own token: a cookie planted from
-		// another account must not delete that account's token.
-		if tokenID, _, ok := strings.Cut(c.Cookie(g.cookieName()), "."); ok && userID != "" {
-			_ = g.remember.delete(c.Context(), tokenID, userID)
-		}
-
-		g.clearCookie(c)
-	}
-
+	g.dropRemember(c, userID)
 	cache(c, g.name, nil)
 
 	return nil
+}
+
+// dropRemember deletes userID's remember-me token named by the request's
+// cookie, and clears the cookie.
+func (g *SessionGuard[U]) dropRemember(c *web.Ctx, userID string) {
+	if g.remember == nil {
+		return
+	}
+
+	// Only the user's own token: a cookie planted from another account
+	// must not delete that account's token.
+	if tokenID, _, ok := strings.Cut(c.Cookie(g.cookieName()), "."); ok && userID != "" {
+		_ = g.remember.delete(c.Context(), tokenID, userID)
+	}
+
+	g.clearCookie(c)
 }
 
 // isNotFound reports a provider's "no such user": ErrUserNotFound, or the
@@ -340,10 +347,19 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 
 	if g.impersonationExpired(s) {
 		// End the whole session: falling back to the actor would keep an
-		// admin signed in on a session handed around for support.
+		// admin signed in on a session handed around for support. The
+		// remember-me cookie would do the same, so it is cleared and not
+		// tried.
 		s.Invalidate()
+		if g.remember != nil {
+			g.clearCookie(c)
+		}
 		web.SecurityEvent(c.Request(), "auth.impersonation_ended", "guard", g.name, "reason", "expired")
-	} else if id, ok := s.Get(g.key()).(string); ok && id != "" {
+
+		return zero, ErrUnauthenticated
+	}
+
+	if id, ok := s.Get(g.key()).(string); ok && id != "" {
 		u, err := g.provider.ByID(c.Context(), id)
 
 		switch {
