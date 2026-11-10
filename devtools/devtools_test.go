@@ -127,6 +127,39 @@ func TestSecurity_A09_DevtoolsRedactsQueryArgs(t *testing.T) {
 	}
 }
 
+func TestSecurity_A09_DevtoolsHidesSecretParams(t *testing.T) {
+	t.Parallel()
+
+	const token = "tok-9f3a1c-secret"
+
+	d := New(Config{})
+	r := router.New(nil)
+	r.UseServer(d.Middleware())
+	r.Use(d.RouteMiddleware())
+	d.cfg.Routes = r.Routes
+	r.Get("/reset-password/{token}", func(c *web.Ctx) error { return c.String(http.StatusOK, "ok") }).
+		SecretParams("token")
+	d.Register(r)
+
+	h, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	get(t, h, "/reset-password/"+token, "127.0.0.1:1", "localhost")
+
+	reqs := d.Requests()
+	if len(reqs) != 1 || reqs[0].Path != "/reset-password/{token}" {
+		t.Fatalf("recorded requests = %+v, want path /reset-password/{token}", reqs)
+	}
+
+	for _, path := range []string{"/_vukem/requests", "/_vukem/", "/_vukem/requests/" + reqs[0].ID} {
+		if body := get(t, h, path, "127.0.0.1:1", "localhost").Body.String(); strings.Contains(body, token) {
+			t.Errorf("GET %s leaks the secret path parameter", path)
+		}
+	}
+}
+
 func TestNPlusOneDetection(t *testing.T) {
 	t.Parallel()
 

@@ -259,6 +259,11 @@ func (d *Devtools) Middleware() router.Middleware {
 				rw = &web.ResponseWriter{ResponseWriter: w}
 			}
 
+			// The router hides secret path parameters in the log holder of the
+			// context it receives, so the holder must exist before it runs.
+			// An empty RedactLogPath reuses middleware.Logger's holder or adds one.
+			r = r.WithContext(web.RedactLogPath(r.Context(), "", ""))
+
 			defer func() {
 				p := recover()
 				d.finish(a, r, rw, p != nil)
@@ -301,7 +306,7 @@ func (d *Devtools) finish(a *active, r *http.Request, rw *web.ResponseWriter, pa
 
 	a.mu.Lock()
 	req := Request{
-		ID: a.id, RequestID: rw.Header().Get(middleware.RequestIDHeader), Method: r.Method, Path: r.URL.Path,
+		ID: a.id, RequestID: rw.Header().Get(middleware.RequestIDHeader), Method: r.Method, Path: web.LogPath(r),
 		Pattern: a.pattern, Status: status, Start: a.start, Duration: d.cfg.Now().Sub(a.start),
 		Queries: a.queries, QueryTime: a.queryTime,
 	}
