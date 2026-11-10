@@ -3,6 +3,8 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -201,5 +203,50 @@ func assertJSONDecodeGate(t *testing.T, fn string, err error, reject bool, name 
 
 	if err != nil || name != "Ada" {
 		t.Fatalf("%s() = %q, %v, want name Ada", fn, name, err)
+	}
+}
+
+func TestPeekJSON_SurvivesLaterLimitBody(t *testing.T) {
+	t.Parallel()
+
+	const payload = `{"email":"a@b.c","password":"x"}`
+
+	tests := []struct {
+		name    string
+		second  int64
+		wantErr bool
+	}{
+		{"larger limit keeps body", 2 << 20, false},
+		{"smaller limit still enforced", 5, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(payload))
+			r.Header.Set("Content-Type", "application/json")
+
+			r = LimitBody(w, r, 1<<20)
+			if m, err := PeekJSON(r); err != nil || m["email"] != "a@b.c" {
+				t.Fatalf("PeekJSON() = %v, %v", m, err)
+			}
+
+			r = LimitBody(w, r, tt.second)
+			got, err := io.ReadAll(r.Body)
+
+			if tt.wantErr {
+				if _, ok := errors.AsType[*http.MaxBytesError](err); !ok {
+					t.Fatalf("ReadAll error = %v, want *http.MaxBytesError", err)
+				}
+
+				return
+			}
+
+			if err != nil || string(got) != payload {
+				t.Fatalf("ReadAll = %q, %v, want %q", got, err, payload)
+			}
+		})
 	}
 }

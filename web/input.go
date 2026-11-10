@@ -164,13 +164,13 @@ type bodyLimit struct {
 // bodies fail once they cross n.
 func LimitBody(w http.ResponseWriter, r *http.Request, n int64) *http.Request {
 	orig := r.Body
-	if prev, ok := r.Context().Value(bodyLimitKey{}).(bodyLimit); ok {
+	if prev, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit); ok {
 		orig = prev.body
 	}
 
 	r.Body = &limitedBody{ReadCloser: http.MaxBytesReader(w, orig, n), declared: r.ContentLength, n: n}
 
-	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, bodyLimit{n: n, body: orig}))
+	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, &bodyLimit{n: n, body: orig}))
 }
 
 // limitedBody refuses a declared Content-Length over the limit without
@@ -196,8 +196,12 @@ func (b *limitedBody) Read(p []byte) (int, error) {
 
 // BodyLimitOf returns the body limit set by LimitBody, if any.
 func BodyLimitOf(r *http.Request) (int64, bool) {
-	l, ok := r.Context().Value(bodyLimitKey{}).(bodyLimit)
-	return l.n, ok
+	l, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit)
+	if !ok || l == nil {
+		return 0, false
+	}
+
+	return l.n, true
 }
 
 func (c *Ctx) limitBody() {
