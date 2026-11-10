@@ -283,6 +283,7 @@ _, err = plain.User.Get()          // orm.ErrNotLoaded: relations are never lazy
 - Soft-deleted related rows are not loaded. Unknown relation names are query errors.
 - Relation fields are not columns; with `json:",omitzero"` they appear in JSON only when loaded.
 - Pivot writes: `orm.Attach(ctx, db, &post, "Tags", 1, 2)` (skips ids already linked), `orm.Detach(ctx, db, &post, "Tags", 2)` (no ids: all), `orm.Sync(ctx, db, &post, "Tags", 1, 3)` (exact set, in a transaction).
+- Relation keys of a type that implements `driver.Valuer` (such as `uuid.UUID`) are matched by their column form, so `With`, `Attach` and `Sync` work with UUID keys stored as text or as the PostgreSQL `uuid` type; a `BINARY(16)` key is not supported.
 - Nested eager loading (`"Comments.User"`) is not supported yet; load the second level with its own query.
 
 ## Migrations
