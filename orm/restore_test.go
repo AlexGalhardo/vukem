@@ -19,7 +19,7 @@ func TestRestore_NotTrashedReportsNotFound(t *testing.T) {
 		t.Fatalf("Restore(not trashed) = %v, want ErrNotFound", err)
 	}
 
-	gone := Post{Model: Model{ID: 9999}}
+	gone := Post{ID: 9999}
 	if err := Restore(ctx, db, &gone); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Restore(missing) = %v, want ErrNotFound", err)
 	}
