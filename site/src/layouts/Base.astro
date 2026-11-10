@@ -7,6 +7,7 @@ import "../../app/globals.css";
 import { Header } from "@/components/header";
 import { getNavGroupsByVersion } from "@/lib/content";
 import { site } from "@/lib/site";
+import { withTrailingSlash } from "@/lib/trailing-slash";
 
 interface Props {
   title: string;
@@ -30,7 +31,7 @@ const groupsByVersion = getNavGroupsByVersion();
     <meta name="description" content={description} />
     <meta name="application-name" content={site.name} />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="canonical" href={new URL(canonical ?? Astro.url.pathname, site.url).href} />
+    <link rel="canonical" href={new URL(withTrailingSlash(canonical ?? Astro.url.pathname), site.url).href} />
     <meta property="og:site_name" content={site.name} />
     <meta property="og:type" content="website" />
     <meta property="og:title" content={title} />

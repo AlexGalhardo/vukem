@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { CornerDownLeft, FileText, Hash, Search } from "lucide-react";
 import type { SearchEntry } from "@/lib/search";
+import { withTrailingSlash } from "@/lib/trailing-slash";
 import { useIsMac } from "@/components/use-mounted";
 
 type Result = SearchEntry & { score: number };
@@ -134,7 +135,7 @@ export function SearchDialog() {
   const go = (r: Result | undefined) => {
     if (!r) return;
     onOpenChange(false);
-    window.location.assign(r.href);
+    window.location.assign(withTrailingSlash(r.href));
   };
 
   const onInputKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
