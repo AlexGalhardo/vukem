@@ -43,7 +43,6 @@ type starterData struct {
 	Module string // Go module path
 }
 
-//nolint:gocognit // sequential project generation; each step reports its own error
 func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	module := set.String("module", "", "Go module path (default: the project name)")
 	framework := set.String("framework", "", "path to a local Vukem checkout to use instead of a release")
@@ -70,156 +69,196 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	)
 
 	return func(ctx context.Context, env *Env, args []string) error {
-		name, err := oneArg(args, "project name")
-		if err != nil {
-			return err
-		}
-
-		if !projectName.MatchString(name) {
-			return usagef("invalid project name %q (letters, digits, '-', '_' and '.')", name)
-		}
-
-		std := standardsOpts{
-			standards: *standards,
-			license:   strings.ToLower(strings.TrimSpace(*license)),
-			ci:        *ciFlag,
-			deploy:    strings.ToLower(strings.TrimSpace(*deploy)),
-			docker:    *compose,
-		}
-		if err := checkStandards(std); err != nil {
-			return err
-		}
-
-		dir := env.path(name)
-		if _, err := os.Stat(dir); err == nil {
-			return fmt.Errorf("%s already exists", name)
-		}
-
-		st := stack{kind: "minimal"}
-		if *minimal {
-			if *apiOnly || *templ || *inertiaFW != "" {
-				return usagef("--minimal is an HTMX starter: drop --api, --templ and --inertia")
-			}
-		} else if st, err = chooseStack(env, *apiOnly, *templ, *inertiaFW); err != nil {
-			return err
-		}
-
-		askStandards(env, &std)
-		std = std.withStack(st.kind)
-
-		pm, err := packageManager(dir, *pmFlag)
-		if err != nil {
-			return err
-		}
-
-		data := starterData{Name: name, Module: *module}
-		if data.Module == "" {
-			data.Module = name
-		}
-
-		if err := writeStarter(dir, data); err != nil {
-			return err
-		}
-
-		project := *env
-		project.Dir = dir
-
-		switch st.kind {
-		case "api":
-			if err := makeAPIStarter(&project, data); err != nil {
-				return err
-			}
-		case "inertia":
-			if err := applyInertia(&project, st.framework); err != nil {
-				return err
-			}
-		case "templ":
-			if err := applyTempl(&project); err != nil {
-				return err
-			}
-		case "minimal":
-			if err := makeMinimalStarter(&project); err != nil {
-				return err
-			}
-		}
-
-		if err := writeDocker(dir, st.kind, pm, *assetsImage); err != nil {
-			return err
-		}
-
-		// After the stack is in place, because an Inertia project replaces
-		// package.json, and before the install, so a lockfile-less project
-		// still answers for its own package manager.
-		if err := setPackageManager(&project, pm); err != nil {
-			return err
-		}
-
-		// Before writeAppKey: it copies .env.example to .env, so the
-		// Compose block has to be in place already.
-		if err := writeStandards(&project, newStandardsData(data, st.kind, std, env.Now().Year()), std); err != nil {
-			return err
-		}
-
-		if err := requireFramework(ctx, &project, *framework); err != nil {
-			return err
-		}
-
-		if err := addGovulncheck(ctx, &project); err != nil {
-			return err
-		}
-
-		if st.kind == "templ" {
-			if err := addTempl(ctx, &project); err != nil {
-				return err
-			}
-		}
-
-		if err := tool(ctx, &project, "go", "mod", "tidy"); err != nil {
-			return err
-		}
-
-		if st.kind == "templ" {
-			if err := templGenerate(ctx, &project); err != nil {
-				return err
-			}
-		}
-
-		if err := writeAppKey(&project, config.GenerateKey(), false); err != nil {
-			return err
-		}
-
-		if _, err := exec.LookPath("git"); err == nil {
-			cmd := exec.CommandContext(ctx, "git", "init", "--quiet")
-			cmd.Dir = dir
-
-			if out, err := cmd.CombinedOutput(); err != nil {
-				fmt.Fprintf(env.Stderr, "git init failed (continuing): %v\n%s", err, out)
-			} else {
-				installHooksPath(ctx, &project)
-			}
-		}
-
-		if st.kind != "api" {
-			jsInstall(ctx, &project, pm, *noInstall)
-		}
-
-		desc := "htmx " + htmxVersion + ", Tailwind, SQLite"
-
-		switch st.kind {
-		case "api":
-			desc = "JSON API, SQLite"
-		case "inertia":
-			desc = "Inertia + " + st.framework + ", Tailwind, SQLite"
-		case "templ":
-			desc = "htmx " + htmxVersion + ", templ, Tailwind, SQLite"
-		case "minimal":
-			desc = "htmx " + htmxVersion + ", Tailwind, no database"
-		}
-
-		fmt.Fprint(env.Stdout, nextSteps(name, desc, st.kind, std, pm, hasLockfile(dir)))
-
-		return nil
+		return runNewProject(ctx, env, args, newOpts{
+			module:      *module,
+			framework:   *framework,
+			inertiaFW:   *inertiaFW,
+			pmFlag:      *pmFlag,
+			assetsImage: *assetsImage,
+			apiOnly:     *apiOnly,
+			templ:       *templ,
+			minimal:     *minimal,
+			noInstall:   *noInstall,
+			std: standardsOpts{
+				standards: *standards,
+				license:   strings.ToLower(strings.TrimSpace(*license)),
+				ci:        *ciFlag,
+				deploy:    strings.ToLower(strings.TrimSpace(*deploy)),
+				docker:    *compose,
+			},
+		})
 	}
+}
+
+type newOpts struct {
+	module, framework, inertiaFW, pmFlag, assetsImage string
+	apiOnly, templ, minimal, noInstall                bool
+	std                                               standardsOpts
+}
+
+func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) error {
+	name, err := oneArg(args, "project name")
+	if err != nil {
+		return err
+	}
+
+	if !projectName.MatchString(name) {
+		return usagef("invalid project name %q (letters, digits, '-', '_' and '.')", name)
+	}
+
+	std := o.std
+	if err := checkStandards(std); err != nil {
+		return err
+	}
+
+	dir := env.path(name)
+	if _, err := os.Stat(dir); err == nil {
+		return fmt.Errorf("%s already exists", name)
+	}
+
+	st := stack{kind: "minimal"}
+	if o.minimal {
+		if o.apiOnly || o.templ || o.inertiaFW != "" {
+			return usagef("--minimal is an HTMX starter: drop --api, --templ and --inertia")
+		}
+	} else if st, err = chooseStack(env, o.apiOnly, o.templ, o.inertiaFW); err != nil {
+		return err
+	}
+
+	askStandards(env, &std)
+	std = std.withStack(st.kind)
+
+	pm, err := packageManager(dir, o.pmFlag)
+	if err != nil {
+		return err
+	}
+
+	data := starterData{Name: name, Module: o.module}
+	if data.Module == "" {
+		data.Module = name
+	}
+
+	if err := writeStarter(dir, data); err != nil {
+		return err
+	}
+
+	project := *env
+	project.Dir = dir
+
+	if err := applyStack(&project, st, data); err != nil {
+		return err
+	}
+
+	if err := writeDocker(dir, st.kind, pm, o.assetsImage); err != nil {
+		return err
+	}
+
+	// After the stack is in place, because an Inertia project replaces
+	// package.json, and before the install, so a lockfile-less project
+	// still answers for its own package manager.
+	if err := setPackageManager(&project, pm); err != nil {
+		return err
+	}
+
+	// Before writeAppKey: it copies .env.example to .env, so the
+	// Compose block has to be in place already.
+	if err := writeStandards(&project, newStandardsData(data, st.kind, std, env.Now().Year()), std); err != nil {
+		return err
+	}
+
+	if err := resolveModules(ctx, &project, st, o.framework); err != nil {
+		return err
+	}
+
+	if err := writeAppKey(&project, config.GenerateKey(), false); err != nil {
+		return err
+	}
+
+	gitInit(ctx, env, &project)
+
+	if st.kind != "api" {
+		jsInstall(ctx, &project, pm, o.noInstall)
+	}
+
+	fmt.Fprint(env.Stdout, nextSteps(name, stackDescription(st), st.kind, std, pm, hasLockfile(dir)))
+
+	return nil
+}
+
+// applyStack turns the common starter into the chosen stack.
+func applyStack(project *Env, st stack, data starterData) error {
+	switch st.kind {
+	case "api":
+		return makeAPIStarter(project, data)
+	case "inertia":
+		return applyInertia(project, st.framework)
+	case "templ":
+		return applyTempl(project)
+	case "minimal":
+		return makeMinimalStarter(project)
+	}
+
+	return nil
+}
+
+// resolveModules points the framework dependency at its source, adds the
+// tools the stack needs and tidies go.mod.
+func resolveModules(ctx context.Context, project *Env, st stack, framework string) error {
+	if err := requireFramework(ctx, project, framework); err != nil {
+		return err
+	}
+
+	if err := addGovulncheck(ctx, project); err != nil {
+		return err
+	}
+
+	if st.kind == "templ" {
+		if err := addTempl(ctx, project); err != nil {
+			return err
+		}
+	}
+
+	if err := tool(ctx, project, "go", "mod", "tidy"); err != nil {
+		return err
+	}
+
+	if st.kind == "templ" {
+		return templGenerate(ctx, project)
+	}
+
+	return nil
+}
+
+// gitInit initializes a repository when git is available; a failure only
+// warns.
+func gitInit(ctx context.Context, env, project *Env) {
+	if _, err := exec.LookPath("git"); err != nil {
+		return
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "init", "--quiet")
+	cmd.Dir = project.Dir
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(env.Stderr, "git init failed (continuing): %v\n%s", err, out)
+	} else {
+		installHooksPath(ctx, project)
+	}
+}
+
+func stackDescription(st stack) string {
+	switch st.kind {
+	case "api":
+		return "JSON API, SQLite"
+	case "inertia":
+		return "Inertia + " + st.framework + ", Tailwind, SQLite"
+	case "templ":
+		return "htmx " + htmxVersion + ", templ, Tailwind, SQLite"
+	case "minimal":
+		return "htmx " + htmxVersion + ", Tailwind, no database"
+	}
+
+	return "htmx " + htmxVersion + ", Tailwind, SQLite"
 }
 
 // jsInstall installs the frontend dependencies with pm when it is
