@@ -16,7 +16,7 @@ import (
 type Cron struct {
 	expr                          string
 	minute, hour, dom, month, dow uint64
-	domStar, dowStar              bool
+	domStar, dowStar, hourStar    bool
 }
 
 var macros = map[string]string{ //nolint:gochecknoglobals // read-only table
@@ -64,6 +64,7 @@ func ParseCron(expr string) (Cron, error) {
 	// Vixie cron: a day field starting with "*" (also "*/2") makes the two
 	// day fields combine with AND; only two restricted fields use OR.
 	c.domStar, c.dowStar = strings.HasPrefix(fields[2], "*"), strings.HasPrefix(fields[4], "*")
+	c.hourStar = strings.HasPrefix(fields[1], "*")
 
 	return c, nil
 }

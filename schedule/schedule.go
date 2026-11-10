@@ -302,12 +302,48 @@ func (s *Schedule) Due(now time.Time) []*Task {
 	var out []*Task
 
 	for _, t := range s.tasks {
-		if t.cron.Matches(now.In(s.loc(t))) {
+		if s.due(t, now) {
 			out = append(out, t)
 		}
 	}
 
 	return out
+}
+
+// due follows Vixie cron across DST changes: a task with a fixed hour runs
+// once per wall-clock day (not twice when the clock goes back, and right
+// after the jump when it goes forward over its time); a wildcard hour
+// follows real time.
+func (s *Schedule) due(t *Task, now time.Time) bool {
+	loc := s.loc(t)
+	local := now.In(loc)
+
+	if t.cron.hourStar {
+		return t.cron.Matches(local)
+	}
+
+	if hourAgo := now.Add(-time.Hour).In(loc); hourAgo.Hour() == local.Hour() && hourAgo.Minute() == local.Minute() {
+		return false // the second pass of a repeated hour
+	}
+
+	if t.cron.Matches(local) {
+		return true
+	}
+
+	// Matches reads only the date and clock fields, so skipped wall minutes
+	// can be checked as UTC times.
+	prev, cur := wallClock(now.Add(-time.Minute).In(loc)), wallClock(local)
+	for m := prev.Add(time.Minute); m.Before(cur); m = m.Add(time.Minute) {
+		if t.cron.Matches(m) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func wallClock(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, time.UTC)
 }
 
 // Next returns when t runs next after now.
