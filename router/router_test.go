@@ -560,3 +560,22 @@ func TestRouteLogAttr(t *testing.T) {
 		t.Errorf("attrs = %v", got)
 	}
 }
+
+func BenchmarkNotFound(b *testing.B) {
+	r := newRouter()
+	r.Get("/hello", func(c *web.Ctx) error { return c.NoContent() })
+
+	h, err := r.Handler()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/nope", http.NoBody)
+	req.Header.Set("User-Agent", "scanner")
+	req.Header.Set("Accept", "text/html")
+
+	b.ReportAllocs()
+	for b.Loop() {
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+}

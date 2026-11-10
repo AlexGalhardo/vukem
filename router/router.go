@@ -413,8 +413,11 @@ var probeMethods = []string{
 func (r *Router) allowed(req *http.Request) []string {
 	var methods []string
 
+	// One shallow copy: mux.Handler reads only the method, host and URL.
+	probe := new(http.Request)
+	*probe = *req
+
 	for _, m := range probeMethods {
-		probe := req.Clone(req.Context())
 		probe.Method = m
 
 		if _, pattern := r.mux.Handler(probe); pattern != "" && !r.catchAll[pattern] {
