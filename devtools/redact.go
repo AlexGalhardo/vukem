@@ -32,13 +32,26 @@ func NormalizeSQL(query string) string {
 	return sqlPlaceholders.ReplaceAllString(s, "(?...)")
 }
 
-// stripStrings replaces every string literal with "?": 'x' (doubled ” or
-// backslash escapes), "x" unless its content is a plain identifier, and
-// $tag$x$tag$. An unterminated literal is redacted to the end.
+// stripStrings replaces every string literal with "?" and drops comments:
+// 'x' (doubled quotes; backslash escapes only in PostgreSQL E'x'), "x"
+// unless its content is a plain identifier, and $tag$x$tag$. Comments go
+// first so an apostrophe in one cannot flip the quote pairing. An
+// unterminated literal or comment runs to the end.
+//
+// shortcut: MySQL backslash escapes ('a\'b') are not understood and can
+// leave a fragment; upgrade when a MySQL driver ships.
 func stripStrings(q string) string {
 	var b strings.Builder
 
 	for i := 0; i < len(q); {
+		if end := commentEnd(q, i); end > 0 {
+			b.WriteByte(' ')
+
+			i = end
+
+			continue
+		}
+
 		end := literalEnd(q, i)
 		switch {
 		case end < 0:
@@ -59,12 +72,33 @@ func stripStrings(q string) string {
 	return b.String()
 }
 
+// commentEnd returns the index just past the "--" or "/* */" comment
+// starting at q[i], or 0 when q[i] does not start one.
+func commentEnd(q string, i int) int {
+	switch {
+	case strings.HasPrefix(q[i:], "--"):
+		if j := strings.IndexByte(q[i:], '\n'); j >= 0 {
+			return i + j + 1
+		}
+
+		return len(q)
+	case strings.HasPrefix(q[i:], "/*"):
+		if j := strings.Index(q[i+2:], "*/"); j >= 0 {
+			return i + 2 + j + 2
+		}
+
+		return len(q)
+	}
+
+	return 0
+}
+
 // literalEnd returns the index just past the quoted run starting at q[i], or
 // -1 when q[i] does not start one.
 func literalEnd(q string, i int) int {
 	switch q[i] {
 	case '\'', '"':
-		return quotedEnd(q, i)
+		return quotedEnd(q, i, isEscapeString(q, i))
 	case '$':
 		tag := sqlDollarTag.FindString(q[i:])
 		if tag == "" {
@@ -81,12 +115,31 @@ func literalEnd(q string, i int) int {
 	return -1
 }
 
-func quotedEnd(q string, i int) int {
+// isEscapeString reports whether the quote at q[i] opens a PostgreSQL E'...'
+// string.
+func isEscapeString(q string, i int) bool {
+	if i == 0 || q[i] != '\'' || (q[i-1] != 'E' && q[i-1] != 'e') {
+		return false
+	}
+
+	if i == 1 {
+		return true
+	}
+
+	c := q[i-2]
+
+	letter := c|0x20 >= 'a' && c|0x20 <= 'z'
+	digit := c >= '0' && c <= '9'
+
+	return c != '_' && !letter && !digit
+}
+
+func quotedEnd(q string, i int, backslash bool) int {
 	quote := q[i]
 
 	for j := i + 1; j < len(q); j++ {
 		switch {
-		case q[j] == '\\':
+		case backslash && q[j] == '\\':
 			j++
 		case q[j] == quote && j+1 < len(q) && q[j+1] == quote:
 			j++

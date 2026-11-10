@@ -16,6 +16,7 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
@@ -84,11 +85,14 @@ func TestNormalizeSQL(t *testing.T) {
 		{"SELECT * FROM t1 WHERE name = 'O''Brien' AND age > 42", "SELECT * FROM t1 WHERE name = ? AND age > ?"},
 		{"SELECT * FROM posts WHERE id IN ($1, $2, $3)", "SELECT * FROM posts WHERE id IN (?...)"},
 		{"INSERT INTO t (a, b) VALUES (?, ?)", "INSERT INTO t (a, b) VALUES (?...)"},
-		{`SELECT * FROM t WHERE n = 'a\'b-LEAK' AND x = 1`, "SELECT * FROM t WHERE n = ? AND x = ?"},
 		{`SELECT * FROM t WHERE n = "x-LEAK"`, "SELECT * FROM t WHERE n = ?"},
 		{`SELECT * FROM t WHERE n = "two words-LEAK"`, "SELECT * FROM t WHERE n = ?"},
 		{"SELECT * FROM t WHERE n = $$te'xt-LEAK$$", "SELECT * FROM t WHERE n = ?"},
 		{"SELECT * FROM t WHERE n = $tag$te$$xt-LEAK$tag$ AND id = $1", "SELECT * FROM t WHERE n = ? AND id = ?"},
+		{"SELECT 1 -- it's\n WHERE t = 'secret-LEAK'", "SELECT ? WHERE t = ?"},
+		{"SELECT /* ' */ 1 WHERE t = 'secret-LEAK'", "SELECT ? WHERE t = ?"},
+		{`SELECT * FROM t WHERE n = E'a\'b-LEAK' AND x = 1`, "SELECT * FROM t WHERE n = E? AND x = ?"},
+		{`SELECT * FROM t WHERE n = 'ab\' AND m = 'secret-LEAK'`, "SELECT * FROM t WHERE n = ? AND m = ?"},
 		{`SELECT "users"."id" FROM "users" WHERE id = 7`, `SELECT "users"."id" FROM "users" WHERE id = ?`},
 	}
 
@@ -163,6 +167,30 @@ func TestSecurity_A09_DevtoolsHidesSecretParams(t *testing.T) {
 		if body := get(t, h, path, "127.0.0.1:1", "localhost").Body.String(); strings.Contains(body, token) {
 			t.Errorf("GET %s leaks the secret path parameter", path)
 		}
+	}
+}
+
+func TestSecurity_A09_DevtoolsHidesSecretParamsWithInnerLogger(t *testing.T) {
+	t.Parallel()
+
+	const token = "tok-inner-logger-secret"
+
+	d := New(Config{})
+	r := router.New(nil)
+	r.UseServer(d.Middleware())
+	r.UseServer(middleware.Logger(slog.New(slog.DiscardHandler)))
+	r.Get("/reset-password/{token}", func(c *web.Ctx) error { return c.String(http.StatusOK, "ok") }).
+		SecretParams("token")
+
+	h, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	get(t, h, "/reset-password/"+token, "127.0.0.1:1", "localhost")
+
+	if reqs := d.Requests(); len(reqs) != 1 || reqs[0].Path != "/reset-password/{token}" {
+		t.Fatalf("recorded requests = %+v, want path /reset-password/{token}", reqs)
 	}
 }
 
