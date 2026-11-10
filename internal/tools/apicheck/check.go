@@ -268,8 +268,6 @@ func (r result) count(incompatible bool) int {
 }
 
 // renderMarkdown writes results as a report grouped by module and package.
-//
-//nolint:gocognit // report rendering; one section per change kind
 func renderMarkdown(w io.Writer, title, command string, results []result) error {
 	var b strings.Builder
 
@@ -292,50 +290,54 @@ func renderMarkdown(w io.Writer, title, command string, results []result) error 
 			continue
 		}
 
-		fmt.Fprintf(&b, "\n## %s\n\nCompared with `%s`.\n", r.Module.Path, r.Base)
-
-		if len(r.Changes) == 0 {
-			b.WriteString("\nNo API changes.\n")
-
-			continue
-		}
-
-		var pkgs []string
-		for _, c := range r.Changes {
-			if !slices.Contains(pkgs, c.Package) {
-				pkgs = append(pkgs, c.Package)
-			}
-		}
-
-		slices.Sort(pkgs)
-
-		for _, pkg := range pkgs {
-			fmt.Fprintf(&b, "\n### %s\n", importPath(r.Module.Path, pkg))
-
-			for _, incompatible := range []bool{true, false} {
-				label := "Compatible"
-				if incompatible {
-					label = "Incompatible"
-				}
-
-				var lines []string
-
-				for _, c := range r.Changes {
-					if c.Package == pkg && c.Incompatible == incompatible {
-						lines = append(lines, fmt.Sprintf("- %#q: %s", c.Subject, c.Message))
-					}
-				}
-
-				if len(lines) > 0 {
-					fmt.Fprintf(&b, "\n%s:\n\n%s\n", label, strings.Join(lines, "\n"))
-				}
-			}
-		}
+		writeModuleSection(&b, r)
 	}
 
 	_, err := io.WriteString(w, b.String())
 
 	return err
+}
+
+func writeModuleSection(b *strings.Builder, r result) {
+	fmt.Fprintf(b, "\n## %s\n\nCompared with `%s`.\n", r.Module.Path, r.Base)
+
+	if len(r.Changes) == 0 {
+		b.WriteString("\nNo API changes.\n")
+
+		return
+	}
+
+	var pkgs []string
+	for _, c := range r.Changes {
+		if !slices.Contains(pkgs, c.Package) {
+			pkgs = append(pkgs, c.Package)
+		}
+	}
+
+	slices.Sort(pkgs)
+
+	for _, pkg := range pkgs {
+		fmt.Fprintf(b, "\n### %s\n", importPath(r.Module.Path, pkg))
+
+		for _, incompatible := range []bool{true, false} {
+			label := "Compatible"
+			if incompatible {
+				label = "Incompatible"
+			}
+
+			var lines []string
+
+			for _, c := range r.Changes {
+				if c.Package == pkg && c.Incompatible == incompatible {
+					lines = append(lines, fmt.Sprintf("- %#q: %s", c.Subject, c.Message))
+				}
+			}
+
+			if len(lines) > 0 {
+				fmt.Fprintf(b, "\n%s:\n\n%s\n", label, strings.Join(lines, "\n"))
+			}
+		}
+	}
 }
 
 // extractFile extracts the tar file at name into dst, creating dst.
