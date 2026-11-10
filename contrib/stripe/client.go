@@ -54,7 +54,8 @@ func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = strings
 // WithHTTPClient sets the HTTP client (default: 30s timeout).
 func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
 
-// WithRetries sets how many times a 429, 5xx or network failure is retried
+// WithRetries sets how many times a 409, 429, 5xx or network failure is
+// retried, unless Stripe-Should-Retry says otherwise
 // (default 2).
 func WithRetries(n int) Option { return func(c *Client) { c.retries = n } }
 
