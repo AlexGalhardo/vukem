@@ -19,7 +19,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | --- | --- |
 | Current phase | **BETA** (stabilisation: B.5) |
 | Next task | `S.3.1` |
-| Updated | 2026-11-07 |
+| Updated | 2026-11-10 |
 
 ## Design references
 
@@ -125,10 +125,10 @@ Applies to **every** task:
 ### P.3 Router & ctx — needs: P.2
 
 - [x] **P.3.1** Route registration over `http.ServeMux` (verbs, params, `{path...}`, `{$}`).
-  → verify: table tests per verb/pattern; `FuzzPattern`.
+  → verify: table tests per verb/pattern; `FuzzRoutePattern`.
 - [x] **P.3.2** Groups (prefix, nested, middleware, name prefix).
   → verify: tests for nesting 3 levels.
-- [x] **P.3.3** Named routes + `URLFor` (missing/extra params error) + conflict errors naming both routes.
+- [x] **P.3.3** Named routes + `Router.URL` (missing/extra params error) + conflict errors naming both routes.
   → verify: tests including conflict case.
 - [x] **P.3.4** `Resource` / `APIResource` with interface detection, `Only/Except`.
   → verify: controller implementing 3 of 7 actions registers exactly 3 routes.
@@ -530,7 +530,7 @@ Applies to **every** task:
 - [x] **B.7.2** `install:admin` scaffold and `make:admin-resource`.
   → verify: generated app tests pass.
 - [x] **B.7.3** `devtools` dashboard at `/_vukem` (development only; boot error if enabled in production): routes, requests with timings, SQL queries with N+1 detection, jobs, events, mail previews, logs, traces (ring buffers).
-  → verify: tests; enabling in production fails at boot (`TestSecurity_A02_DevtoolsNeverInProduction`).
+  → verify: tests; enabling in production fails at boot (`TestSecurity_A02_DevtoolsRefusedInProduction`).
 
 ### B.8 Auth & integrations
 
@@ -569,7 +569,7 @@ Applies to **every** task:
 
 ### B.11 gRPC
 
-- [x] **B.11.1** `contrib/grpc` module on **connect-go** (net/http native: gRPC, gRPC-Web and Connect protocols on the same router, HTTP/2 via `h2c` in development): `vukem.MountRPC(r, path, handler)`, interceptors bridging auth guards, `z` validation, problem details → gRPC status codes, request id and logging.
+- [x] **B.11.1** `contrib/grpc` module on **connect-go** (net/http native: gRPC, gRPC-Web and Connect protocols on the same router, HTTP/2 via `h2c` in development): `grpc.Mount(r, path, handler)`, interceptors bridging auth guards, `z` validation, problem details → gRPC status codes, request id and logging.
   → verify: unary and server-streaming tests with gRPC and Connect clients against the app router; unauthenticated calls get `Unauthenticated`.
 - [x] **B.11.2** Codegen and tooling: `vukem make:proto`, `buf.gen.yaml` template, `vukem codegen:rpc` (protoc-gen-go + protoc-gen-connect-go via `go tool`), gRPC health checking and server reflection (dev only), `vukemtest` RPC client helpers.
   → verify: generated service compiles and its tests pass in a new app.

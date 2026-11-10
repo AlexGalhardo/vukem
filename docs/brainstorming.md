@@ -30,7 +30,7 @@ Status legend: ✅ decided · ⏳ open
 
 | # | Topic | Decision | Alternatives | Rationale |
 | --- | --- | --- | --- | --- |
-| A1 | Router | **Thin layer over `http.ServeMux`**: groups, named routes, `Resource()`, `URLFor()`; handlers `func(c *Ctx) error`; middleware `func(http.Handler) http.Handler`; any `http.Handler` mountable | chi underneath; plain `http.HandlerFunc` | stdlib-first; whole ecosystem's middleware works; central error handling (Echo pattern) |
+| A1 | Router | **Thin layer over `http.ServeMux`**: groups, named routes, `Resource()`, `URL()`; handlers `func(c *Ctx) error`; middleware `func(http.Handler) http.Handler`; any `http.Handler` mountable | chi underneath; plain `http.HandlerFunc` | stdlib-first; whole ecosystem's middleware works; central error handling (Echo pattern) |
 | A2 | DI | **`App` struct with typed fields + providers** (`Register`/`Boot`/`Shutdown`) wired explicitly in `bootstrap/app.go` | generic container; uber/fx; samber/do | Idiomatic, no hidden deps, no facades/globals |
 | A3 | Controllers | **Structs with methods** (`func (p *PostController) Index(c *Ctx) error`); `r.Resource("posts", ctrl)` detects `Index/Create/Store/Show/Edit/Update/Destroy` via small interfaces | free functions | Laravel familiarity; interface detection is compile-safe, no reflection on signatures |
 | A4 | Errors | **Central handler + typed errors** (`HTTPError`, `ValidationError`, `ErrNotFound`) → HTML status pages, redirect+flash (web), 422 re-render (HTMX), `application/problem+json` RFC 9457 (API); debug page in dev | plain `{error}` JSON | One place maps errors to responses (like Laravel `withExceptions`) |
