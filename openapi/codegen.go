@@ -441,103 +441,131 @@ func zodEnum(enum []any) string {
 	return "z.union([" + strings.Join(parts, ", ") + "])"
 }
 
-//nolint:gocognit // one case per JSON Schema keyword
 func zodBase(s map[string]any, t, indent string) string {
-	num := func(k string) (string, bool) {
-		v, ok := s[k].(float64)
-		return strconv.FormatFloat(v, 'f', -1, 64), ok
+	switch t {
+	case "string":
+		return zodString(s)
+	case "integer", "number":
+		return zodNumber(s, t)
+	case "boolean":
+		return "z.boolean()"
+	case "array":
+		return zodArray(s, indent)
+	case "object":
+		return zodObject(s, indent)
+	default:
+		return "z.unknown()"
+	}
+}
+
+// schemaNum reads a numeric keyword, formatted the way it is emitted.
+func schemaNum(s map[string]any, k string) (string, bool) {
+	v, ok := s[k].(float64)
+	return strconv.FormatFloat(v, 'f', -1, 64), ok
+}
+
+func zodString(s map[string]any) string {
+	var b strings.Builder
+
+	// Zod 4 top-level formats. uuid maps to z.guid(): the server accepts
+	// any 8-4-4-4-12 hex string, z.uuid() only RFC 9562 variants.
+	switch s["format"] {
+	case "email":
+		b.WriteString("z.email()")
+	case "uri":
+		b.WriteString("z.url()")
+	case "uuid":
+		b.WriteString("z.guid()")
+	case "date-time":
+		b.WriteString("z.iso.datetime({ offset: true })")
+	default:
+		b.WriteString("z.string()")
+	}
+
+	if v, ok := schemaNum(s, "minLength"); ok {
+		b.WriteString(".min(" + v + ")")
+	}
+
+	if v, ok := schemaNum(s, "maxLength"); ok {
+		b.WriteString(".max(" + v + ")")
+	}
+
+	if p, ok := s["pattern"].(string); ok {
+		b.WriteString(".regex(new RegExp(" + strconv.Quote(p) + ", \"u\"))")
+	}
+
+	return b.String()
+}
+
+func zodNumber(s map[string]any, t string) string {
+	var b strings.Builder
+
+	if t == "integer" {
+		b.WriteString("z.int()")
+	} else {
+		b.WriteString("z.number()")
+	}
+
+	for _, km := range [][2]string{{"minimum", "gte"}, {"maximum", "lte"}, {"exclusiveMinimum", "gt"}, {"multipleOf", "multipleOf"}} {
+		if v, ok := schemaNum(s, km[0]); ok {
+			b.WriteString("." + km[1] + "(" + v + ")")
+		}
+	}
+
+	return b.String()
+}
+
+func zodArray(s map[string]any, indent string) string {
+	var b strings.Builder
+
+	b.WriteString("z.array(" + zodType(asMap(s["items"]), indent) + ")")
+
+	if v, ok := schemaNum(s, "minItems"); ok {
+		b.WriteString(".min(" + v + ")")
+	}
+
+	if v, ok := schemaNum(s, "maxItems"); ok {
+		b.WriteString(".max(" + v + ")")
+	}
+
+	return b.String()
+}
+
+func zodObject(s map[string]any, indent string) string {
+	props := asMap(s["properties"])
+	if len(props) == 0 {
+		if extra := asMap(s["additionalProperties"]); extra != nil {
+			return "z.record(z.string(), " + zodType(extra, indent) + ")"
+		}
+
+		return "z.record(z.string(), z.unknown())"
+	}
+
+	required := map[string]bool{}
+	for _, r := range asSlice(s["required"]) {
+		if k, ok := r.(string); ok {
+			required[k] = true
+		}
 	}
 
 	var b strings.Builder
 
-	switch t {
-	case "string":
-		// Zod 4 top-level formats. uuid maps to z.guid(): the server accepts
-		// any 8-4-4-4-12 hex string, z.uuid() only RFC 9562 variants.
-		switch s["format"] {
-		case "email":
-			b.WriteString("z.email()")
-		case "uri":
-			b.WriteString("z.url()")
-		case "uuid":
-			b.WriteString("z.guid()")
-		case "date-time":
-			b.WriteString("z.iso.datetime({ offset: true })")
-		default:
-			b.WriteString("z.string()")
-		}
-
-		if v, ok := num("minLength"); ok {
-			b.WriteString(".min(" + v + ")")
-		}
-
-		if v, ok := num("maxLength"); ok {
-			b.WriteString(".max(" + v + ")")
-		}
-
-		if p, ok := s["pattern"].(string); ok {
-			b.WriteString(".regex(new RegExp(" + strconv.Quote(p) + ", \"u\"))")
-		}
-	case "integer", "number":
-		if t == "integer" {
-			b.WriteString("z.int()")
-		} else {
-			b.WriteString("z.number()")
-		}
-
-		for _, km := range [][2]string{{"minimum", "gte"}, {"maximum", "lte"}, {"exclusiveMinimum", "gt"}, {"multipleOf", "multipleOf"}} {
-			if v, ok := num(km[0]); ok {
-				b.WriteString("." + km[1] + "(" + v + ")")
-			}
-		}
-	case "boolean":
-		b.WriteString("z.boolean()")
-	case "array":
-		b.WriteString("z.array(" + zodType(asMap(s["items"]), indent) + ")")
-
-		if v, ok := num("minItems"); ok {
-			b.WriteString(".min(" + v + ")")
-		}
-
-		if v, ok := num("maxItems"); ok {
-			b.WriteString(".max(" + v + ")")
-		}
-	case "object":
-		props := asMap(s["properties"])
-		if len(props) == 0 {
-			if extra := asMap(s["additionalProperties"]); extra != nil {
-				return "z.record(z.string(), " + zodType(extra, indent) + ")"
-			}
-
-			return "z.record(z.string(), z.unknown())"
-		}
-
-		required := map[string]bool{}
-		for _, r := range asSlice(s["required"]) {
-			if k, ok := r.(string); ok {
-				required[k] = true
-			}
-		}
-
-		if s["additionalProperties"] == false {
-			b.WriteString("z.strictObject({\n")
-		} else {
-			b.WriteString("z.object({\n")
-		}
-
-		for _, k := range sortedKeys(props) {
-			v := zodType(asMap(props[k]), indent+"  ")
-			if !required[k] {
-				v += ".optional()"
-			}
-
-			fmt.Fprintf(&b, "%s  %s: %s,\n", indent, propKey(k), v)
-		}
-
-		b.WriteString(indent + "})")
-	default:
-		return "z.unknown()"
+	if s["additionalProperties"] == false {
+		b.WriteString("z.strictObject({\n")
+	} else {
+		b.WriteString("z.object({\n")
 	}
+
+	for _, k := range sortedKeys(props) {
+		v := zodType(asMap(props[k]), indent+"  ")
+		if !required[k] {
+			v += ".optional()"
+		}
+
+		fmt.Fprintf(&b, "%s  %s: %s,\n", indent, propKey(k), v)
+	}
+
+	b.WriteString(indent + "})")
 
 	return b.String()
 }
