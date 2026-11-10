@@ -44,7 +44,7 @@ Every route the framework registers itself is named under the `vukem.` prefix (`
 | Probe | Where | What it touches |
 | --- | --- | --- |
 | Liveness | `GET /up` (`vukem.health`) | the process only; answers `{"status":"ok"}` with `Cache-Control: no-store`, plus `"version"` when the app sets `vukem.WithVersion` (also in the readiness body; off by default so the probe does not fingerprint the build) |
-| Readiness | `GET /up?checks=1`, or `app.ReadyHandler()` mounted on a path of your own | every registered health check, in parallel, each bounded by its timeout |
+| Readiness | `GET /up?checks=1`, or `app.ReadyHandler()` mounted on a path of your own | every registered health check, in parallel, each bounded by its timeout; probes that arrive while a check is running share that run, and once a probe has abandoned a hung check at its timeout, later probes fail at once instead of starting another goroutine |
 
 Register checks with `vukem.WithHealthCheck(name, check)` at build time, or `app.AddHealthCheck(name, check)` / `app.AddHealthCheckTimeout(name, timeout, check)` from a provider. `app.CheckHealth(ctx)` runs them and returns each error by name.
 
@@ -104,6 +104,8 @@ Signature: `func(http.Handler) http.Handler`. Three stacks:
 | Server | every request, even unmatched | `Recover`, `RequestID`, `Logger` (slog), `Static` |
 | Router | only when a route matches | `MethodOverride`, `Session`, `CSRF`, `Flash`, `Auth` init (ALPHA) |
 | Named | per route/group, may take options | `auth.Required(guards...)`, `auth.Guest()`, `ratelimit.Limit(name)`, `Timeout(d)`, `CORS(cfg)` |
+
+`middleware.Gzip` passes `Flush` through, also before the first write (it sends the headers, as a first write would), so streaming handlers work behind it.
 
 `vukem make:middleware` generates the function and registers it as named middleware in `bootstrap/middleware.go`.
 
@@ -167,6 +169,7 @@ type ValidationError struct { Fields map[string][]string }
 - Custom handling per error type: set `Services.Errors` to a `web.ErrorHandler`, match your types with `errors.AsType[*MyErr](err)`, and call `web.DefaultErrorHandler(c, err)` for the rest.
 - Per group: `g.ErrorHandler(func(next web.ErrorHandler) web.ErrorHandler)` replaces the handler for the group's routes and nested groups, for errors returned by handlers and for middleware failures (`web.Fail`); `next` is the outer group's, the router's or the default handler. Unmatched paths (404/405) keep the router's handler. Route handlers read it from a private context key, not from the services in the context, so `auth.ProblemJSON` still only affects middleware errors (`TestGroupErrorHandler`).
 - Panics are recovered by `middleware.Recover` and converted to 500.
+- A 5xx that wraps a `ValidationError` answers as a plain server error: its field errors are never sent, and a form post is not redirected back with them (`TestSecurity_A10_ServerErrorHidesWrappedValidation`).
 
 ### Debug error page
 
@@ -177,7 +180,7 @@ Stacks come from `errs.New`, `errs.Wrap`, `errs.WithStack(err)` (for errors from
 ## Static files and uploads
 
 - `public/` served by `middleware.Static` with `http.ServeFileFS` over an `os.Root` (a file named `index.html` is served like any other; directories are left to the next handler); `/build/` and fingerprinted names (a hex or Vite-style hash segment, not any long word) get `Cache-Control: public, max-age=31536000, immutable`; other files revalidate through `Last-Modified`, or a content-hash `ETag` for embedded files.
-- Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default, raising or lowering it; the limit is checked when the body is read, against the innermost limit). Urlencoded forms are parsed by `MethodOverride` before routing, so their cap has to be a server-level `BodyLimit` placed ahead of it; a route-level limit never applies to them, and a hit limit is remembered so `web.Parse` answers 413 (`TestSecurity_A06_MethodOverrideRemembersMaxBytes`).
+- Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default, raising or lowering it; the limit is checked when the body is read, against the innermost limit; `web.PeekJSON` puts the bytes it read back, so a `LimitBody` applied after it still sees the whole body and its limit still applies). Urlencoded forms are parsed by `MethodOverride` before routing, so their cap has to be a server-level `BodyLimit` placed ahead of it; a route-level limit never applies to them, and a hit limit is remembered so `web.Parse` answers 413 (`TestSecurity_A06_MethodOverrideRemembersMaxBytes`).
 - Uploads stored through `storage/` (ALPHA) using `os.Root` to prevent path traversal; filenames randomised by default. Streaming, resumable and direct uploads: [subsystems.md#uploads](subsystems.md#uploads).
 
 ## HTTPS and HTTP/2
