@@ -76,7 +76,7 @@ These paths are refused before `OutDir` is created, so a bad list writes nothing
 - two pages whose files differ only by case (`/About` and `/about`), because Windows and macOS file systems treat them as one file;
 - a segment that ends in a dot or a space, which Windows drops;
 - a segment that ends in `.ssg-tmp`, the temporary name used beside each page;
-- a Windows device name, with or without an extension (`con`, `prn`, `aux`, `nul`, `conin$`, `conout$`, `com1` to `com9`, `lpt1` to `lpt9`).
+- a Windows device name, with or without an extension (`con`, `prn`, `aux`, `nul`, `conin$`, `conout$`, `com0` to `com9`, `lpt0` to `lpt9` and the superscript `com¹` to `com³`, `lpt¹` to `lpt³`).
 
 `Generate` writes through an [`os.Root`](https://pkg.go.dev/os#Root) opened on `OutDir`, so a symlink or junction inside `OutDir` cannot redirect a write outside it, and no directory is created through one. Nothing is written outside `OutDir` (`ssg.ErrEscape`). Each page is written to a temporary file next to its target and renamed, so a hard link to an existing file is replaced, not truncated.
 
