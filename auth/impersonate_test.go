@@ -136,6 +136,23 @@ func TestSecurity_A01_ImpersonationExpiryIgnoresRememberMe(t *testing.T) {
 	}
 
 	ta.Client(t).WithCookie("remember_web", token).Get("/dashboard").AssertRedirect("/login")
+
+	// A session version bump on the target during the impersonation ends the
+	// session, and the actor's old remember-me cookie does not sign it back in.
+	c, token = login()
+	c.PostForm("/impersonate/"+bob.AuthID(), nil).AssertRedirect("/whoami")
+
+	db, err := ta.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := orm.QueryOf[User](db).Where("id", bob.ID).
+		Update(t.Context(), orm.Set{"session_version": bob.SessionVersion + 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	c.WithCookie("remember_web", token).Get("/whoami").AssertSee("guest")
 }
 
 // Ending the actor's sessions (password reset) during an impersonation
