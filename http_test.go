@@ -785,6 +785,46 @@ func TestCheckHealthBackToBackNeverBusy(t *testing.T) {
 	}
 }
 
+// Probes that arrive while a check is running share that run: the second
+// used to get errHealthCheckBusy (a false 503) with a healthy dependency.
+func TestCheckHealthConcurrentProbesShareRun(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		app := newTestApp(t)
+		release := make(chan struct{})
+
+		var started atomic.Int32
+
+		app.AddHealthCheck("slow", func(context.Context) error {
+			started.Add(1)
+			<-release
+
+			return nil
+		})
+
+		results := make(chan error, 2)
+
+		for range 2 {
+			go func() { results <- app.CheckHealth(t.Context())["slow"] }()
+		}
+
+		// Both probes are blocked: one on the check, the other on the shared run.
+		synctest.Wait()
+		close(release)
+
+		for i := range 2 {
+			if err := <-results; err != nil {
+				t.Fatalf("CheckHealth() #%d [slow] = %v, want nil", i, err)
+			}
+		}
+
+		if got := started.Load(); got != 1 {
+			t.Fatalf("check started %d times, want 1", got)
+		}
+	})
+}
+
 func sessionRoutes(r *router.Router) {
 	hasSession := func(c *web.Ctx) error {
 		if c.Session() == nil {

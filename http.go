@@ -47,9 +47,18 @@ var errHealthCheckBusy = errors.New("vukem: health check: previous run still in 
 type healthCheck struct {
 	fn      HealthCheck
 	timeout time.Duration
-	// running is set while a goroutine executes fn, including one abandoned
-	// at its timeout, so a hung dependency never accumulates goroutines.
-	running atomic.Bool
+	// run is the execution in progress, including one abandoned at its
+	// timeout, so a hung dependency never accumulates goroutines.
+	mu  sync.Mutex
+	run *healthRun
+}
+
+// healthRun is one execution of a check, shared by the probes that arrive
+// while it is going.
+type healthRun struct {
+	done      chan struct{}
+	err       error
+	abandoned bool // a probe gave up on it at its timeout; guarded by healthCheck.mu
 }
 
 type health struct {
@@ -129,40 +138,67 @@ func (a *App) CheckHealth(ctx context.Context) map[string]error {
 }
 
 // runHealthCheck returns when the check does or its timeout expires, so a
-// check that ignores ctx cannot hang the probe (its goroutine is abandoned).
-// While an abandoned run is still going, the check fails at once instead of
-// starting another goroutine.
+// check that ignores ctx cannot hang the probe. Probes that arrive while a
+// run is going share it, so concurrent probes of a healthy dependency agree.
+// Once a probe has given up on a run (its goroutine is abandoned), later
+// probes fail at once instead of starting another goroutine.
 func runHealthCheck(ctx context.Context, check *healthCheck) error {
-	if !check.running.CompareAndSwap(false, true) {
+	check.mu.Lock()
+
+	run := check.run
+	if run != nil && run.abandoned {
+		check.mu.Unlock()
+
 		return errHealthCheckBusy
 	}
+
+	if run == nil {
+		run = &healthRun{done: make(chan struct{})}
+		check.run = run
+
+		// The run outlives the probe that started it: another probe may be
+		// waiting on it, so that probe's disconnect must not cancel it.
+		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), check.timeout)
+
+		go func() {
+			defer cancel()
+
+			var err error
+
+			defer func() {
+				if p := recover(); p != nil {
+					err = fmt.Errorf("vukem: health check panicked: %v", p)
+				}
+
+				// Clear check.run before closing done: a probe that starts
+				// right after this one returns must not join the finished run.
+				check.mu.Lock()
+				if check.run == run {
+					check.run = nil
+				}
+
+				run.err = err
+				check.mu.Unlock()
+				close(run.done)
+			}()
+
+			err = check.fn(runCtx)
+		}()
+	}
+
+	check.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(ctx, check.timeout)
 	defer cancel()
 
-	done := make(chan error, 1)
-
-	go func() {
-		var err error
-
-		// Clear running before publishing the result: a probe that starts
-		// right after this one returns must not see the finished run as busy.
-		defer func() {
-			if p := recover(); p != nil {
-				err = fmt.Errorf("vukem: health check panicked: %v", p)
-			}
-
-			check.running.Store(false)
-			done <- err
-		}()
-
-		err = check.fn(ctx)
-	}()
-
 	select {
-	case err := <-done:
-		return err
+	case <-run.done:
+		return run.err
 	case <-ctx.Done():
+		check.mu.Lock()
+		run.abandoned = true
+		check.mu.Unlock()
+
 		return fmt.Errorf("vukem: health check: %w", ctx.Err())
 	}
 }
