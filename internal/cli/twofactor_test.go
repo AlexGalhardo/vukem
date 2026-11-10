@@ -232,12 +232,12 @@ func TestSecurity_A07_AuthScaffoldDefaults(t *testing.T) {
 		},
 		"scaffolds/auth-web/routes/auth.go.tmpl": {
 			`auth.ThrottleKeys("email")`,
-			`r.Post("/login", h.Login).Use(guest, throttle, perAccount)`,
+			`r.Post("/login", h.Login).Use(guest, loginByIP, throttle, perAccount)`,
 			`h.SendResetLink).Name("password.email").Use(guest, mails)`,
 		},
 		"scaffolds/auth-inertia/routes/auth.go.tmpl": {
 			`auth.ThrottleKeys("email")`,
-			`r.Post("/login", h.Login).Use(guest, throttle, perAccount)`,
+			`r.Post("/login", h.Login).Use(guest, loginByIP, throttle, perAccount)`,
 		},
 	}
 
@@ -797,5 +797,30 @@ func TestSocialScaffoldFailsBootWithoutCredentials(t *testing.T) {
 		map[string]string{"Module": "example.com/app"},
 	); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// One address trying many accounts never fills the per-email budgets, so
+// the login route also carries a limiter keyed by IP alone.
+func TestSecurity_A07_LoginThrottledPerIP(t *testing.T) {
+	t.Parallel()
+
+	for _, src := range []string{
+		"scaffolds/auth-web/routes/auth.go.tmpl",
+		"scaffolds/auth-inertia/routes/auth.go.tmpl",
+	} {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{
+			`loginByIP := ratelimit.Middleware(limiters("login.ip", 30, time.Minute), ratelimit.ByIP)`,
+			`r.Post("/login", h.Login).Use(guest, loginByIP, throttle, perAccount)`,
+		} {
+			if !bytes.Contains(b, []byte(want)) {
+				t.Errorf("%s lacks %q", src, want)
+			}
+		}
 	}
 }
