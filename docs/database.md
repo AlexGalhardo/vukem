@@ -157,12 +157,13 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 | Where | `Where(col, val)`, `Where(col, op, val)`, `OrWhere`, `WhereIn`, `WhereNotIn`, `WhereNull`, `WhereNotNull`, `WhereBetween`, `WhereRaw(sql, args...)`, grouped `WhereGroup(func(q))` |
 | Shape | `Select(cols...)`, `OrderBy`, `Latest()`, `Limit`, `Offset`, `WithTrashed()`, `OnlyTrashed()` |
 | Read | `Get`, `First`, `Find`, `Count`, `Exists`, `Pluck[V]`, `Each`, `Chunk(ctx, n, fn)` |
+| Write | `Update(ctx, orm.Set{...})`, `Delete(ctx)` on the filtered rows; both return an error when the query has `Limit`, `Offset` or `OrderBy` (they used to ignore them and write every match): `Pluck` the keys and `WhereIn` them to write a bounded set |
 | Lock | `LockForUpdate()`, `ForShare()`, then optional `SkipLocked()` / `NoWait()`; needs a `*database.Tx` (`orm.ErrLockOutsideTx` otherwise); all four are no-ops on SQLite, where `NoWait` never fails |
 | Paginate | `Paginate(ctx, page, perPage)` → `Page[T]{Items, Total, Page, PerPage, LastPage}`; `CursorPaginate(ctx, cursor, perPage, dir)` → `CursorPage[T]` (keyset = the query's `OrderBy` columns plus the primary key in `dir`, or the primary key alone; cursor values decoded into the columns' Go types; keys must be NOT NULL); `MaxPerPage(n)` |
 | Scopes | `Scope(fns ...func(Query[T]) Query[T])` |
 | Raw | `WhereRaw(sql, args...)` for conditions; `db.QueryContext` for anything else |
 
-`Chunk(ctx, n, fn)` reads batches by keyset (`WHERE pk > last ORDER BY pk LIMIT n`), so `fn` may delete or update the rows it receives without making the next batch skip rows, as OFFSET paging would. The query must not have its own `OrderBy`, `Limit` or `Offset`, and a `Select` must keep the primary key; `Chunk` returns an error otherwise. To walk rows in another order, use `Each` with `OrderBy`.
+`orm.Restore` returns `orm.ErrNotFound` when no trashed row matches the key (the record is live or missing). `Chunk(ctx, n, fn)` reads batches by keyset (`WHERE pk > last ORDER BY pk LIMIT n`), so `fn` may delete or update the rows it receives without making the next batch skip rows, as OFFSET paging would. The query must not have its own `OrderBy`, `Limit` or `Offset`, and a `Select` must keep the primary key; `Chunk` returns an error otherwise. To walk rows in another order, use `Each` with `OrderBy`.
 
 `Paginate` and `CursorPaginate` clamp `perPage` to 1..`orm.DefaultMaxPerPage` (100), so a `per_page` passed through from a request cannot load a whole table in one call; the returned `PerPage` is the value used. `Query.MaxPerPage(n)` changes the bound for one query (`n < 1` is a query error). `api.Query` sets it to the `api.PerPage(def, max)` maximum, and admin list pages to `Resource.PerPage`.
 

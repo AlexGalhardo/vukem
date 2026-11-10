@@ -20,7 +20,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── validate_config.go            boot-time config checks, key derivation, logger setup
 ├── boot.go / serve.go            Boot and route registration; Provider and Runner contracts; Run, Shutdown, HTTPServer
 ├── services.go / instrument.go   With* service options, lazy cache/session/mail/flags accessors; query, job and mail instrumentation
-├── router/                       ServeMux wrapper, groups, names, resources, URLFor
+├── router/                       ServeMux wrapper, groups, names, resources, URL generation
 ├── web/                          *web.Ctx: request/response helpers, Parse/Bind[T], Render
 ├── middleware/                   built-in middleware (recover, logger, request id, timeout, cors…)
 ├── errs/                         HTTPError, ValidationError, central handler, RFC 9457
@@ -158,7 +158,7 @@ Lifecycle (inspired by AdonisJS v7 and Goravel runners):
 2. **Register** — every provider, in declared order; then the `WithRoutes` functions (still inside `New`).
 3. **Boot** — every provider, in declared order; then the `WithRoutesAfterBoot` functions, for routes that need clients opened in Boot. Warmup (`codegen:*`) never boots and runs them at the end of `New`.
 4. **Start** — runners (HTTP server, queue worker, scheduler) started under one `errgroup` bound to a `signal.NotifyContext`.
-5. **Shutdown** — on signal: `http.Server.Shutdown`, drain runners, then providers' `Shutdown` in **reverse** order, each under a timeout.
+5. **Shutdown** — on signal: `http.Server.Shutdown`, drain runners, then providers' `Shutdown` in **reverse** order, each under a timeout. When in-flight requests outlast `ShutdownTimeout`, the HTTP server closes the remaining connections (cancelling their request contexts) before providers shut down, and `Run` still returns an error wrapping `context.DeadlineExceeded`.
 
 Each provider can be limited to environments: `web`, `console`, `test`.
 

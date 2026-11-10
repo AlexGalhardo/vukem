@@ -28,7 +28,7 @@ func Web(r *router.Router, app *vukem.App) {
 | Verbs | `Get`, `Post`, `Put`, `Patch`, `Delete`, `Options`, `Match([]string, …)`, `Any` |
 | Params | `{id}`, `{path...}`, `{$}` (ServeMux syntax); `c.Param("id")`, `c.ParamInt("id")` |
 | Names | `.Name("posts.show")`; resources auto-named `<name>.<action>` |
-| URL generation | `r.URLFor("posts.show", "id", 42)` → `/posts/42`; missing/extra params return an error; templates: `{{ route "posts.show" "id" .ID }}` |
+| URL generation | `r.URL("posts.show", "id", 42)` → `/posts/42`; missing/extra params return an error; templates: `{{ route "posts.show" "id" .ID }}` |
 | Groups | `Group(prefix, fn)` with `.Use(mw...)`, `.Name(prefix)`, nesting; `Host(host, fn)` restricts a group to one host (ServeMux host pattern, port ignored; `URL` returns `//host/path`; `RouteInfo.Host`; invalid host = compile error); `.Only()` on a host group makes it the only thing the host serves (a `host/` catch-all answers 404/405 through the group's error handler, without router `Use` middleware) |
 | Resources | `Resource(name, ctrl)`, `APIResource(name, ctrl)` (no `create`/`edit`), `.Only(...)`, `.Except(...)` |
 | Listing | `vukem route:list` prints method, pattern, name, handler, middleware |
@@ -51,7 +51,7 @@ Register checks with `vukem.WithHealthCheck(name, check)` at build time, or `app
 Three things decide whether this helps or hurts:
 
 - **Point liveness at `/up` and nothing else.** A liveness probe that runs the checks turns one slow dependency into a restart loop, and a load balancer pointed at them turns a degraded service into zero healthy instances.
-- **Make each check prove the dependency does what the app needs.** The database provider registers a `Ping`, and a pool hands out a connection to a database whose migrations never ran — the ping passes while no query the app makes can succeed. Add a check that reads a table the app owns (`SELECT count(*) FROM <table> WHERE 1 = 0` is cheap and index-free, and still fails when the table is absent). For a disk use [`storage.Check`](storage.md), because an existence check passes with credentials that cannot write.
+- **Make each check prove the dependency does what the app needs.** The database provider registers a `Ping`, and a pool hands out a connection to a database whose migrations never ran — the ping passes while no query the app makes can succeed. Add a check that reads a table the app owns (`SELECT count(*) FROM <table> WHERE 1 = 0` is cheap and index-free, and still fails when the table is absent). For a disk use [`storage.Check`](subsystems.md#storage), because an existence check passes with credentials that cannot write.
 - **The errors stay server-side.** `ReadyHandler` answers only `"ok"` or `"fail"` per check and logs the detail, because a driver error carries hosts and sometimes credentials. `CheckHealth` returns them for the log, never for a response body.
 
 A check that hangs is abandoned at its timeout rather than accumulating goroutines, and while an abandoned run is still going the check fails immediately instead of starting another.
@@ -176,7 +176,7 @@ Stacks come from `errs.New`, `errs.Wrap`, `errs.WithStack(err)` (for errors from
 
 ## Static files and uploads
 
-- `public/` served by `middleware.Static` with `http.FileServerFS` over an `os.Root`; `/build/` and fingerprinted names (a hex or Vite-style hash segment, not any long word) get `Cache-Control: public, max-age=31536000, immutable`; other files revalidate through `Last-Modified`, or a content-hash `ETag` for embedded files.
+- `public/` served by `middleware.Static` with `http.ServeFileFS` over an `os.Root` (a file named `index.html` is served like any other; directories are left to the next handler); `/build/` and fingerprinted names (a hex or Vite-style hash segment, not any long word) get `Cache-Control: public, max-age=31536000, immutable`; other files revalidate through `Last-Modified`, or a content-hash `ETag` for embedded files.
 - Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default, raising or lowering it; the limit is checked when the body is read, against the innermost limit). Urlencoded forms are parsed by `MethodOverride` before routing, so their cap has to be a server-level `BodyLimit` placed ahead of it; a route-level limit never applies to them, and a hit limit is remembered so `web.Parse` answers 413 (`TestSecurity_A06_MethodOverrideRemembersMaxBytes`).
 - Uploads stored through `storage/` (ALPHA) using `os.Root` to prevent path traversal; filenames randomised by default. Streaming, resumable and direct uploads: [subsystems.md#uploads](subsystems.md#uploads).
 
