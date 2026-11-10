@@ -126,7 +126,7 @@ Someone reaches data or actions that are not theirs: changing `/posts/7/edit` to
 | [Signed URLs](/docs/security/signed-urls) with HMAC and expiry | A |
 | `httpclient.Safe()` rejects loopback, private, link-local and cloud-metadata addresses after DNS resolution (SSRF) | A |
 | Behind [Cloudflare](/docs/deployment/cloudflare), `CF-Connecting-IP` is trusted only from Cloudflare's published ranges, and the origin can refuse every other peer | A |
-| [Impersonation](/docs/security/authentication#signing-in-as-another-user-impersonation) is time-bounded, rotates the session and logs `auth.impersonation_started` with the actor | A |
+| [Impersonation](/docs/security/authentication#signing-in-as-another-user-impersonation) is time-bounded, rotates the session, drops the actor's remember-me token and logs `auth.impersonation_started` with the actor | A |
 
 ### A02 Security Misconfiguration
 
@@ -156,6 +156,7 @@ Secrets stored or sent in a form someone can read or guess: plain-text passwords
 - Random values only from `crypto/rand`; `math/rand` is a lint error in security packages.
 - AES-256-GCM cookies with HKDF keys (P); [encryption](/docs/security/encryption) with key rotation (B).
 - API tokens, remember-me tokens and reset tokens stored as SHA-256 hashes (A).
+- Connections to a remote PostgreSQL default to `sslmode=verify-full`, a plain `redis://` URL to a remote host is refused (`rediss://`, or `?insecure_plaintext=true` on a private network), and `SMTP_INSECURE=true` is a mailer error in production unless the host is loopback.
 - Constant-time comparisons with [`crypto/subtle`](https://pkg.go.dev/crypto/subtle#ConstantTimeCompare), so response time leaks nothing.
 
 ### A05 Injection

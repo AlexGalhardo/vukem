@@ -155,7 +155,7 @@ Use HS256 when the same service signs and verifies. Use RS256, ES256 or EdDSA wh
 - **`exp` is required.** A token without it is refused (`jwt: invalid token: no exp claim`) unless `AllowMissingExpiry` is set.
 - **Time claims allow a little clock skew.** `exp`, `nbf` and `iat` are checked with 30 seconds of `Leeway`.
 - **`iss` and `aud` match exactly** when you set `Issuer` and `Audience`.
-- **Malformed tokens are refused**: duplicate JSON members, and tokens over 8 KiB.
+- **Malformed tokens are refused**: duplicate JSON members, tokens over 8 KiB, and any token whose header carries `crit` (Vukem understands no critical extension, as [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515#section-4.1.11) requires).
 
 Every failure wraps `jwt.ErrInvalid`; check it with [`errors.Is`](https://pkg.go.dev/errors#Is). The wrapped detail (such as `audience [api]`) is for your logs and never reaches clients.
 
@@ -234,8 +234,10 @@ verifier := jwt.NewVerifier(keys, jwt.VerifyOptions{
 | `URL` | | the provider's JWKS document |
 | `Client` | 10-second timeout | the HTTP client |
 | `MaxAge` | 1 hour | the cache is refreshed after this long |
-| `MinRefresh` | 1 minute | an unknown `kid` refetches at most this often, so tokens with random kids cannot hammer the provider |
+| `MinRefresh` | 1 minute | an unknown `kid` refetches at most this often, so tokens with random kids cannot hammer the provider; a failed fetch counts too, so a provider that is down is retried once per `MinRefresh` and the requests in between answer `503` at once |
 | `Now` | `time.Now` | the clock |
+
+The fetch runs outside the cache lock and concurrent callers share one request, so a slow provider never blocks verification of tokens whose key is already cached; a caller that leaves, or a fetch that panics, releases the others.
 
 A provider signs tokens for **all** of its customers with the same keys. Without `Audience` and `Issuer`, a token it issued to someone else's app would pass. So a verifier over a `RemoteJWKS` without them is misconfigured: `verifier.Err()` says which is missing (`jwt: a shared key set (RemoteJWKS) needs VerifyOptions.Audience`), `jwt.NewGuard` panics at boot, and every `Verify` fails. A custom key set that wraps a `RemoteJWKS` gets the same check by implementing `jwt.SharedKeySet` (`SharedKeys() bool`); embedding `*jwt.RemoteJWKS` does it for you.
 

@@ -201,9 +201,9 @@ tf.TwoFactorLastStep = step
 | `UseRecoveryCode(code, hashes)` | reports a match and returns the hashes left (store them); matching ignores letter case |
 | `HashRecoveryCode(code)` | the stored form of one code: hex SHA-256 of `totp-recovery:` plus the code trimmed and upper-cased. Use it to import codes from another system |
 
-`totp.Options` has `Algorithm` (`totp.SHA1`, `totp.SHA256`, `totp.SHA512`), `Digits` and `Period`. Zero values mean SHA-1, 6 digits and 30 seconds. Change them only if your users' apps support it; many apps ignore anything else.
+`totp.Options` has `Algorithm` (`totp.SHA1`, `totp.SHA256`, `totp.SHA512`), `Digits` and `Period`. Zero values mean SHA-1, 6 digits and 30 seconds. `Period` must be whole seconds and at least one: `Code` returns an error, `Validate` returns false and `URI` returns an empty string otherwise. Change them only if your users' apps support it; many apps ignore anything else.
 
-`QR` and `QRMatrix` encode text in byte mode at error correction level M, versions 1 to 40: up to 2331 bytes, enough for long `otpauth://` URIs and PIX BR Codes. Longer text returns `totp.ErrTooLong`.
+`QR` and `QRMatrix` encode text in byte mode at error correction level M, versions 1 to 40: up to 2331 bytes, enough for long `otpauth://` URIs and PIX BR Codes. Longer text returns `totp.ErrTooLong`, and empty text returns `totp.ErrEmpty`, so an enrollment with no URI fails instead of showing a blank QR code.
 
 ## Configuration
 

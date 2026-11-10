@@ -255,6 +255,8 @@ r.Post("/webhooks/resend", handleBounce).Use(
 | redelivery of a handled event | `200` with `Webhook-Duplicate: true`; the handler does not run |
 | duplicate while the first is still running | `409 This webhook event is being processed.`; the provider retries |
 | the handler answered 3xx, 4xx or 5xx | forgotten, so the provider's retry runs |
+| the handler panics | the key is released and the panic continues, so the provider's retry runs |
+| the sender disconnects while the handler runs | the delivery is still remembered once the handler succeeds |
 | no event id | `400 Missing webhook event id.` |
 | store unavailable | `503 Webhook store unavailable.` (fail closed) |
 
