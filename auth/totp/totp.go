@@ -59,6 +59,14 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
+// validPeriod reports whether d is a whole number of seconds, at least 1s:
+// anything else divides by zero or is truncated away from the QR code.
+func validPeriod(d time.Duration) bool { return d >= time.Second && d%time.Second == 0 }
+
+func errPeriod(d time.Duration) error {
+	return fmt.Errorf("totp: period must be whole seconds, at least 1s: %s", d)
+}
+
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // GenerateSecret returns a new 160-bit secret, base32 encoded.
@@ -74,6 +82,10 @@ func GenerateSecret() (string, error) {
 // Code returns the code of secret (base32) at t.
 func Code(secret string, t time.Time, o Options) (string, error) {
 	o = o.withDefaults()
+
+	if !validPeriod(o.Period) {
+		return "", errPeriod(o.Period)
+	}
 
 	key, err := b32.DecodeString(strings.ToUpper(strings.TrimRight(strings.ReplaceAll(secret, " ", ""), "=")))
 	if err != nil {
@@ -126,7 +138,7 @@ func code(key []byte, step int64, o Options) (string, error) {
 func Validate(secret, code string, now time.Time, lastStep int64, o Options) (int64, bool) {
 	o = o.withDefaults()
 
-	if len(code) != o.Digits {
+	if !validPeriod(o.Period) || len(code) != o.Digits {
 		return 0, false
 	}
 
@@ -164,9 +176,14 @@ func Validate(secret, code string, now time.Time, lastStep int64, o Options) (in
 func codeFor(key []byte, step int64, o Options) (string, error) { return code(key, step, o) }
 
 // URI returns the otpauth:// URI authenticator apps import (usually from
-// a QR code, see QR).
+// a QR code, see QR). It returns "" when o.Period is not whole seconds of
+// at least 1s, the same period Code refuses.
 func URI(issuer, account, secret string, o Options) string {
 	o = o.withDefaults()
+
+	if !validPeriod(o.Period) {
+		return ""
+	}
 
 	q := url.Values{}
 	q.Set("secret", secret)

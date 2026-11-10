@@ -170,3 +170,54 @@ func TestHashRecoveryCode(t *testing.T) {
 		t.Error("UseRecoveryCode rejected an imported code")
 	}
 }
+
+func TestInvalidPeriod(t *testing.T) {
+	t.Parallel()
+
+	secret, err := totp.GenerateSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+
+	tests := []struct {
+		name   string
+		period time.Duration
+		ok     bool
+	}{
+		{"default", 0, true},
+		{"30s", 30 * time.Second, true},
+		{"sub-second", 500 * time.Millisecond, false},
+		{"negative", -time.Second, false},
+		{"fractional", 1500 * time.Millisecond, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			o := totp.Options{Period: tt.period}
+
+			code, err := totp.Code(secret, now, o)
+			if tt.ok && err != nil {
+				t.Fatalf("Code() error = %v", err)
+			}
+
+			if !tt.ok && (err == nil || !strings.Contains(err.Error(), "period")) {
+				t.Fatalf("Code() error = %v, want one that names the period", err)
+			}
+
+			if _, got := totp.Validate(secret, code, now, 0, o); got != tt.ok {
+				t.Errorf("Validate() = %v, want %v", got, tt.ok)
+			}
+
+			if _, got := totp.Validate(secret, "123456", now, 0, o); !tt.ok && got {
+				t.Errorf("Validate() accepted a code with period %s", tt.period)
+			}
+
+			if uri := totp.URI("Vukem", "a@b.c", secret, o); (uri != "") != tt.ok {
+				t.Errorf("URI() = %q, want empty only for an invalid period", uri)
+			}
+		})
+	}
+}
