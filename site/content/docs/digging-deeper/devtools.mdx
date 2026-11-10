@@ -200,7 +200,7 @@ devtools.NormalizeSQL(
 // SELECT * FROM posts WHERE id = ? AND title = ? AND tag IN (?...) LIMIT ?
 ```
 
-String and number literals and `$n` placeholders become `?`, lists of placeholders collapse to `(?...)`, and runs of spaces and newlines become one space.
+String literals in every form, number literals and `$n` placeholders become `?`: `'x'` (a doubled quote stays inside; a backslash escapes only in a PostgreSQL `E'x'` string), a double-quoted value that is not a plain identifier, and a PostgreSQL dollar-quoted string such as `$tag$x$tag$`. SQL comments (`-- ...` and `/* ... */`) are dropped before the strings are read, so an apostrophe inside a comment cannot hide a literal. An unterminated literal or comment runs to the end of the statement. Lists of placeholders collapse to `(?...)`, and runs of spaces and newlines become one space.
 
 `devtools.RedactArgs` describes each bound argument by its type only:
 
@@ -211,7 +211,7 @@ devtools.RedactArgs([]any{"hunter2-password", 42, nil, []byte("abc")})
 
 Other kinds: `bool`, `float`, `time`, a named argument as `name=<type>`, and anything else by its Go type (`%T`).
 
-Jobs and events show their kind and Go type, never their payload. Log records keep their attributes as your logger wrote them; values that implement [`slog.LogValuer`](https://pkg.go.dev/log/slog#LogValuer), such as `config.Secret`, are resolved first, so secrets stay redacted.
+Request paths show the value of a route's `SecretParams` as `{name}`, as the request log does, so a single-use token such as a password reset token never reaches the dashboard. Jobs and events show their kind and Go type, never their payload. Log records keep their attributes as your logger wrote them; values that implement [`slog.LogValuer`](https://pkg.go.dev/log/slog#LogValuer), such as `config.Secret`, are resolved first, so secrets stay redacted.
 
 The **caller** column shows the first stack frame outside Vukem, `database/sql`, `net/http`, `testing` and the Go runtime: the line of your code that ran the query.
 
@@ -275,7 +275,7 @@ Through `vukem.New`, Vukem sets `Level` from `LOG_LEVEL`, `Routes` from your rou
 
 - Production refuses to boot with the dashboard on (`TestSecurity_A02_DevtoolsRefusedInProduction`).
 - Only loopback clients with a loopback `Host` and no proxy headers get it (`TestSecurity_A01_DevtoolsLoopbackOnly`).
-- Query arguments are never shown (`TestSecurity_A09_DevtoolsRedactsQueryArgs`).
+- Query arguments are never shown, SQL literals and comments are stripped, and secret route parameters are hidden in request paths (`TestSecurity_A09_DevtoolsRedactsQueryArgs`, `TestSecurity_A09_DevtoolsHidesSecretParams`).
 - Mail previews are sandboxed with no scripts and no remote images (`TestSecurity_A05_DevtoolsMailPreviewIsSandboxed`).
 - What stays your job: emails are shown in full, including password reset links, and log lines show what you log. Do not turn on `DEVTOOLS_INSECURE_ALLOW_REMOTE` on a shared network.
 
