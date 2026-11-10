@@ -3,6 +3,7 @@ package orm
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -472,6 +473,18 @@ func keyOf(v reflect.Value) (any, bool) {
 	case reflect.String:
 		return v.String(), v.String() != ""
 	default:
+		// Types with their own column form (uuid.UUID) compare by it, as the
+		// keys scanned from a pivot table do.
+		if val, ok := reflect.TypeAssert[driver.Valuer](v); ok {
+			if dv, err := val.Value(); err == nil {
+				if b, isBytes := dv.([]byte); isBytes {
+					dv = string(b)
+				}
+
+				return dv, !v.IsZero()
+			}
+		}
+
 		return v.Interface(), !v.IsZero()
 	}
 }
