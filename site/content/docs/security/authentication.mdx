@@ -122,7 +122,7 @@ The routes the scaffold registers:
 | Method | Path | Name | Middleware |
 | --- | --- | --- | --- |
 | GET | `/login` | `login` | guest |
-| POST | `/login` | | guest, 5/min per email + IP, 20 per 10 min per email |
+| POST | `/login` | | guest, 5/min per email + IP, 20 per 10 min per email, 30/min per IP |
 | GET | `/register` | `register` | guest |
 | POST | `/register` | | guest, 10 per 10 min per IP, 5/hour per email |
 | GET | `/register/check-email` | `register.check` | guest |
@@ -135,6 +135,8 @@ The routes the scaffold registers:
 | GET | `/email/verify/{id}` | `verification.verify` | required |
 | POST | `/email/verification-notification` | `verification.send` | required, mails: 3/min per IP |
 | GET | `/dashboard` | `dashboard` | required, verified |
+
+The reset route is registered with `.SecretParams("token")`, so request logs, error logs and security events show `/reset-password/{token}` instead of the token ([logging](/docs/deployment/logging)). In an app generated before v0.40, add `.SecretParams("token")` to it in `routes/auth.go` and the per-IP login limit described in [Rate limiting](/docs/security/rate-limiting#your-own-key).
 
 The limits use `app.RateLimiters()`, so `RATE_LIMIT_STORE=cache` shares them between servers ([Rate limiting](/docs/security/rate-limiting)). The two routes marked "mails" share one budget. Over a limit the client gets `429 Too Many Requests` with `Retry-After`.
 
@@ -318,6 +320,7 @@ Declare it on the value receiver `(u User)`, not `(u *User)`: `NewSessionGuard` 
 | Content | `<id>.<secret>`; only `SHA-256(secret)` is stored, in `remember_tokens` |
 | Lifetime | 30 days (`RememberFor`) |
 | Use | single use: every use rotates it, even under concurrent replays |
+| User store down | the token is consumed only after the user loads, so a failing user store answers `503` and keeps the cookie and the token for the next request |
 | Bound to | the session version: a password reset or 2FA enable also ends remember-me logins |
 
 A rejected remember cookie logs `auth.remember_rejected`; a session ended by a version change logs `auth.session_revoked`.
@@ -352,7 +355,7 @@ func (a *Admin) Stop(c *web.Ctx) error {
 
 What happens:
 
-- The session id is regenerated, no remember-me cookie is issued, and the security event `auth.impersonation_started` logs the actor and the target.
+- The session id is regenerated, no remember-me cookie is issued, the actor's own remember-me token and cookie are removed (so an impersonation that expires never falls back to them), and the security event `auth.impersonation_started` logs the actor and the target.
 - Impersonating yourself, or starting a second impersonation inside one, returns `auth.ErrImpersonation` as a `409`.
 - `Impersonator(c)` returns the actor's id and `true` while it lasts. Use it to show a banner such as "You are signed in as Bob. Stop".
 - After `ttl` the whole session ends on the next request. The guard never falls back to the actor, because the browser may be shared with the user being helped.

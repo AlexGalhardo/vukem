@@ -125,7 +125,7 @@ An unknown provider name answers `404` (`social.ErrUnknownProvider`).
 | Any other provider `error` | `400` `social.ErrProvider` with a fixed message; the sanitized code is logged, never shown |
 | No `code` parameter | `400` `social.ErrState` |
 | The code is exchanged with the PKCE verifier; the profile (or the ID token) is loaded and checked | `502 Bad Gateway` |
-| `s.Allow`, when set, accepts the user | `403` `social.ErrNotAllowed`, event `social.not_allowed` |
+| `s.Allow`, when set, accepts the user | `social.ErrNotAllowed` refuses: `403`, event `social.not_allowed`; any other error is a failed check: `503`, logged as a warning |
 
 The error messages have keys (`social.state`, `social.denied`, `social.failed`, `social.unknown_provider`, `social.not_allowed`), so they are [translated](/docs/digging-deeper/localization) in the request locale.
 
@@ -237,7 +237,7 @@ Other methods: `s.Names()` lists the configured providers, `s.Provider(name)` re
 For OIDC providers, `s.User` reads the issuer's discovery document and verifies the ID token:
 
 - the signature, with keys from the provider's JWKS (cached, refreshed once for an unknown key id), **RS256 or ES256 only** (never `none` or HMAC), RSA keys of at least 2048 bits;
-- `iss` (Microsoft's `{tenantid}` template included), `aud` / `azp`, `exp` and `iat` with one minute of leeway, and the `nonce` from the state cookie.
+- `iss` (Microsoft's `{tenantid}` template included), `aud` / `azp`, `exp` and `iat` with one minute of leeway, and the `nonce` from the state cookie; a token whose header carries `crit` is refused.
 
 Every failure wraps `social.ErrIDToken` and answers `502`.
 
@@ -262,12 +262,12 @@ This calls the profile or userinfo endpoint. There is no ID token in this mode, 
 | `s.HTTP` | the client for provider calls (10-second timeout; responses capped at 1 MiB) |
 | `s.StateTTL` | time allowed between redirect and callback (10 minutes) |
 | `s.InsecureCookies` | drops `Secure` on the state cookie; plain-HTTP development only |
-| `s.Allow` | `func(ctx, social.User) error` run before any account lookup; an error refuses the sign-in; `nil` admits everyone |
+| `s.Allow` | `func(ctx, social.User) error` run before any account lookup; `social.ErrNotAllowed` (or an error wrapping it) refuses the sign-in, any other error answers `503`; `nil` admits everyone |
 | `s.States` | where used states are recorded; `nil` keeps them in process memory |
 
 ### Private apps and allowlists
 
-A private, single-owner app admits only some provider users. Set `s.Allow` before the first sign-in: it runs after the provider returns the user and before `User` or `UserFromToken` hands it back, so `FindOrCreateFromSocial` never sees a refused user and no account row or session is created. A non-nil error answers `social.ErrNotAllowed` (403, key `social.not_allowed`, reason never shown); redirect to the login page with a flash message in the callback instead of rendering the error. Nil admits everyone.
+A private, single-owner app admits only some provider users. Set `s.Allow` before the first sign-in: it runs after the provider returns the user and before `User` or `UserFromToken` hands it back, so `FindOrCreateFromSocial` never sees a refused user and no account row or session is created. Return `social.ErrNotAllowed` to refuse: the answer is `403` (key `social.not_allowed`, reason never shown). Any other error means the check could not run (a failed database lookup, say): the sign-in is not refused as if the user were unwelcome, it answers `503` and the error is logged as a warning, so an outage never looks like a policy decision. Redirect to the login page with a flash message in the callback instead of rendering the error. Nil admits everyone.
 
 ```go
 s.Allow = func(ctx context.Context, u social.User) error {
@@ -275,7 +275,7 @@ s.Allow = func(ctx context.Context, u social.User) error {
 		return nil
 	}
 
-	return errors.New("not the owner")
+	return social.ErrNotAllowed
 }
 
 r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
