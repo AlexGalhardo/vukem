@@ -62,3 +62,61 @@ func TestSecurity_A06_PersistedQueryStoredOnlyWhenValid(t *testing.T) {
 		})
 	}
 }
+
+func TestSecurity_A06_PersistedQuerySizeCapped(t *testing.T) {
+	t.Parallel()
+
+	t.Run("oversized document runs but is not stored", func(t *testing.T) {
+		t.Parallel()
+
+		store := graphql.NewMemoryStore(0)
+		h := counterSchema(t).Handler(graphql.HandlerConfig{Persisted: &graphql.PersistedQueries{Store: store}})
+
+		query := "{ hello }" + strings.Repeat(" ", graphql.DefaultMaxPersistedBytes)
+		r := post(t, h, `{"query":"`+query+`",`+apq(graphql.Hash(query))+`}`)
+		if !strings.Contains(r.body, `"hello world"`) {
+			t.Errorf("response = %s, want executed", r.body)
+		}
+
+		if _, ok, _ := store.Get(context.Background(), graphql.Hash(query)); ok {
+			t.Error("oversized document stored")
+		}
+	})
+
+	t.Run("configured limit", func(t *testing.T) {
+		t.Parallel()
+
+		store := graphql.NewMemoryStore(0)
+		h := counterSchema(t).Handler(graphql.HandlerConfig{
+			Persisted: &graphql.PersistedQueries{Store: store, MaxDocumentBytes: 8},
+		})
+
+		const query = "{ hello }"
+		post(t, h, `{"query":"`+query+`",`+apq(graphql.Hash(query))+`}`)
+
+		if _, ok, _ := store.Get(context.Background(), graphql.Hash(query)); ok {
+			t.Error("document over MaxDocumentBytes stored")
+		}
+	})
+
+	t.Run("memory store byte budget evicts the oldest", func(t *testing.T) {
+		t.Parallel()
+
+		store := graphql.NewMemoryStore(0)
+		chunk := strings.Repeat("a", graphql.MaxMemoryStoreBytes/4)
+
+		for _, k := range []string{"1", "2", "3", "4", "5"} {
+			if err := store.Put(context.Background(), k, chunk); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if _, ok, _ := store.Get(context.Background(), "1"); ok {
+			t.Error("oldest entry kept past the byte budget")
+		}
+
+		if _, ok, _ := store.Get(context.Background(), "5"); !ok {
+			t.Error("newest entry evicted")
+		}
+	})
+}

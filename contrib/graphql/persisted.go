@@ -41,10 +41,20 @@ type PersistedQueries struct {
 	Store QueryStore
 	// AllowlistOnly rejects every document that is not already stored.
 	AllowlistOnly bool
+	// MaxDocumentBytes is the largest document APQ registers; a larger one
+	// still runs but is not stored (0 means DefaultMaxPersistedBytes).
+	MaxDocumentBytes int
 }
+
+// DefaultMaxPersistedBytes is the default largest document APQ registers.
+const DefaultMaxPersistedBytes = 64 << 10
 
 // DefaultPersistedEntries bounds the default in-memory APQ store.
 const DefaultPersistedEntries = 1000
+
+// MaxMemoryStoreBytes bounds the total document bytes of the default
+// in-memory APQ store, besides its entry count.
+const MaxMemoryStoreBytes = 16 << 20
 
 // MemoryStore is a bounded in-memory QueryStore; the oldest entries are
 // evicted first.
@@ -53,6 +63,7 @@ type MemoryStore struct {
 	m     map[string]string
 	order []string
 	max   int
+	bytes int
 }
 
 // NewMemoryStore returns a store holding at most max documents (0 means
@@ -95,13 +106,17 @@ func (s *MemoryStore) Put(_ context.Context, hash, query string) error {
 		return nil
 	}
 
-	if s.max > 0 && len(s.order) >= s.max {
-		delete(s.m, s.order[0])
-		s.order = s.order[1:]
+	if s.max > 0 {
+		for len(s.order) > 0 && (len(s.order) >= s.max || s.bytes+len(query) > MaxMemoryStoreBytes) {
+			s.bytes -= len(s.m[s.order[0]])
+			delete(s.m, s.order[0])
+			s.order = s.order[1:]
+		}
 	}
 
 	s.m[hash] = query
 	s.order = append(s.order, hash)
+	s.bytes += len(query)
 
 	return nil
 }
@@ -207,12 +222,24 @@ func (p *PersistedQueries) resolve(ctx context.Context, req *Request) (commitFun
 		}
 
 		query := req.Query
+		if len(query) > p.maxDocumentBytes() {
+			return nil, nil
+		}
+
 		return func(ctx context.Context) error { return store.Put(ctx, hash, query) }, nil
 	case p.AllowlistOnly:
 		return nil, p.allowed(ctx, Hash(req.Query))
 	}
 
 	return nil, nil
+}
+
+func (p *PersistedQueries) maxDocumentBytes() int {
+	if p.MaxDocumentBytes > 0 {
+		return p.MaxDocumentBytes
+	}
+
+	return DefaultMaxPersistedBytes
 }
 
 func (p *PersistedQueries) allowed(ctx context.Context, hash string) *Error {
