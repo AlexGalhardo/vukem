@@ -61,7 +61,9 @@ func ParseCron(expr string) (Cron, error) {
 		c.dow |= 1
 	}
 
-	c.domStar, c.dowStar = fields[2] == "*", fields[4] == "*"
+	// Vixie cron: a day field starting with "*" (also "*/2") makes the two
+	// day fields combine with AND; only two restricted fields use OR.
+	c.domStar, c.dowStar = strings.HasPrefix(fields[2], "*"), strings.HasPrefix(fields[4], "*")
 
 	return c, nil
 }
