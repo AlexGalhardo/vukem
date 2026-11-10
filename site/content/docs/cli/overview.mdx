@@ -149,7 +149,7 @@ vukem new blog --inertia react --pm bun
 | `--license` | string | none | `mit`: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` and `SECURITY.md` |
 | `--ci` | bool | `false` | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/release-notes.go` and `.github/dependabot.yml` |
 | `--deploy` | string | none | `railway`: `.railway/railway.ts` ([Railway](/docs/deployment/docker-and-railway#deploy-on-railway)) |
-| `--docker` | bool | `false` | `compose.yaml` running the app, PostgreSQL and a mail catcher ([local stack](/docs/deployment/docker-and-railway#the-local-stack-with-compose)) |
+| `--docker` | bool | `false` | `compose.yaml` running the app, PostgreSQL and a mail catcher, with every port bound to `127.0.0.1` ([local stack](/docs/deployment/docker-and-railway#the-local-stack-with-compose)) |
 
 Rules: the name must start with a letter and contain only letters, digits, `-`, `_` and `.`. The folder must not exist. `--api`, `--templ` and `--inertia` are exclusive (`usage error: choose one of --api, --templ or --inertia`), and `--minimal` refuses all three. `--license` and `--deploy` take one value each and are checked before anything is written (`usage error: --deploy must be railway, not "fly"`).
 
@@ -385,8 +385,9 @@ Writes a new random `APP_KEY` to `.env`. If `.env` is missing, it starts from `.
 | --- | --- | --- | --- |
 | `--show` | bool | `false` | Print the key instead of writing `.env` |
 | `--force` | bool | `false` | Replace an existing non-empty `APP_KEY` |
+| `--if-missing` | bool | `false` | Write a key only when `APP_KEY` is empty; never print or replace one. Refuses `--show` and `--force` |
 
-Without `--force`, an existing key stops it: `APP_KEY is already set in .env (use --force to replace it; existing sessions and encrypted data become unreadable)`.
+`.env` is read the way the app's configuration loader reads it, so an `export APP_KEY=...` line, spaces around `=` and quoted values all count: a key written that way is detected as set, and an empty quoted value (`APP_KEY=""`) as empty. Without `--force`, an existing key stops it: `APP_KEY is already set in .env (use --force to replace it; existing sessions and encrypted data become unreadable)`.
 
 ### `vukem key:rotate`
 
@@ -659,7 +660,7 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 | `ssr:check` | `-url http://127.0.0.1:13714` | Exits 1 unless the SSR server answers `/health` |
 | `ssg:generate` | `-out dist`, `-path` (repeatable) | Writes static HTML for the named paths. Does not run Inertia SSR and does not crawl routes ([Static site generation](/docs/digging-deeper/static-site-generation)) |
 | `boost:mcp` | none | The MCP server for coding agents, over stdio |
-| `key:generate` | none | Prints a new `APP_KEY`; never writes `.env` |
+| `key:generate` | `--if-missing` | Prints a new `APP_KEY` and never writes `.env`; with `--if-missing` it writes `.env` only when `APP_KEY` is empty and prints no key |
 | `hash:make` | `-env PASSWORD`, `-stdin` | Prints the argon2id hash of a password read from an environment variable or from stdin (never from arguments); for scripts that set or reset a password with SQL |
 | `openapi:serve` | `-addr` | Previews the API reference; only when you register `apidocs.Command()` |
 
@@ -698,7 +699,7 @@ export APP_KEY="$(./app key:generate)"
 docker run --rm my-app key:generate
 ```
 
-Only the key goes to stdout; errors and help go to stderr, so a typo never ends up inside `APP_KEY`. The built-in `key:generate` always wins over an app command with the same name. Note the difference: `vukem key:generate` (the global CLI) writes `.env`, but `vukem` never delegates that name, so use the binary directly to print a key.
+Only the key goes to stdout; errors and help go to stderr, so a typo never ends up inside `APP_KEY`. The built-in `key:generate` always wins over an app command with the same name. Note the difference: `vukem key:generate` (the global CLI) writes `.env`, but `vukem` never delegates that name, so use the binary directly to print a key. For a clone that must not print a key into a CI log, `./app key:generate --if-missing` writes `.env` only when `APP_KEY` is empty (read like the configuration loader reads it), prints nothing on stdout and reports `APP_KEY written to .env` or `APP_KEY already set` on stderr.
 
 ## Common mistakes
 

@@ -42,9 +42,9 @@ vukem key:generate [flags]
 | --- | --- | --- | --- |
 | `-show` | bool | `false` | Print the key and write nothing. |
 | `-force` | bool | `false` | Replace an existing non-empty `APP_KEY`. |
-| `-if-missing` | bool | `false` | Write `.env` when `APP_KEY` is empty. Never print the key. |
+| `-if-missing` | bool | `false` | Write `.env` when `APP_KEY` is empty. Never print the key. Refuses `-show` and `-force`. |
 
-If `.env` is missing, it starts from `.env.example`. The key signs sessions and encrypts data ([Encryption](/docs/security/encryption)).
+If `.env` is missing, it starts from `.env.example`. `.env` is read like the app's configuration loader reads it: an `export APP_KEY=...` line, spaces around `=` and quoted values are understood, so such a key counts as set and an empty quoted value counts as empty. The key signs sessions and encrypts data ([Encryption](/docs/security/encryption)).
 
 ```bash
 vukem key:generate
@@ -66,7 +66,7 @@ base64:Ile84lRsqMKmNobqAgxgW3HTUvtSMIFjSguzeIVXSKI=
 APP_KEY written to .env
 ```
 
-**Without the CLI** (a Docker image or CI runner with only your binary): `./app key:generate` prints a key to standard output and never writes `.env`. Only the key goes to standard output, so `export APP_KEY="$(./app key:generate)"` is safe. This built-in wins over an app command with the same name, and `vukem key:generate` itself is never delegated.
+**Without the CLI** (a Docker image or CI runner with only your binary): `./app key:generate` prints a key to standard output and never writes `.env`, unless you pass `--if-missing`: it then writes `.env` only when `APP_KEY` is empty, prints nothing on standard output and reports on standard error. Only the key goes to standard output, so `export APP_KEY="$(./app key:generate)"` is safe. This built-in wins over an app command with the same name, and `vukem key:generate` itself is never delegated.
 
 ## `vukem key:rotate`
 
