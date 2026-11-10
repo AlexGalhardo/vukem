@@ -735,3 +735,80 @@ func TestSecurity_A10_GraphQLServerHTTPErrorsMasked(t *testing.T) {
 		})
 	}
 }
+
+type panicStringer struct{}
+
+func (panicStringer) String() string { panic("stringer boom") }
+
+type panicThing struct {
+	OK       string        `json:"ok"`
+	Date     time.Time     `json:"date"`
+	Stringer panicStringer `json:"stringer"`
+}
+
+type panicShape struct {
+	Name string `json:"name"`
+}
+
+func TestPanicsInSchemaCallbacksAreFieldErrors(t *testing.T) {
+	t.Parallel()
+
+	const sdl = `
+scalar DateTime
+interface Shape { name: String! }
+type Circle implements Shape { name: String! }
+type Thing { ok: String! date: DateTime stringer: String }
+type Query {
+  thing: Thing!
+  shape: Shape
+  list: [Thing!]!
+}
+`
+
+	s, err := New(sdl,
+		Scalar("DateTime", ScalarFuncs{Serialize: func(any) (any, error) { panic("serialize boom") }}),
+		Object[panicThing]("Thing"),
+		Object[panicShape]("Circle"),
+		ResolveType("Shape", func(any) string { panic("resolve boom") }),
+		Query("thing", func(context.Context, NoArgs) (*panicThing, error) { return &panicThing{OK: "ok"}, nil }),
+		Query("shape", func(context.Context, NoArgs) (any, error) { return panicShape{Name: "c"}, nil }),
+		Query("list", func(context.Context, NoArgs) ([]*panicThing, error) {
+			return []*panicThing{{OK: "a"}}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	const masked = `"extensions":{"code":"INTERNAL_SERVER_ERROR"}`
+
+	tests := []struct{ name, query, want string }{
+		{
+			"serialize", `{ thing { ok date } }`,
+			`{"errors":[{"message":"Internal server error","locations":[{"line":1,"column":14}],` +
+				`"path":["thing","date"],` + masked + `}],"data":{"thing":{"ok":"ok","date":null}}}`,
+		},
+		{
+			"stringer without resolver", `{ thing { ok stringer } }`,
+			`{"errors":[{"message":"Internal server error","locations":[{"line":1,"column":14}],` +
+				`"path":["thing","stringer"],` + masked + `}],"data":{"thing":{"ok":"ok","stringer":null}}}`,
+		},
+		{
+			"resolve type", `{ shape { name } }`,
+			`{"errors":[{"message":"Internal server error","locations":[{"line":1,"column":3}],` +
+				`"path":["shape"],` + masked + `}],"data":{"shape":null}}`,
+		},
+		{
+			"serialize in list item", `{ list { ok date } }`,
+			`{"errors":[{"message":"Internal server error","locations":[{"line":1,"column":13}],` +
+				`"path":["list",0,"date"],` + masked + `}],"data":{"list":[{"ok":"a","date":null}]}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			jsonEqual(t, tt.want, run(t, s, tt.query, nil))
+		})
+	}
+}
