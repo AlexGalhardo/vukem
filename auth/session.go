@@ -456,7 +456,12 @@ func (g *SessionGuard[U]) fromRemember(c *web.Ctx) (U, bool, error) {
 	}
 
 	// Single use, valid or not: a rejected token is deleted too.
-	if !g.remember.claim(c.Context(), tok.id) || err != nil {
+	claimed, cerr := g.remember.claim(c.Context(), tok.id)
+	if cerr != nil {
+		return zero, false, errs.Wrap(http.StatusServiceUnavailable, fmt.Errorf("auth: take remember token: %w", cerr))
+	}
+
+	if !claimed || err != nil {
 		return reject()
 	}
 
@@ -577,7 +582,7 @@ func (r *RememberStore) lookup(ctx context.Context, raw string) (rememberToken, 
 	}
 
 	if !expires.After(r.now()) {
-		r.claim(ctx, id)
+		_, _ = r.claim(ctx, id)
 		return rememberToken{}, errBadToken
 	}
 
@@ -587,16 +592,20 @@ func (r *RememberStore) lookup(ctx context.Context, raw string) (rememberToken, 
 // claim deletes the token and reports whether this call removed it. Only
 // the request whose DELETE removed the row may log in: two concurrent
 // requests with a stolen cookie both pass lookup, and a failed DELETE
-// would leave the token reusable.
-func (r *RememberStore) claim(ctx context.Context, id string) bool {
+// would leave the token reusable. A store error is returned, not false:
+// false means another request won the race.
+func (r *RememberStore) claim(ctx context.Context, id string) (bool, error) {
 	res, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ?"), id)
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
 
-	return err == nil && n == 1
+	return n == 1, nil
 }
 
 // delete removes token id when it belongs to userID.

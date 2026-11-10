@@ -95,6 +95,23 @@ type testApp struct {
 	// gone makes them answer not found the way custom providers often do,
 	// with a wrapped sql.ErrNoRows.
 	gone atomic.Bool
+	// failDelete makes the remember-me store's DELETE fail.
+	failDelete atomic.Bool
+}
+
+// deleteFails fails DELETE statements while fail is set.
+type deleteFails struct {
+	database.Executor
+
+	fail *atomic.Bool
+}
+
+func (d deleteFails) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if d.fail.Load() && strings.HasPrefix(query, "DELETE") {
+		return nil, errors.New("database unavailable")
+	}
+
+	return d.Executor.ExecContext(ctx, query, args...)
 }
 
 // flakyUsers fails ByID while down or gone is set.
@@ -139,7 +156,7 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 					"web",
 					flakyUsers{users, &ta.down, &ta.gone},
 					hasher,
-					auth.NewRememberStore(db),
+					auth.NewRememberStore(deleteFails{db, &ta.failDelete}),
 				)
 				ta.web.InsecureCookies = true
 				ta.api = auth.NewTokenGuard("api", users, ta.tokens)
@@ -1069,6 +1086,31 @@ func TestSecurity_A04_RememberTokenKeptWhenUserLookupFails(t *testing.T) {
 	if got := gone.CookieValue("remember_web"); got != "" {
 		t.Errorf("remember-me cookie of a deleted user kept: %q", got)
 	}
+}
+
+// A storage error while taking the remember-me token is a 503 that keeps the
+// cookie; only losing the race for the token is a rejection.
+func TestSecurity_A04_RememberTokenKeptWhenClaimFails(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	ta.user(t, "ana@example.com", "s3cret-pass", false)
+
+	c := ta.Client(t)
+	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"s3cret-pass"}, "remember": {"on"}})
+
+	token := c.CookieValue("remember_web")
+	fresh := ta.Client(t).WithCookie("remember_web", token)
+
+	ta.failDelete.Store(true)
+	fresh.Get("/dashboard").AssertStatus(http.StatusServiceUnavailable)
+
+	if got := fresh.CookieValue("remember_web"); got != token {
+		t.Errorf("remember-me cookie after a failed claim = %q, want it kept", got)
+	}
+
+	ta.failDelete.Store(false)
+	fresh.Get("/dashboard").AssertOK()
 }
 
 // ptBR serves the framework's built-in Brazilian Portuguese messages.
