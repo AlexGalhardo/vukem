@@ -228,6 +228,8 @@ type header struct {
 	Alg string `json:"alg"`
 	Typ string `json:"typ,omitempty"`
 	Kid string `json:"kid,omitempty"`
+	// Crit is kept raw so a present-but-empty or null value is still seen.
+	Crit json.RawMessage `json:"crit,omitempty"`
 }
 
 var b64 = base64.RawURLEncoding
@@ -488,6 +490,11 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Claims, error) {
 	var h header
 	if err := decodeStrict(hb, &h); err != nil {
 		return Claims{}, invalid("header: %v", err)
+	}
+
+	// RFC 7515 4.1.11: no extension is understood here, so any crit refuses.
+	if len(h.Crit) > 0 {
+		return Claims{}, invalid("header: crit extensions are not supported")
 	}
 
 	if !slices.Contains(v.opts.Algorithms, h.Alg) {

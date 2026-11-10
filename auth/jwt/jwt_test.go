@@ -294,3 +294,38 @@ func TestSecurity_A07_JWTNonceBinding(t *testing.T) {
 		}
 	}
 }
+
+func TestSecurity_A04_JWTRejectsCriticalHeaders(t *testing.T) {
+	t.Parallel()
+
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	v := verifier(jwt.HS256("hs", secret))
+	payload := base64.RawURLEncoding.EncodeToString(mustJSON(t, map[string]any{
+		"sub": "42", "iss": "https://vukem.test", "aud": "api", "exp": now.Add(time.Hour).Unix(),
+	}))
+
+	tests := []struct {
+		name   string
+		header string
+		ok     bool
+	}{
+		{"no crit", `{"alg":"HS256","kid":"hs"}`, true},
+		{"crit b64", `{"alg":"HS256","kid":"hs","crit":["b64"]}`, false},
+		{"empty crit", `{"alg":"HS256","kid":"hs","crit":[]}`, false},
+		{"null crit", `{"alg":"HS256","kid":"hs","crit":null}`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := v.Verify(t.Context(), resign(t, tt.header, payload, secret))
+			if tt.ok && err != nil {
+				t.Fatalf("Verify() error = %v, want nil", err)
+			}
+
+			if !tt.ok && !errors.Is(err, jwt.ErrInvalid) {
+				t.Fatalf("Verify() error = %v, want ErrInvalid", err)
+			}
+		})
+	}
+}

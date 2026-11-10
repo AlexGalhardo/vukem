@@ -26,6 +26,7 @@ func FuzzVerify(f *testing.F) {
 	f.Add(valid)
 	f.Add(unsigned(`{"alg":"none","typ":"JWT"}`, `{"sub":"42","exp":9999999999}`))
 	f.Add(unsigned(`{"alg":"HS256","kid":"hs"}`, `{"sub":"42"}`))
+	f.Add(unsigned(`{"alg":"HS256","kid":"hs","crit":["b64"]}`, `{"sub":"42"}`))
 	f.Add(valid[:len(valid)-2])
 	f.Add("a.b.c")
 	f.Add("..")
