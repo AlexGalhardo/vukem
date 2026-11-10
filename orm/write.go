@@ -270,8 +270,8 @@ func Restore[T any](ctx context.Context, ex database.Executor, model *T) error {
 		return err
 	}
 
-	if n > 1 {
-		return oneRow(m, "restore", n)
+	if err := oneRow(m, "restore", n); err != nil {
+		return err
 	}
 
 	rv.FieldByIndex(m.byColumn["deleted_at"].index).Set(reflect.Zero(reflect.TypeFor[NullTime]()))
