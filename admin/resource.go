@@ -48,19 +48,26 @@ var (
 	// are sensitive too. Sensitive columns are never shown, searched,
 	// sorted, filtered or written to the audit log. It matches anywhere in
 	// the name (fail closed); nonSecretRe exempts only known counters.
-	sensitiveRe = regexp.MustCompile(`(?i)(password|passwd|secret|token|api_?key|private_?key|recovery|otp|totp)`)
+	sensitiveRe = regexp.MustCompile(
+		`(?i)(password|passwd|secret|token|api_?key|private_?key|recovery|otp|totp|` +
+			`hash|digest|salt|passphrase|pwd|credential|_key$|^key$)`,
+	)
 
 	// nonSecretRe lists names that contain a secret word but hold counts:
-	// token usage counters and "footprint" (which contains "otp").
+	// token usage counters.
 	nonSecretRe = regexp.MustCompile(
-		`(?i)^(tokens_(used|count|total|remaining|limit)|max_tokens(_[a-z0-9_]+)?|[a-z0-9_]*_token_count|[a-z0-9_]*footprint[a-z0-9_]*)$`,
+		`(?i)^(tokens_(used|count|total|remaining|limit)|max_tokens(_[a-z0-9_]+)?|[a-z0-9_]*_token_count)$`,
 	)
+
+	// footprintRe is removed before matching: "footprint" contains "otp" but
+	// is not a secret, unless another secret word is in the name.
+	footprintRe = regexp.MustCompile(`(?i)footprint`)
 
 	protected = []string{"created_at", "updated_at", "deleted_at"}
 )
 
 func sensitiveName(col string) bool {
-	return sensitiveRe.MatchString(col) && !nonSecretRe.MatchString(col)
+	return sensitiveRe.MatchString(footprintRe.ReplaceAllString(col, "")) && !nonSecretRe.MatchString(col)
 }
 
 type column struct {
