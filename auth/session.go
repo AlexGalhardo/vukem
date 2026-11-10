@@ -385,7 +385,12 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 	}
 
 	if g.remember != nil {
-		if u, ok := g.fromRemember(c); ok {
+		u, ok, err := g.fromRemember(c)
+		if err != nil {
+			return zero, err
+		}
+
+		if ok {
 			return u, nil
 		}
 	}
@@ -418,43 +423,54 @@ func (g *SessionGuard[U]) cookie(value string, maxAge int) *http.Cookie {
 }
 
 // fromRemember logs the user in from the remember-me cookie, rotating the
-// token so a stolen cookie works at most once.
-func (g *SessionGuard[U]) fromRemember(c *web.Ctx) (U, bool) {
+// token so a stolen cookie works at most once. The user is loaded before the
+// token is consumed, so a failing user store (the returned error, a 503)
+// neither logs the user in nor burns their token.
+func (g *SessionGuard[U]) fromRemember(c *web.Ctx) (U, bool, error) {
 	var zero U
 
 	raw := c.Cookie(g.cookieName())
 	if raw == "" {
-		return zero, false
+		return zero, false, nil
 	}
 
-	tok, err := g.remember.consume(c.Context(), raw)
-	if err != nil {
+	reject := func(attrs ...any) (U, bool, error) {
 		g.clearCookie(c)
-		web.SecurityEvent(c.Request(), "auth.remember_rejected", "guard", g.name)
+		web.SecurityEvent(c.Request(), "auth.remember_rejected", append([]any{"guard", g.name}, attrs...)...)
 
-		return zero, false
+		return zero, false, nil
+	}
+
+	tok, err := g.remember.lookup(c.Context(), raw)
+	if errors.Is(err, errBadToken) {
+		return reject()
+	}
+
+	if err != nil {
+		return zero, false, errs.Wrap(http.StatusServiceUnavailable, fmt.Errorf("auth: load remember token: %w", err))
 	}
 
 	u, err := g.provider.ByID(c.Context(), tok.userID)
-	if err != nil {
-		g.clearCookie(c)
-		return zero, false
+	if err != nil && !isNotFound(err) {
+		return zero, false, errs.Wrap(http.StatusServiceUnavailable, fmt.Errorf("auth: load user: %w", err))
+	}
+
+	// Single use, valid or not: a rejected token is deleted too.
+	if !g.remember.claim(c.Context(), tok.id) || err != nil {
+		return reject()
 	}
 
 	// Checked once the user is known: a token issued before the user's
 	// sessions were ended (session version bumped) is rejected.
 	if !tok.matches(sessionVersion(u)) {
-		g.clearCookie(c)
-		web.SecurityEvent(c.Request(), "auth.remember_rejected", "guard", g.name, "reason", "session version")
-
-		return zero, false
+		return reject("reason", "session version")
 	}
 
 	if err := g.Login(c, u, Remember(true)); err != nil {
-		return zero, false
+		return zero, false, err
 	}
 
-	return u, true
+	return u, true, nil
 }
 
 // RememberStore keeps remember-me tokens: the cookie holds "<id>.<secret>"
@@ -517,13 +533,13 @@ func rememberHash(secret string, version int64) string {
 	return digest(secret + "|v" + strconv.FormatInt(version, 10))
 }
 
-// consumedToken is a remember-me token deleted by consume; matches checks
+// rememberToken is a stored remember-me token read by lookup; matches checks
 // it against the user's current session version.
-type consumedToken struct {
-	userID, stored, secret string
+type rememberToken struct {
+	id, userID, stored, secret string
 }
 
-func (t consumedToken) matches(version int64) bool {
+func (t rememberToken) matches(version int64) bool {
 	return subtle.ConstantTimeCompare([]byte(t.stored), []byte(rememberHash(t.secret, version))) == 1
 }
 
@@ -535,12 +551,14 @@ func sessionVersion(u any) int64 {
 	return 0
 }
 
-// consume deletes the token and checks its expiry; the caller checks the
-// secret with matches once the user (and so the session version) is known.
-func (r *RememberStore) consume(ctx context.Context, raw string) (consumedToken, error) {
+// lookup reads the token and checks its expiry without consuming it; the
+// caller checks the secret with matches once the user (and so the session
+// version) is known, then takes the token with claim. An unknown, malformed
+// or expired token is errBadToken; any other error is a failing store.
+func (r *RememberStore) lookup(ctx context.Context, raw string) (rememberToken, error) {
 	id, secret, ok := strings.Cut(raw, ".")
 	if !ok || id == "" || secret == "" {
-		return consumedToken{}, errBadToken
+		return rememberToken{}, errBadToken
 	}
 
 	var (
@@ -550,27 +568,35 @@ func (r *RememberStore) consume(ctx context.Context, raw string) (consumedToken,
 
 	err := r.ex.QueryRowContext(ctx, r.q("SELECT user_id, hash, expires_at FROM {table} WHERE id = ?"), id).
 		Scan(&userID, &stored, &expires)
-	if err != nil {
-		return consumedToken{}, errBadToken
+	if errors.Is(err, sql.ErrNoRows) {
+		return rememberToken{}, errBadToken
 	}
 
-	// Single use, valid or not. Only the request whose DELETE removed the
-	// row may log in: two concurrent requests with a stolen cookie both
-	// pass the SELECT, and a failed DELETE would leave the token reusable.
-	res, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ?"), id)
 	if err != nil {
-		return consumedToken{}, errBadToken
-	}
-
-	if n, err := res.RowsAffected(); err != nil || n != 1 {
-		return consumedToken{}, errBadToken
+		return rememberToken{}, err
 	}
 
 	if !expires.After(r.now()) {
-		return consumedToken{}, errBadToken
+		r.claim(ctx, id)
+		return rememberToken{}, errBadToken
 	}
 
-	return consumedToken{userID: userID, stored: stored, secret: secret}, nil
+	return rememberToken{id: id, userID: userID, stored: stored, secret: secret}, nil
+}
+
+// claim deletes the token and reports whether this call removed it. Only
+// the request whose DELETE removed the row may log in: two concurrent
+// requests with a stolen cookie both pass lookup, and a failed DELETE
+// would leave the token reusable.
+func (r *RememberStore) claim(ctx context.Context, id string) bool {
+	res, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ?"), id)
+	if err != nil {
+		return false
+	}
+
+	n, err := res.RowsAffected()
+
+	return err == nil && n == 1
 }
 
 // delete removes token id when it belongs to userID.

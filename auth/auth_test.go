@@ -1029,6 +1029,48 @@ func TestSecurity_A04_SessionKeptWhenUserLookupFails(t *testing.T) {
 	c.Get("/dashboard").AssertRedirect("/login")
 }
 
+// A failing user store during a remember-me login is a 503 that keeps the
+// cookie and its token, so the same cookie works once the store recovers.
+func TestSecurity_A04_RememberTokenKeptWhenUserLookupFails(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	ta.user(t, "ana@example.com", "s3cret-pass", false)
+
+	c := ta.Client(t)
+	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"s3cret-pass"}, "remember": {"on"}})
+
+	token := c.CookieValue("remember_web")
+	if token == "" {
+		t.Fatal("no remember-me cookie")
+	}
+
+	fresh := ta.Client(t).WithCookie("remember_web", token)
+
+	ta.down.Store(true)
+	fresh.Get("/dashboard").AssertStatus(http.StatusServiceUnavailable)
+
+	if got := fresh.CookieValue("remember_web"); got != token {
+		t.Errorf("remember-me cookie after the outage = %q, want it kept", got)
+	}
+
+	ta.down.Store(false)
+	fresh.Get("/dashboard").AssertOK().AssertSee("hello ana@example.com")
+
+	// A deleted user still loses the cookie.
+	other := ta.Client(t)
+	other.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"s3cret-pass"}, "remember": {"on"}})
+
+	gone := ta.Client(t).WithCookie("remember_web", other.CookieValue("remember_web"))
+
+	ta.gone.Store(true)
+	gone.Get("/dashboard").AssertRedirect("/login")
+
+	if got := gone.CookieValue("remember_web"); got != "" {
+		t.Errorf("remember-me cookie of a deleted user kept: %q", got)
+	}
+}
+
 // ptBR serves the framework's built-in Brazilian Portuguese messages.
 var ptBR = vukem.WithTranslations(fstest.MapFS{"en.json": {Data: []byte(`{}`)}, "pt-BR.json": {Data: []byte(`{}`)}})
 
