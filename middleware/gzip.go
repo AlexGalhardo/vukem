@@ -156,6 +156,10 @@ func (g *gzipWriter) finish() {
 // Flush supports streaming handlers.
 func (g *gzipWriter) Flush() {
 	if !g.decided {
+		if g.status == 0 {
+			g.status = http.StatusOK // flushing sends the headers, as a first Write would
+		}
+
 		_ = g.decide()
 	}
 
