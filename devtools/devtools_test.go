@@ -84,6 +84,12 @@ func TestNormalizeSQL(t *testing.T) {
 		{"SELECT * FROM t1 WHERE name = 'O''Brien' AND age > 42", "SELECT * FROM t1 WHERE name = ? AND age > ?"},
 		{"SELECT * FROM posts WHERE id IN ($1, $2, $3)", "SELECT * FROM posts WHERE id IN (?...)"},
 		{"INSERT INTO t (a, b) VALUES (?, ?)", "INSERT INTO t (a, b) VALUES (?...)"},
+		{`SELECT * FROM t WHERE n = 'a\'b-LEAK' AND x = 1`, "SELECT * FROM t WHERE n = ? AND x = ?"},
+		{`SELECT * FROM t WHERE n = "x-LEAK"`, "SELECT * FROM t WHERE n = ?"},
+		{`SELECT * FROM t WHERE n = "two words-LEAK"`, "SELECT * FROM t WHERE n = ?"},
+		{"SELECT * FROM t WHERE n = $$te'xt-LEAK$$", "SELECT * FROM t WHERE n = ?"},
+		{"SELECT * FROM t WHERE n = $tag$te$$xt-LEAK$tag$ AND id = $1", "SELECT * FROM t WHERE n = ? AND id = ?"},
+		{`SELECT "users"."id" FROM "users" WHERE id = 7`, `SELECT "users"."id" FROM "users" WHERE id = ?`},
 	}
 
 	for _, tt := range tests {
