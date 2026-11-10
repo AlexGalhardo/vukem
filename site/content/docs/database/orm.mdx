@@ -421,6 +421,13 @@ posts, err := orm.QueryOf[models.Post](db).
 | `Chunk(ctx, size, fn)` | `error` | Calls `fn` with batches of `size` rows, in primary key order |
 | `SQL()` | `(string, []any, error)` | The `SELECT` it would run, for debugging and tests |
 
+`GroupCount` and `Pluck` are generic methods, a recent Go feature that GitHub's CodeQL Go extractor does not handle yet: one call in an app fails its whole `analyze (go)` job with `Parent of type parameter does not exist: K comparable`. If the app runs CodeQL, write that query by hand until the extractor catches up:
+
+```go
+rows, err := db.QueryContext(ctx,
+	"SELECT status, COUNT(*) FROM deliveries WHERE campaign_id = "+db.Dialect().Placeholder(1)+" GROUP BY status", id)
+```
+
 `orm.ErrNotFound` answers **404** when a handler returns it, so a show page needs no extra check:
 
 ```go
