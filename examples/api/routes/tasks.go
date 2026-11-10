@@ -26,8 +26,14 @@ func Tasks(r *router.Router, app *vukem.App) error {
 		return err
 	}
 
+	// RATE_LIMIT_STORE=cache shares the limits between servers (CACHE_STORE=database or Redis).
+	limiters, err := app.RateLimiters()
+	if err != nil {
+		return err
+	}
+
 	tasks := apiv1.NewTasks(db)
-	limit := ratelimit.Middleware(ratelimit.NewMemory(60, time.Minute), ratelimit.ByToken)
+	limit := ratelimit.Middleware(limiters("tasks.token", 60, time.Minute), ratelimit.ByToken)
 	// Reads need only a token; changes need the write ability
 	// (app/controllers/apiv1/abilities.go).
 	write := auth.Ability(acc.API, apiv1.AbilityWrite)
