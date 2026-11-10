@@ -108,7 +108,7 @@ The app answers on [localhost:3000](http://localhost:3000) and the inbox is on [
 | `postgres` | `postgres:18.6-alpine3.24` | the database to grow into, already running and health-checked |
 | `mailpit` | `axllent/mailpit:v1.31.6` | catches SMTP on the private network, shows the inbox on port 8025 |
 
-Nothing is configured twice. The `app` service reads your `.env` through `env_file`, so the `APP_KEY` that `vukem new` generated is already there, and the `environment` block only overrides what is true inside the Compose network: `APP_URL`, and `MAIL_MAILER=smtp` with `SMTP_HOST=mailpit`, `SMTP_PORT=1025` and `SMTP_INSECURE=true` (the catcher speaks plain SMTP, with no STARTTLS). Migrations run before the server starts, and `exec` hands the container to the app so it still shuts down gracefully:
+Nothing is configured twice. The `app` service reads your `.env` through `env_file`, so the `APP_KEY` that `vukem new` generated is already there, and the `environment` block only overrides what is true inside the Compose network: `APP_URL`, and `MAIL_MAILER=smtp` with `SMTP_HOST=mailpit`, `SMTP_PORT=1025` and `SMTP_INSECURE=true` (the catcher speaks plain SMTP, with no STARTTLS). That works because your `.env` sets `APP_ENV=development`; with `APP_ENV=production` and a host that is not `localhost` or a loopback IP, `SMTP_INSECURE=true` is a mailer error, so a production deploy needs a server with STARTTLS or implicit TLS. Migrations run before the server starts, and `exec` hands the container to the app so it still shuts down gracefully:
 
 ```yaml title="compose.yaml"
 entrypoint: ["/bin/sh", "-c", "/app/app migrate && exec /app/app"]
@@ -310,6 +310,7 @@ Vukem refuses to start with an unsafe configuration, so a bad deploy fails its h
 | proxy settings without proxies | `vukem: CLIENT_IP_HEADER requires TRUSTED_PROXIES` (same for `TRUST_FORWARDED_PROTO`) |
 | a list header | `vukem: CLIENT_IP_HEADER "X-Forwarded-For" is a list; leave it empty to use X-Forwarded-For` |
 | HSTS without HTTPS | `vukem: HSTS_FORCE requires an https APP_URL` |
+| `SMTP_INSECURE=true` in production | `vukem: SMTP_INSECURE=true is refused when APP_ENV=production (local catchers only)` (unless `SMTP_HOST` is `localhost` or a loopback IP) |
 | header limit out of range | `vukem: HTTP_MAX_HEADER_BYTES 1024 must be between 4096 and 1048576` |
 
 Mail settings are checked when the app first builds its mailer. A route that needs one — every route `install:auth` adds — builds it while the routes are registered, so the check runs before any command does its work, not on the first send. With `APP_ENV=production` and no `MAIL_MAILER` it fails with `vukem: routes: vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)`, never a silent loss of mail. That is why the image ships `MAIL_MAILER=log`: without it no command runs in it at all. The check itself is untouched, so emptying the variable (`-e MAIL_MAILER=`) or naming a transport you did not finish configuring still stops the boot:
@@ -372,8 +373,8 @@ Add PostgreSQL, Redis or MongoDB from **+ New → Database**. Each runs as its o
 
 | Database | Variables Railway exposes | In the app service |
 | --- | --- | --- |
-| PostgreSQL | `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `DATABASE_URL=${{Postgres.DATABASE_URL}}` |
-| Redis | `REDIS_URL`, `REDISHOST`, `REDISPORT`, `REDISUSER`, `REDISPASSWORD` | `REDIS_URL=${{Redis.REDIS_URL}}` |
+| PostgreSQL | `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `DATABASE_URL=${{Postgres.DATABASE_URL}}?sslmode=disable` |
+| Redis | `REDIS_URL`, `REDISHOST`, `REDISPORT`, `REDISUSER`, `REDISPASSWORD` | `REDIS_URL=${{Redis.REDIS_URL}}?insecure_plaintext=true` |
 | MongoDB | `MONGO_URL`, `MONGOHOST`, `MONGOPORT`, `MONGOUSER`, `MONGOPASSWORD` | `MONGO_URL=${{MongoDB.MONGO_URL}}` |
 
 The namespace is the database service's name on the canvas; change the reference if you renamed the service. Redis and MongoDB are opened by your code ([Redis](/docs/database/redis), [MongoDB](/docs/database/mongodb)). Railway's `MONGO_URL` has no database in its path, so pass the name: `mongo.Open(ctx, os.Getenv("MONGO_URL"), "blog")`.
@@ -393,6 +394,8 @@ base := []vukem.Option{
 
 `DATABASE_URL` then selects the driver by its `postgres://` scheme.
 
+The driver adds `sslmode=verify-full` to a `postgres://` URL whose host is not loopback and that has no `sslmode`. Railway's `DATABASE_URL` points at `postgres.railway.internal`, a private network, whose server certificate does not verify for that name, so the app would fail at boot with a TLS error. Say that the private network is trusted in the variable (next step): `DATABASE_URL=${{Postgres.DATABASE_URL}}?sslmode=disable`. Redis has the same rule: a plain `redis://` URL to a host that is not loopback is refused, so set `REDIS_URL=${{Redis.REDIS_URL}}?insecure_plaintext=true` for the private URL, or use a `rediss://` URL. Both options exist for private networks only; across the public internet keep TLS on.
+
 </Step>
 <Step title="Set the app variables">
 
@@ -403,7 +406,10 @@ In the app service's **Variables** tab:
 APP_KEY=base64:...
 # The domain from Settings → Networking.
 APP_URL=https://blog.up.railway.app
-DATABASE_URL=${{Postgres.DATABASE_URL}}
+# The private network: opt out of the verify-full default.
+DATABASE_URL=${{Postgres.DATABASE_URL}}?sslmode=disable
+# Only when you use Redis; it refuses plaintext to remote hosts otherwise.
+REDIS_URL=${{Redis.REDIS_URL}}?insecure_plaintext=true
 # Railway's edge, see "Trusted proxies on Railway".
 TRUSTED_PROXIES=100.64.0.0/24
 CLIENT_IP_HEADER=X-Real-IP
@@ -604,6 +610,8 @@ export default defineRailway(() => {
 });
 ```
 
+The generated `DATABASE_URL` is the private URL as Railway gives it, with no `sslmode`, so a Postgres app boots with the `verify-full` default and fails if the certificate does not verify. Until the scaffold appends it, change the line to the private-network form before you apply: ``DATABASE_URL: `${db.env.DATABASE_URL}?sslmode=disable` ``.
+
 Plan and apply it with the Railway CLI:
 
 ```bash
@@ -648,6 +656,8 @@ queue:work
 **Mail goes nowhere but the log.** The image's `MAIL_MAILER=log` is still in place because the service sets no transport. Set `MAIL_MAILER=resend` or `mailtrap` with its token, as in [mail on Railway](#mail-on-railway).
 
 **Every visitor shares one rate limit.** The log shows `requests from a proxy carry X-Real-IP but TRUSTED_PROXIES is empty`. Set `TRUSTED_PROXIES` and `CLIENT_IP_HEADER` as in [trusted proxies on Railway](#trusted-proxies-on-railway).
+
+**The app stops at boot with a TLS error against Postgres, or `redis: plaintext connection to a remote host refused`.** Both drivers now verify or require TLS for hosts that are not loopback. On Railway's private network, append `?sslmode=disable` to `DATABASE_URL` and `?insecure_plaintext=true` to `REDIS_URL`, as in [Deploy on Railway](#deploy-on-railway).
 
 **Mail times out on Railway.** `MAIL_MAILER=smtp` on a plan without SMTP fails with a dial timeout. Switch to `MAIL_MAILER=mailtrap` or `resend`.
 
