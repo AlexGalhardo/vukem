@@ -7,26 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **social:** Add `Social.Allow` to refuse a provider user before the account lookup, returning `social.ErrNotAllowed`, and `auth.Allow` to end the sessions of users it refuses ([b037f47](https://github.com/AlexGalhardo/vukem/commit/b037f476)).
-
-### Changed
-
-- **repo:** Ignore the local `vukem-feedback.md` queue ([6c9c043](https://github.com/AlexGalhardo/vukem/commit/6c9c0431)).
-
-### Fixed
-
-- **cli:** Bind every published port of the `vukem new` compose template and of `.config/compose.yaml` to `127.0.0.1`, so the dev Postgres and Mailpit are not reachable from the network ([a3e48ae](https://github.com/AlexGalhardo/vukem/commit/a3e48aee)).
-- **auth:** Answer 401 only for guests in `auth.Allow`; a failing user lookup now returns its own error instead of signing the user out ([1071f5c](https://github.com/AlexGalhardo/vukem/commit/1071f5cf)).
-- **site:** Read the locale switcher of the Inertia and localization docs with `c.Input()`, so JSON posts from React, Vue or Svelte pages no longer 404 ([de4f2ae](https://github.com/AlexGalhardo/vukem/commit/de4f2ae5)).
-- **site:** Date doc pages by the author date, so a rebase merge no longer turns the `Last updated` check red on `main`; a lefthook pre-push job refreshes `site/content/last-updated.json` before the push reaches GitHub.
-
 ## [0.40.0] - 2026-11-10
 
 ### Added
 
-- **social:** Add Allow hook to refuse provider users before account lookup ([e0204c2](https://github.com/AlexGalhardo/vukem/commit/e0204c2e5c488f2437197cd14fc6a477b36de9bf))
+- **social:** Add `Social.Allow` to refuse a provider user before the account lookup, returning `social.ErrNotAllowed`, and `auth.Allow` to end the sessions of users it refuses ([e0204c2](https://github.com/AlexGalhardo/vukem/commit/e0204c2e5c488f2437197cd14fc6a477b36de9bf))
 - **site:** Add a sticky release index to the changelog ([cbf8c5c](https://github.com/AlexGalhardo/vukem/commit/cbf8c5c81a2f0a1c201a3500cbcce3c181991243))
 - **site:** Move the changelog release index to the left ([59fe881](https://github.com/AlexGalhardo/vukem/commit/59fe881d3f6f72875739065ae629a1cbae6a09af))
 - **site:** Show a reading progress bar on docs pages ([dd36106](https://github.com/AlexGalhardo/vukem/commit/dd3610611f55e76eccb478dd4413fe4ef0b8b612))
@@ -67,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **cli:** Split installAuth to drop its gocognit suppression ([d0899cc](https://github.com/AlexGalhardo/vukem/commit/d0899ccfdb4ffe4a62d8d6a2610e5d661ec71d84))
 - **cli:** Split newProject to drop its gocognit suppression ([5945b7a](https://github.com/AlexGalhardo/vukem/commit/5945b7a272d6cd77bdaa31cc874b50ef6b548f56))
 - **apicheck:** Split renderMarkdown to drop its gocognit suppression ([7efac49](https://github.com/AlexGalhardo/vukem/commit/7efac4926e3432967bbad591a8829e9b3d2df891))
+- **repo:** Ignore the local `vukem-feedback.md` queue ([735632f](https://github.com/AlexGalhardo/vukem/commit/735632f015b334110a489e617bb0d488b4a8d7c4))
 
 ### Fixed
 
@@ -74,8 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **webhook:** Remember a delivered event after the sender disconnects ([16d3e1d](https://github.com/AlexGalhardo/vukem/commit/16d3e1d01d853ac036605385802342cf5e1ee046))
 - **api:** Release the idempotency key when the handler panics ([0f792da](https://github.com/AlexGalhardo/vukem/commit/0f792daf0ed3ad76d7aefcda8ee4de4eea454fdf))
 - **webhook:** Release the dedupe key when the handler panics ([421123b](https://github.com/AlexGalhardo/vukem/commit/421123b98c3fee731feca01938796d8e09d3508d))
-- **cli:** Bind compose template ports to 127.0.0.1 ([37b9730](https://github.com/AlexGalhardo/vukem/commit/37b9730afaf86425e19b4c6276bde5aa1eecb94b))
-- **auth:** Answer 401 only for guests in Allow ([e5cd34b](https://github.com/AlexGalhardo/vukem/commit/e5cd34bb6db0ebe94ceddf95d7683843a8a17c60))
+- **cli:** Bind every published port of the `vukem new` compose template and of `.config/compose.yaml` to `127.0.0.1`, so the dev Postgres and Mailpit are not reachable from the network ([37b9730](https://github.com/AlexGalhardo/vukem/commit/37b9730afaf86425e19b4c6276bde5aa1eecb94b))
+- **auth:** Answer 401 only for guests in `auth.Allow`; a failing user lookup now returns its own error instead of signing the user out ([e5cd34b](https://github.com/AlexGalhardo/vukem/commit/e5cd34bb6db0ebe94ceddf95d7683843a8a17c60))
 - **mail:** Fail a queued mail at once when the provider rejects it ([8783a55](https://github.com/AlexGalhardo/vukem/commit/8783a5526a4383fb4c6731f589142e779a70265f))
 - **site:** Let the docs article use the width the TOC leaves free ([9baa93c](https://github.com/AlexGalhardo/vukem/commit/9baa93c076141305bd2a7ab9424afdeaed60b4ae))
 - **site:** Highlight the active release in the changelog index ([3b0fd58](https://github.com/AlexGalhardo/vukem/commit/3b0fd58f6df3a10862b7a6e67b5a2c5809e47497))
@@ -150,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **devtools:** Skip SQL comments and limit backslash escapes to E strings ([8703e59](https://github.com/AlexGalhardo/vukem/commit/8703e59cf0544a9a4e164400c371a5a2c2a3e858))
 - **redis:** Settle only the reservation the worker still holds ([340cf6d](https://github.com/AlexGalhardo/vukem/commit/340cf6d909889bafb23d92c84f9cf0b00ddde16f))
 - **cli:** Explain the Railway Postgres sslmode in the generated IaC file ([81fe29e](https://github.com/AlexGalhardo/vukem/commit/81fe29e18843ec9bdeeb61b0b6202dffdcb5e743))
+- **site:** Read the locale switcher of the Inertia and localization docs with `c.Input()`, so JSON posts from React, Vue or Svelte pages no longer 404 ([9da0cc2](https://github.com/AlexGalhardo/vukem/commit/9da0cc2108cb2d9dc965e53d6005b7fc127fe305))
 
 ## [0.39.1] - 2026-11-07
 
