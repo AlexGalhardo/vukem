@@ -293,7 +293,6 @@ func (r *resolver) asMap(v any) (map[string]any, error) {
 	return nil, nil
 }
 
-//nolint:gocognit // prop resolution walk with lazy/deferred/once cases kept together
 func (r *resolver) resolveMap(props map[string]any, prefix string, parentResolved bool) (map[string]any, error) {
 	out := make(map[string]any, len(props))
 
@@ -314,30 +313,13 @@ func (r *resolver) resolveMap(props map[string]any, prefix string, parentResolve
 			continue
 		}
 
-		val, rescued, err := r.resolveValue(prop, path)
+		val, p, skip, err := r.resolveProp(prop, p, path)
 		if err != nil {
 			return nil, err
 		}
 
-		if rescued {
+		if skip {
 			continue
-		}
-
-		// A closure may return a prop type; unwrap it once so it takes part
-		// in filtering and metadata.
-		if inner, ok := val.(*Prop); ok && inner != p {
-			p = inner
-			if !r.partial && r.excludeFromFirstLoad(p, path) {
-				continue
-			}
-
-			if val, rescued, err = r.resolveValue(p, path); err != nil {
-				return nil, err
-			}
-
-			if rescued {
-				continue
-			}
 		}
 
 		r.collect(p, path)
@@ -355,6 +337,32 @@ func (r *resolver) resolveMap(props map[string]any, prefix string, parentResolve
 	}
 
 	return out, nil
+}
+
+// resolveProp resolves prop and returns the prop whose metadata applies. A
+// closure may return a prop type; it is unwrapped once so it takes part in
+// filtering and metadata. skip is true when the prop is rescued or excluded.
+func (r *resolver) resolveProp(prop any, p *Prop, path string) (val any, resolved *Prop, skip bool, err error) {
+	val, rescued, err := r.resolveValue(prop, path)
+	if err != nil || rescued {
+		return nil, p, rescued, err
+	}
+
+	inner, ok := val.(*Prop)
+	if !ok || inner == p {
+		return val, p, false, nil
+	}
+
+	if !r.partial && r.excludeFromFirstLoad(inner, path) {
+		return nil, inner, true, nil
+	}
+
+	val, rescued, err = r.resolveValue(inner, path)
+	if err != nil || rescued {
+		return nil, inner, rescued, err
+	}
+
+	return val, inner, false, nil
 }
 
 func (r *resolver) resolveValue(v any, path string) (val any, rescued bool, err error) {
