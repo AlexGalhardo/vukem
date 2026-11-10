@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -321,5 +323,56 @@ func TestBodyAtLimitIsWritten(t *testing.T) {
 
 	if len(report.Files) != 1 || report.Files[0].Bytes != ssg.MaxBody {
 		t.Fatalf("report = %+v", report.Files)
+	}
+}
+
+func TestSecurity_A01_SSGDoesNotCreateDirectoriesThroughLinks(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "dist")
+	outside := filepath.Join(parent, "outside")
+
+	for _, d := range []string{dir, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	linkDir(t, outside, filepath.Join(dir, "linked"))
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("nope"))
+	})
+
+	_, err := ssg.Generate(t.Context(), h, []ssg.Page{{Path: "/linked/deep/page"}}, ssg.Options{OutDir: dir})
+	if !errors.Is(err, ssg.ErrEscape) {
+		t.Fatalf("Generate through linked dir = %v, want ErrEscape", err)
+	}
+
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 0 {
+		t.Fatalf("outside dir has entries: %v", entries)
+	}
+}
+
+// linkDir makes link point at target: a symlink, or an NTFS junction when Windows denies symlinks.
+func linkDir(t *testing.T, target, link string) {
+	t.Helper()
+
+	err := os.Symlink(target, link)
+	if err == nil {
+		return
+	}
+
+	if runtime.GOOS != "windows" {
+		t.Skip("symlinks are not available: " + err.Error())
+	}
+
+	cmd := exec.CommandContext(t.Context(), "cmd", "/c", "mklink", "/J", link, target)
+	if out, jerr := cmd.CombinedOutput(); jerr != nil {
+		t.Fatalf("mklink /J: %v: %s", jerr, out)
 	}
 }
