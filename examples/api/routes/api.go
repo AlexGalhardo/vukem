@@ -21,6 +21,12 @@ func API(r *router.Router, app *vukem.App) error {
 		return err
 	}
 
+	// RATE_LIMIT_STORE=cache shares the limits between servers (CACHE_STORE=database or Redis).
+	limiters, err := app.RateLimiters()
+	if err != nil {
+		return err
+	}
+
 	var origins []string
 
 	for o := range strings.SplitSeq(app.Source.Get("CORS_ALLOWED_ORIGINS"), ",") {
@@ -37,9 +43,9 @@ func API(r *router.Router, app *vukem.App) error {
 	r.UseServer(cors) // preflight OPTIONS requests have no route
 
 	h := apiv1.NewTokens(acc)
-	perIP := ratelimit.Middleware(ratelimit.NewMemory(120, time.Minute), ratelimit.ByIP)
-	perToken := ratelimit.Middleware(ratelimit.NewMemory(60, time.Minute), ratelimit.ByToken)
-	issue := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), ratelimit.ByIP)
+	perIP := ratelimit.Middleware(limiters("api.ip", 120, time.Minute), ratelimit.ByIP)
+	perToken := ratelimit.Middleware(limiters("api.token", 60, time.Minute), ratelimit.ByToken)
+	issue := ratelimit.Middleware(limiters("api.tokens", 5, time.Minute), ratelimit.ByIP)
 
 	r.Group("/api/v1", func(g *router.Group) {
 		g.Use(middleware.JSONOnly(), perIP)

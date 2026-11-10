@@ -83,3 +83,21 @@ func TestOpenAPIDocument(t *testing.T) {
 		}
 	}
 }
+
+// The limiters come from RATE_LIMIT_STORE, so an unknown store fails the
+// boot instead of quietly keeping per-process budgets.
+func TestRateLimitersFollowTheConfiguredStore(t *testing.T) {
+	t.Parallel()
+
+	if _, err := vukemtest.Build(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{"RATE_LIMIT_STORE": "nowhere"},
+	}); err == nil {
+		t.Fatal("boot with an unknown RATE_LIMIT_STORE succeeded, want an error")
+	}
+
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{"RATE_LIMIT_STORE": "cache", "CACHE_STORE": "database"},
+	})
+	app.Client(t).WithToken(apiUser(t, app, "shared@example.com")).
+		GetJSON("/api/v1/tasks").AssertOK().AssertHeader("RateLimit-Limit", "60")
+}
