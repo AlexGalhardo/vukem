@@ -213,6 +213,22 @@ func (h *Hub) forward(topic string, r *relay, msgs <-chan []byte) {
 			h.deliverFrom(topic, r, ev)
 		}
 	}
+
+	// The broker ended the subscription (connection lost): end the streams
+	// so clients reconnect and the next Subscribe opens a new one.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.relays[topic] != r {
+		return // torn down on purpose: the topic emptied or the hub closed
+	}
+
+	delete(h.relays, topic)
+	r.cancel()
+
+	for s := range h.subs[topic] {
+		h.removeLocked(s)
+	}
 }
 
 // deliverFrom delivers ev only while r is the topic's current relay, so a

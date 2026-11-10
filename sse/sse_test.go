@@ -623,3 +623,93 @@ func TestHubBrokerFailureClosesSubscribers(t *testing.T) {
 		})
 	}
 }
+
+// droppingBroker hands out a fresh channel per Subscribe; the test closes
+// one to simulate a lost broker connection. Publish goes to the newest.
+type droppingBroker struct {
+	mu     sync.Mutex
+	calls  int
+	chans  []chan []byte
+	closes []func()
+}
+
+func (b *droppingBroker) Publish(_ context.Context, _ string, payload []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.chans[len(b.chans)-1] <- payload
+
+	return nil
+}
+
+func (b *droppingBroker) Subscribe(ctx context.Context, _ ...string) (<-chan []byte, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.calls++
+	ch := make(chan []byte, 8)
+	b.chans = append(b.chans, ch)
+	b.closes = append(b.closes, sync.OnceFunc(func() { close(ch) }))
+
+	i := len(b.closes) - 1
+	context.AfterFunc(ctx, func() { b.drop(i) }) // a subscription ends with its context
+
+	return ch, nil
+}
+
+func (b *droppingBroker) drop(i int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.closes[i]()
+}
+
+func TestHubEndsStreamsWhenBrokerSubscriptionDrops(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		broker := &droppingBroker{}
+		hub := sse.NewHub(broker)
+		defer hub.Close()
+
+		first, stop := hub.Subscribe(t.Context(), "orders")
+		defer stop()
+
+		broker.drop(0)
+		synctest.Wait()
+
+		select {
+		case _, open := <-first:
+			if open {
+				t.Fatal("got an event, want the stream closed after the broker dropped")
+			}
+		default:
+			t.Fatal("stream still open after the broker subscription dropped")
+		}
+
+		second, stop2 := hub.Subscribe(t.Context(), "orders")
+		defer stop2()
+
+		broker.mu.Lock()
+		calls := broker.calls
+		broker.mu.Unlock()
+
+		if calls != 2 {
+			t.Fatalf("Broker.Subscribe calls = %d, want 2 (a new subscription after the drop)", calls)
+		}
+
+		if err := hub.Publish(t.Context(), "orders", sse.Event{Data: "paid"}); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+
+		select {
+		case ev := <-second:
+			if ev.Data != "paid" {
+				t.Errorf("event = %+v, want data %q", ev, "paid")
+			}
+		default:
+			t.Error("the new subscriber got nothing from the new broker subscription")
+		}
+	})
+}
