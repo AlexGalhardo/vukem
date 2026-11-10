@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -220,4 +221,176 @@ func assertGuardPanics(t *testing.T, v *jwt.Verifier) {
 	}()
 
 	jwt.NewGuard[user]("api", v, users{})
+}
+
+// gatedJWKS serves set (or status) and, while release is non-nil, holds
+// every response until the test sends on release.
+type gatedJWKS struct {
+	*httptest.Server
+
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+	status  int
+	set     jwt.JWKS
+}
+
+func newGatedJWKS(t *testing.T, gated bool, status int, keys ...jwt.Key) *gatedJWKS {
+	t.Helper()
+
+	set, err := jwt.PublicJWKS(keys...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := &gatedJWKS{started: make(chan struct{}, 16), status: status, set: set}
+	if gated {
+		s.release = make(chan struct{})
+	}
+
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		s.calls.Add(1)
+		s.started <- struct{}{}
+
+		if s.release != nil {
+			<-s.release
+		}
+
+		if s.status != 0 {
+			w.WriteHeader(s.status)
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(s.set)
+	}))
+	t.Cleanup(s.Close)
+
+	if gated {
+		// Runs before s.Close (cleanups are LIFO), so held handlers can finish.
+		t.Cleanup(func() { close(s.release) })
+	}
+
+	return s
+}
+
+type keyResult struct {
+	key jwt.Key
+	err error
+}
+
+func keyAsync(ctx context.Context, r *jwt.RemoteJWKS, kid string) <-chan keyResult {
+	ch := make(chan keyResult, 1)
+
+	go func() {
+		k, err := r.Key(ctx, kid)
+		ch <- keyResult{k, err}
+	}()
+
+	return ch
+}
+
+func await(t *testing.T, ch <-chan keyResult, what string) keyResult {
+	t.Helper()
+
+	select {
+	case res := <-ch:
+		return res
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s: still blocked after 5s", what)
+		return keyResult{}
+	}
+}
+
+func TestRemoteJWKSCachedKeyDoesNotWaitForRefresh(t *testing.T) {
+	t.Parallel()
+
+	ks := keys(t)
+	srv := newGatedJWKS(t, true, 0, ks[1])
+
+	clock := now
+	var mu sync.Mutex
+	remote := &jwt.RemoteJWKS{URL: srv.URL, Now: func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return clock
+	}}
+
+	first := keyAsync(t.Context(), remote, ks[1].ID)
+	<-srv.started
+	srv.release <- struct{}{}
+
+	if res := await(t, first, "initial load"); res.err != nil {
+		t.Fatalf("Key(%q) = %v, want the key", ks[1].ID, res.err)
+	}
+
+	mu.Lock()
+	clock = clock.Add(2 * time.Hour) // past MaxAge
+	mu.Unlock()
+
+	// The stale lookup starts a refresh the server holds; neither it nor
+	// the next lookup may wait for it while the key is cached.
+	trigger := keyAsync(t.Context(), remote, ks[1].ID)
+	<-srv.started
+
+	if res := await(t, trigger, "stale lookup during refresh"); res.err != nil || res.key.ID != ks[1].ID {
+		t.Errorf("Key(%q) during refresh = %v, %v, want the cached key", ks[1].ID, res.key.ID, res.err)
+	}
+
+	if res := await(t, keyAsync(t.Context(), remote, ks[1].ID), "second lookup"); res.err != nil {
+		t.Errorf("Key(%q) during refresh = %v, want the cached key", ks[1].ID, res.err)
+	}
+}
+
+func TestSecurity_A04_RemoteJWKSFailedRefreshHonoursMinRefresh(t *testing.T) {
+	t.Parallel()
+
+	srv := newGatedJWKS(t, false, http.StatusInternalServerError)
+
+	clock := now
+	remote := &jwt.RemoteJWKS{URL: srv.URL, Now: func() time.Time { return clock }}
+
+	for range 2 {
+		if _, err := remote.Key(t.Context(), "random"); !errors.Is(err, jwt.ErrKeysUnavailable) {
+			t.Errorf("Key(random) with the provider down = %v, want ErrKeysUnavailable", err)
+		}
+	}
+
+	if got := srv.calls.Load(); got != 1 {
+		t.Errorf("provider calls within MinRefresh = %d, want 1", got)
+	}
+
+	clock = clock.Add(time.Minute)
+
+	if _, err := remote.Key(t.Context(), "random"); !errors.Is(err, jwt.ErrKeysUnavailable) {
+		t.Errorf("Key(random) after MinRefresh = %v, want ErrKeysUnavailable", err)
+	}
+
+	if got := srv.calls.Load(); got != 2 {
+		t.Errorf("provider calls after MinRefresh = %d, want 2", got)
+	}
+}
+
+func TestRemoteJWKSCallerCancelDoesNotAbortRefresh(t *testing.T) {
+	t.Parallel()
+
+	ks := keys(t)
+	srv := newGatedJWKS(t, true, 0, ks[1])
+	remote := &jwt.RemoteJWKS{URL: srv.URL, Now: func() time.Time { return now }}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	first := keyAsync(ctx, remote, ks[1].ID)
+	<-srv.started
+	cancel()
+	await(t, first, "cancelled caller")
+
+	second := keyAsync(t.Context(), remote, ks[1].ID)
+	srv.release <- struct{}{}
+
+	if res := await(t, second, "waiting caller"); res.err != nil || res.key.ID != ks[1].ID {
+		t.Errorf("Key(%q) after the first caller left = %v, %v, want the key", ks[1].ID, res.key.ID, res.err)
+	}
+
+	if got := srv.calls.Load(); got != 1 {
+		t.Errorf("provider calls = %d, want 1 (the refresh survives the caller)", got)
+	}
 }

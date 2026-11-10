@@ -130,9 +130,17 @@ type RemoteJWKS struct {
 	// Now is the clock (default time.Now).
 	Now func() time.Time
 
-	mu      sync.Mutex
-	keys    map[string]Key
-	fetched time.Time
+	mu       sync.Mutex
+	keys     map[string]Key
+	fetched  time.Time // last attempt, successful or not
+	failed   error     // error of the last attempt, nil after a success
+	inflight *jwksFetch
+}
+
+// jwksFetch is one refresh in progress; err is set before done closes.
+type jwksFetch struct {
+	done chan struct{}
+	err  error
 }
 
 // SharedKeys implements SharedKeySet: a provider's JWKS signs tokens for
@@ -156,26 +164,87 @@ func (r *RemoteJWKS) Key(ctx context.Context, kid string) (Key, error) {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	k, ok := r.lookup(kid)
-	stale := now().Sub(r.fetched) > maxAge
-	canRefresh := r.fetched.IsZero() || now().Sub(r.fetched) >= minRefresh
 
-	if (!ok || stale) && canRefresh {
-		if err := r.fetch(ctx); err != nil && !ok {
-			return Key{}, fmt.Errorf("%w: %w", ErrKeysUnavailable, err)
+	f := r.inflight
+	if f == nil {
+		stale := now().Sub(r.fetched) > maxAge
+		canRefresh := r.fetched.IsZero() || now().Sub(r.fetched) >= minRefresh
+
+		if (ok && !stale) || !canRefresh {
+			failed := r.failed
+			r.mu.Unlock()
+
+			return answerKey(k, ok, kid, failed)
 		}
 
-		r.fetched = now()
-		k, ok = r.lookup(kid)
+		f = r.startFetch(ctx, now())
+	}
+	r.mu.Unlock()
+
+	// A cached key never waits for a refresh, even the one it started.
+	if ok {
+		return k, nil
 	}
 
-	if !ok {
+	select {
+	case <-f.done:
+	case <-ctx.Done():
+		return Key{}, ctx.Err()
+	}
+
+	if f.err != nil {
+		return Key{}, fmt.Errorf("%w: %w", ErrKeysUnavailable, f.err)
+	}
+
+	r.mu.Lock()
+	k, ok = r.lookup(kid)
+	r.mu.Unlock()
+
+	return answerKey(k, ok, kid, nil)
+}
+
+func answerKey(k Key, ok bool, kid string, failed error) (Key, error) {
+	switch {
+	case ok:
+		return k, nil
+	case failed != nil:
+		// The provider failed moments ago and MinRefresh holds the retry.
+		return Key{}, fmt.Errorf("%w: %w", ErrKeysUnavailable, failed)
+	default:
 		return Key{}, fmt.Errorf("unknown key id %q", kid)
 	}
+}
 
-	return k, nil
+// startFetch begins a refresh; r.mu must be held. The attempt time is
+// recorded up front so a failing provider is retried at most once per
+// MinRefresh.
+func (r *RemoteJWKS) startFetch(ctx context.Context, at time.Time) *jwksFetch {
+	f := &jwksFetch{done: make(chan struct{})}
+	r.inflight = f
+	r.fetched = at
+
+	go func() {
+		// Detached from the caller: one client hanging up must not fail
+		// the refresh everyone else is waiting on.
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+
+		keys, err := r.fetch(fctx)
+
+		r.mu.Lock()
+		if err == nil {
+			r.keys = keys
+		}
+
+		r.failed = err
+		r.inflight = nil
+		f.err = err
+		close(f.done)
+		r.mu.Unlock()
+	}()
+
+	return f
 }
 
 func (r *RemoteJWKS) lookup(kid string) (Key, bool) {
@@ -190,7 +259,7 @@ func (r *RemoteJWKS) lookup(kid string) (Key, bool) {
 	return k, ok
 }
 
-func (r *RemoteJWKS) fetch(ctx context.Context) error {
+func (r *RemoteJWKS) fetch(ctx context.Context) (map[string]Key, error) {
 	client := r.Client
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
@@ -198,22 +267,22 @@ func (r *RemoteJWKS) fetch(ctx context.Context) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.URL, http.NoBody)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	res, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("jwt: fetch JWKS: %w", err)
+		return nil, fmt.Errorf("jwt: fetch JWKS: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("jwt: fetch JWKS: %s", res.Status)
+		return nil, fmt.Errorf("jwt: fetch JWKS: %s", res.Status)
 	}
 
 	var set JWKS
 	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&set); err != nil {
-		return fmt.Errorf("jwt: decode JWKS: %w", err)
+		return nil, fmt.Errorf("jwt: decode JWKS: %w", err)
 	}
 
 	keys := map[string]Key{}
@@ -229,7 +298,5 @@ func (r *RemoteJWKS) fetch(ctx context.Context) error {
 		}
 	}
 
-	r.keys = keys
-
-	return nil
+	return keys, nil
 }
