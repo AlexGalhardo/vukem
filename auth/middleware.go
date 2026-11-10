@@ -25,8 +25,6 @@ func ctxOf(w http.ResponseWriter, r *http.Request) *web.Ctx {
 // problem+json, whatever the Accept header or session cookie says; the
 // same holds for any guards under [ProblemJSON], which must be mounted
 // before Required (Required mounted first never sees it and redirects).
-//
-//nolint:gocognit // guard decision tree; branch order is the security contract
 func Required(guards ...Checker) func(http.Handler) http.Handler {
 	allAPIGuards := allAPI(guards)
 
@@ -35,27 +33,15 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 			c := ctxOf(w, r)
 			apiOnly := allAPIGuards || isProblemJSON(r.Context())
 
-			for _, g := range guards {
-				if authenticate, ok := failClosed(g); ok {
-					err := authenticate(c)
-					if err == nil {
-						next.ServeHTTP(w, c.Request())
-						return
-					}
+			ok, err := passGuards(c, guards)
+			if ok {
+				next.ServeHTTP(w, c.Request())
+				return
+			}
 
-					// Fail closed without treating the caller as a guest.
-					if !errors.Is(err, ErrUnauthenticated) {
-						fail(c, apiOnly, err)
-						return
-					}
-
-					continue
-				}
-
-				if g.Check(c) {
-					next.ServeHTTP(w, c.Request())
-					return
-				}
+			if err != nil {
+				fail(c, apiOnly, err)
+				return
 			}
 
 			if apiOnly || c.WantsJSON() || !hasSession(c) {
@@ -63,19 +49,52 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 				return
 			}
 
-			if r.Method == http.MethodGet && !c.IsHTMX() {
-				c.Session().Put(IntendedKey, r.URL.RequestURI())
-			}
-
-			target := "/login"
-			if u, err := c.URL("login"); err == nil {
-				target = u
-			}
-
-			// A failed redirect write means the client is gone; nothing to recover.
-			_ = c.Redirect(target)
+			redirectToLogin(c, r)
 		})
 	}
+}
+
+// passGuards tries the guards in order and reports whether one
+// authenticated the request. A non-nil error comes from a fail-closed guard
+// that could not decide; it stops the chain.
+func passGuards(c *web.Ctx, guards []Checker) (bool, error) {
+	for _, g := range guards {
+		if authenticate, ok := failClosed(g); ok {
+			err := authenticate(c)
+			if err == nil {
+				return true, nil
+			}
+
+			// Fail closed without treating the caller as a guest.
+			if !errors.Is(err, ErrUnauthenticated) {
+				return false, err
+			}
+
+			continue
+		}
+
+		if g.Check(c) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// redirectToLogin sends a browser guest to the route named "login",
+// remembering the intended URL for GET requests.
+func redirectToLogin(c *web.Ctx, r *http.Request) {
+	if r.Method == http.MethodGet && !c.IsHTMX() {
+		c.Session().Put(IntendedKey, r.URL.RequestURI())
+	}
+
+	target := "/login"
+	if u, err := c.URL("login"); err == nil {
+		target = u
+	}
+
+	// A failed redirect write means the client is gone; nothing to recover.
+	_ = c.Redirect(target)
 }
 
 // APIGuard is a guard for API clients that authenticate every request with
