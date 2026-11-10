@@ -76,18 +76,20 @@ curl -s -X POST localhost:3000/api/v1/tokens \
   -H 'Content-Type: application/json' \
   -d '{"email":"ada@example.com",
        "password":"correct horse battery",
-       "device_name":"cli"}'
+       "device_name":"cli",
+       "abilities":["read"]}'
 ```
 
 ```json
 {
+  "abilities": ["read"],
   "expires_at": "2026-11-16T09:00:00Z",
   "token": "vk_GJ4XL2MF7AQZ3P5NY6WKCTRB2E.R7MN2QX4ZK5TJWP3AY6L7BHC2D",
   "type": "Bearer"
 }
 ```
 
-A wrong password answers `422` on `email`; an unverified email answers `403` (`auth.unverified`), since an unverified address may belong to someone else. With [two-factor authentication](/docs/security/two-factor) installed, users who turned it on must also send `code` (or `recovery_code`), or they get `422`.
+The request lists the abilities the key needs (see [Abilities](#abilities-scopes)); without `abilities` the key carries none. The response is `201 Created`. A wrong password answers `422` on `email`; an unverified email answers `403` (`auth.unverified`), since an unverified address may belong to someone else. With [two-factor authentication](/docs/security/two-factor) installed, users who turned it on must also send `code` (or `recovery_code`), or they get `422`.
 
 </Step>
 <Step title="3. Use it">

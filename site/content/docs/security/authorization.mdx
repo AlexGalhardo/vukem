@@ -43,9 +43,11 @@ vukem make:policy Post
 
 ```text
 created app/policies/post_policy.go
+created app/policies/doc.go
+created app/policies/registry.go
 ```
 
-The command writes `app/policies/post_policy.go` with `View`, `Create`, `Update` and `Delete` methods, and appends `authz.For[*models.Post](PostPolicy{})` to the `All` function in `app/policies/registry.go` (it creates that file when it is missing). The generated `Update` and `Delete` deny everyone until you write the rule.
+In a project that already has the registry, the last two lines become `updated app/policies/registry.go`. The command writes `app/policies/post_policy.go` with `View`, `Create`, `Update` and `Delete` methods, and appends `authz.For[*models.Post](PostPolicy{})` to the `All` function in `app/policies/registry.go` (it creates that file when it is missing). The generated `Update` and `Delete` deny everyone until you write the rule.
 
 </Step>
 <Step title="2. Write the rules">

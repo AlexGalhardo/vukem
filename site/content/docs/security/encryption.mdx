@@ -95,7 +95,8 @@ Encrypting the same text twice gives two different tokens, because each one gets
 | `vukem key:generate` | writes a new key to `.env` (copying `.env.example` first when `.env` is missing); refuses to replace an existing key |
 | `vukem key:generate --force` | replaces the existing key; sessions and encrypted data become unreadable |
 | `vukem key:generate --show` | prints a key without writing anything |
-| `./app key:generate` | the same from your built binary: prints only the key, so `APP_KEY=$(./app key:generate)` is safe; it never writes `.env` |
+| `./app key:generate` | the same from your built binary: prints only the key, so `APP_KEY=$(./app key:generate)` is safe; it never writes `.env` unless you pass `--if-missing` |
+| `vukem key:generate --if-missing` (or `./app key:generate --if-missing`) | idempotent setup: writes a key to `.env` only when `APP_KEY` is empty, never prints it and never replaces one (`APP_KEY already set` on stderr); it cannot be combined with `--show` or `--force` |
 | `vukem key:rotate` | replaces the key and keeps the old one in `APP_PREVIOUS_KEYS` ([below](#key-rotation)) |
 
 What happens at boot:
@@ -276,7 +277,7 @@ vukem key:rotate
 APP_KEY rotated in .env; the old key is now first in APP_PREVIOUS_KEYS.
 Restart the app. Remove the old key from APP_PREVIOUS_KEYS once the
 sessions and links it signed have expired and encrypted columns are
-re-saved (docs/security.md#key-rotation).
+re-saved (https://vukem.dev/docs/security/encryption).
 ```
 
 `key:rotate` writes `.env` atomically (a crash never leaves it half written), keeps comments, `export` and CRLF line endings, never prints a key, and refuses to run when `.env` or `APP_KEY` is missing, or when `APP_KEY` or an entry already in `APP_PREVIOUS_KEYS` is invalid. With more than three previous keys it warns that each one can still forge sessions and signed links.
