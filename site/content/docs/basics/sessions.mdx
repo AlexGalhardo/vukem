@@ -143,7 +143,7 @@ Under the hood, `Flash` marks the key as new. When the response is saved, keys f
 When a form post fails [validation](/docs/basics/validation), the error handler calls the session's **validation hook**. It:
 
 1. flashes the field errors under `_errors`;
-2. flashes the submitted form fields under `_old`, except fields whose name contains `password` (in any case), `_token` and `_method`;
+2. flashes the submitted form fields under `_old`, except secret ones: `_method`, a field named `code`, a name that contains `password`, `pwd`, `secret` or `token` (any case), or one with a word (split on non-alphanumerics and camelCase) that starts with `pass` or is `otp`, `totp`, `mfa`, `cvv`, `cvc`, `pin` or `recovery`. Words, not substrings, keep `shipping` and `zip_code`;
 3. redirects back to the `Referer` when it is on the same site, else to `/`.
 
 On the next request:
@@ -347,7 +347,7 @@ What Vukem does by default:
 - Secure cookies get the `__Host-` prefix, which browsers only accept from the same host, over HTTPS, with `Path=/`.
 - Cookie data is encrypted and authenticated, so visitors can neither read nor forge it. Server-side ids are 26 random characters, stored hashed.
 - Idle and absolute timeouts limit how long a stolen cookie works.
-- Password fields are never flashed as old input.
+- Password, token, one-time-code and similar secret fields are never flashed as old input.
 
 What stays your job: call `Regenerate` on hand-written logins, keep secrets out of cookie sessions (they are encrypted, but they leave your server), and revoke sessions when credentials change. See the [security overview](/docs/security/overview).
 

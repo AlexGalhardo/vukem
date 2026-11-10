@@ -137,7 +137,7 @@ return c.Problem(http.StatusConflict, "", "This slug is already taken.")
 
 | Field | Filled with |
 | --- | --- |
-| `type` | `about:blank` |
+| `type` | `about:blank`, or what `Services.ProblemDecorator` sets |
 | `title` | Your title, or the status text when empty |
 | `status` | The status |
 | `detail` | Your detail, left out when empty |
