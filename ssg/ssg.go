@@ -26,6 +26,8 @@ import (
 	"strings"
 )
 
+const tmpSuffix = ".ssg-tmp"
+
 const (
 	// DefaultHost is the request host when [Options.Host] is empty.
 	// .invalid is a reserved TLD, so the value is never a real origin.
@@ -236,7 +238,8 @@ func cleanPath(raw string) (string, error) {
 // unsafeSegment reports names Windows cannot store as written: a trailing dot or
 // space is dropped, and device names (with or without an extension) are reserved.
 func unsafeSegment(seg string) bool {
-	if strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " ") {
+	// ".ssg-tmp" is the temporary name writePage uses beside each page.
+	if strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " ") || strings.HasSuffix(seg, tmpSuffix) {
 		return true
 	}
 
@@ -248,8 +251,13 @@ func unsafeSegment(seg string) bool {
 		return true
 	}
 
-	return len(base) == 4 && (strings.HasPrefix(base, "com") || strings.HasPrefix(base, "lpt")) &&
-		base[3] >= '1' && base[3] <= '9'
+	digit := strings.TrimPrefix(strings.TrimPrefix(base, "com"), "lpt")
+	if digit == base || len([]rune(digit)) != 1 {
+		return false
+	}
+
+	// The superscript digits are reserved too.
+	return strings.ContainsAny(digit, "0123456789\u00b9\u00b2\u00b3")
 }
 
 func relFile(cleaned string) string {
@@ -320,7 +328,7 @@ func writePage(root *os.Root, rel string, body []byte) error {
 	}
 
 	// Write beside the target and rename, so an existing hard link is replaced, not truncated.
-	tmp := rel + ".ssg-tmp"
+	tmp := rel + tmpSuffix
 	if err := root.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return rootErr(rel, err)
 	}

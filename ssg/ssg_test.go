@@ -398,6 +398,12 @@ func TestSecurity_A01_SSGRefusesCollidingPaths(t *testing.T) {
 		{"com1", []string{"/com1"}},
 		{"lpt1", []string{"/lpt1"}},
 		{"device with extension", []string{"/con.txt"}},
+		{"com0", []string{"/com0"}},
+		{"lpt0", []string{"/LPT0.txt"}},
+		{"com superscript one", []string{"/com%C2%B9"}},
+		{"com superscript two", []string{"/COM%C2%B2.txt"}},
+		{"lpt superscript three", []string{"/lpt%C2%B3"}},
+		{"temp name", []string{"/a/index.html.ssg-tmp"}},
 	}
 
 	for _, tt := range tests {
