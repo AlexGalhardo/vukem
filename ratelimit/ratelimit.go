@@ -249,6 +249,15 @@ func Middleware(l Limiter, key KeyFunc) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// A key function may parse a multipart form (auth.ThrottleKeys);
+			// net/http only cleans the connection's own request, and a 429
+			// never reaches web.Ctx.Serve.
+			defer func() {
+				if f := r.MultipartForm; f != nil {
+					_ = f.RemoveAll()
+				}
+			}()
+
 			k := key(r)
 			if k == "" {
 				next.ServeHTTP(w, r)
