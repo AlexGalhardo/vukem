@@ -74,12 +74,13 @@ export function SearchDialog() {
   const listRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
-    if (index || failed) return;
+    if (index) return;
+    setFailed(false);
     fetch("/search-index.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((data: SearchEntry[]) => setIndex(data))
       .catch(() => setFailed(true));
-  }, [index, failed]);
+  }, [index]);
 
   const onOpenChange = useCallback(
     (next: boolean) => {
