@@ -271,3 +271,50 @@ func TestBusRecordTo(t *testing.T) {
 		t.Errorf("listener after RecordTo(nil) ran %d times, want 1", ran)
 	}
 }
+
+func TestShutdownWaitsForAsyncListenersRacingDispatch(t *testing.T) {
+	t.Parallel()
+
+	b := New(nil, 4)
+
+	var late, shutdownReturned atomic.Int64
+
+	ListenAsync(b, func(context.Context, userRegistered) error {
+		if shutdownReturned.Load() == 1 {
+			late.Add(1)
+		}
+
+		return nil
+	})
+
+	var wg sync.WaitGroup
+
+	start := make(chan struct{})
+
+	for range 200 {
+		wg.Go(func() {
+			<-start
+
+			if err := b.Dispatch(t.Context(), userRegistered{}); err != nil && !errors.Is(err, ErrClosed) {
+				t.Errorf("Dispatch = %v", err)
+			}
+		})
+	}
+
+	wg.Go(func() {
+		<-start
+
+		if err := b.Shutdown(t.Context()); err != nil {
+			t.Errorf("Shutdown = %v", err)
+		}
+
+		shutdownReturned.Store(1)
+	})
+
+	close(start)
+	wg.Wait()
+
+	if n := late.Load(); n != 0 {
+		t.Fatalf("%d listeners started after Shutdown returned", n)
+	}
+}

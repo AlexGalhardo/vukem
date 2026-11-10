@@ -292,7 +292,23 @@ func enqueue(ctx context.Context, getQueue func() (Enqueuer, error), kind string
 func (b *Bus) goAsync(ctx context.Context, l listener, event any) {
 	ctx = context.WithoutCancel(ctx) // the request may end before the listener runs
 
-	b.wg.Go(func() {
+	// Add under the lock Shutdown takes to set closed: no listener starts
+	// after Shutdown began waiting.
+	b.mu.RLock()
+	if b.closed {
+		b.mu.RUnlock()
+		b.log.WarnContext(ctx, "async listener dropped: bus is shut down",
+			"event", fmt.Sprintf("%T", event), "listener", l.name)
+
+		return
+	}
+
+	b.wg.Add(1)
+	b.mu.RUnlock()
+
+	go func() {
+		defer b.wg.Done()
+
 		b.sem <- struct{}{}
 		defer func() { <-b.sem }()
 
@@ -323,7 +339,7 @@ func (b *Bus) goAsync(ctx context.Context, l listener, event any) {
 				err,
 			)
 		}
-	})
+	}()
 }
 
 // Shutdown stops accepting events and waits for async listeners until ctx
