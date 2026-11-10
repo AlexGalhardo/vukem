@@ -12,6 +12,7 @@ export const t = {
   navigation: "Navigation",
   documentation: "Documentation",
   onThisPage: "On this page",
+  releases: "Releases",
   colorTheme: "Color theme",
   lightTheme: "Light theme",
   darkTheme: "Dark theme",
