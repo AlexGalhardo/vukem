@@ -129,8 +129,16 @@ func (s *Studio) exchange(w http.ResponseWriter, r *http.Request, q url.Values) 
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: no Secure flag, Studio is plain HTTP on loopback
-		Name: sessionCookie, Value: s.sessionID, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode,
+	// Secure follows the transport: Studio serves plain HTTP on loopback, where
+	// Safari drops a Secure cookie and the session would never come back.
+	//nolint:gosec // G124: Secure is set whenever the request came over TLS
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    s.sessionID,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
 	})
 
 	q.Del("token")
