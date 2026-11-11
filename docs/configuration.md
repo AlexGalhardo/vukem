@@ -97,7 +97,7 @@ Generated from the config structs by `task config:docs`; `task ci` fails when it
 | `APP_LOCALE` | `string` | — | — | `app.go:initFrontend` |
 | `APP_NAME` | `string` | `Vukem` | Name is the application name, shown in logs, mail and pages. | `Config.Name` |
 | `APP_PREVIOUS_KEYS` | `config.Secret` | — | PreviousKeys are former APP_KEY values (comma-separated, same format) that still open what they sealed or signed after a key rotation: app.Crypt tokens (encrypted cookies and columns, queued mail), cookie sessions, the maintenance bypass and, through DerivePreviousKeys, signed URLs and social login state. | `Config.PreviousKeys` |
-| `APP_PROBLEM_BASE_URL` | `string` | — | — | `http.go:newRouter` |
+| `APP_PROBLEM_BASE_URL` | `string` | — | ProblemBaseURL prefixes the "type" URI of every RFC 9457 problem (BASE/not-found, BASE/validation); empty means "about:blank". | `Config.ProblemBaseURL` |
 | `APP_URL` | `string` | `http://localhost:3000` | URL is the public origin of the app, used for absolute URLs. | `Config.URL` |
 | `CACHE_MAX_ENTRIES` | `int` | `10000` | MaxEntries bounds the memory store. | `CacheConfig.MaxEntries` |
 | `CACHE_PREFIX` | `string` | `vukem:` | Prefix is added in front of every cache key; use a distinct one per app on a shared Redis or table. | `CacheConfig.Prefix` |

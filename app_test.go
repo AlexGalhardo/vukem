@@ -1487,3 +1487,52 @@ func TestNewRefusesDuplicateProviders(t *testing.T) {
 		})
 	}
 }
+
+// APP_PROBLEM_BASE_URL becomes the "type" member of every problem a client
+// reads, so a scheme that is not http(s) (javascript:, data:), credentials, a
+// query or a fragment is a boot error, and a trailing slash is dropped.
+func TestSecurity_A05_ProblemBaseURLIsValidatedAtBoot(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"javascript:alert(1)//",
+		"data:text/html,x",
+		"ftp://errors.example.com",
+		"//errors.example.com/problems",
+		"errors.example.com/problems",
+		"https://",
+		"https://user:pw@errors.example.com/problems",
+		"https://errors.example.com/problems?v=1",
+		"https://errors.example.com/problems#top",
+		"https://errors.example.com/pro blems",
+		"https://errors.example.com/\nX: y",
+	} {
+		_, err := New(WithSource(testSource(map[string]string{"APP_PROBLEM_BASE_URL": raw})))
+		if err == nil || !strings.Contains(err.Error(), "APP_PROBLEM_BASE_URL") ||
+			!strings.Contains(err.Error(), "http or https URL") {
+			t.Errorf("APP_PROBLEM_BASE_URL=%q: error = %v, want a boot error that says how to fix it", raw, err)
+		}
+
+		if err != nil && strings.Contains(err.Error(), "pw@") {
+			t.Errorf("the error repeats the credentials: %v", err)
+		}
+	}
+
+	for raw, want := range map[string]string{
+		"":                                      "",
+		"https://errors.example.com/problems":   "https://errors.example.com/problems",
+		"https://errors.example.com/problems//": "https://errors.example.com/problems",
+		"http://localhost:3000/":                "http://localhost:3000",
+		"HTTPS://Errors.Example.com":            "HTTPS://Errors.Example.com",
+	} {
+		app, err := New(WithSource(testSource(map[string]string{"APP_PROBLEM_BASE_URL": raw})))
+		if err != nil {
+			t.Errorf("APP_PROBLEM_BASE_URL=%q: %v", raw, err)
+			continue
+		}
+
+		if app.Config.ProblemBaseURL != want {
+			t.Errorf("APP_PROBLEM_BASE_URL=%q normalized to %q, want %q", raw, app.Config.ProblemBaseURL, want)
+		}
+	}
+}

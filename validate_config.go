@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/crypt"
@@ -55,6 +57,10 @@ func checkBootConfig(
 		if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
 			errs = append(errs, err)
 		}
+	}
+
+	if cfg.ProblemBaseURL, err = problemBaseURL(cfg.ProblemBaseURL); err != nil {
+		errs = append(errs, err)
 	}
 
 	if err := cfg.Analytics.Validate(); err != nil {
@@ -140,6 +146,27 @@ func checkConfig(cfg *Config, envSet, warmup bool) (config.Key, error) {
 	}
 
 	return key, errors.Join(errs...)
+}
+
+// problemBaseURL validates APP_PROBLEM_BASE_URL and drops its trailing slashes.
+// The value is written into the "type" member of every problem, so only an
+// http or https URL with a host is accepted: no other scheme (javascript:,
+// data:), no credentials, query or fragment. The error does not repeat the
+// value, which could hold credentials.
+func problemBaseURL(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" ||
+		u.User != nil || strings.ContainsAny(raw, "?#") || strings.ContainsFunc(raw, unicode.IsSpace) ||
+		strings.ContainsFunc(raw, unicode.IsControl) {
+		return "", errors.New("vukem: APP_PROBLEM_BASE_URL must be an http or https URL with a host and no " +
+			"credentials, query or fragment (for example https://errors.example.com/problems); fix it or unset it")
+	}
+
+	return strings.TrimRight(raw, "/"), nil
 }
 
 // parseTrustedProxies parses TRUSTED_PROXIES: comma-separated CIDRs or
