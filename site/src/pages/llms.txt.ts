@@ -13,6 +13,8 @@ export const GET: APIRoute = () => {
     "",
     `Full documentation in one file: ${site.url}/llms-full.txt`,
     "",
+    `Every page is also available as Markdown: add ".md" to its URL (${site.url}/docs/introduction.md).`,
+    "",
   ];
 
   for (const group of getNavGroups()) {
