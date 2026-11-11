@@ -8,6 +8,7 @@ Usage:
   build                        Build assets (Vite) and a production binary in bin/
   version                      Print the vukem version
   doctor                       Report the optional tools the project uses (Betterleaks) and project checks
+  upgrade                      Compare the project with this CLI: framework version and starter files (--check writes nothing)
  install
   install:auth                 Add login, registration, password reset and email verification
   install:api                  Add API tokens, /api/v1 routes, CORS and rate limiting

@@ -71,6 +71,12 @@ func commands() []command {
 		{"build", "", "Build assets (Vite) and a production binary in bin/", buildCmd},
 		{"version", "", "Print the vukem version", nil},
 		{"doctor", "", "Report the optional tools the project uses (Betterleaks) and project checks", doctorCmd},
+		{
+			"upgrade",
+			"",
+			"Compare the project with this CLI: framework version and starter files (--check writes nothing)",
+			upgradeCmd,
+		},
 		{"install:auth", "", "Add login, registration, password reset and email verification", installAuth},
 		{"install:api", "", "Add API tokens, /api/v1 routes, CORS and rate limiting", installAPI},
 		{"install:billing", "", "Add Stripe subscriptions: plans, Checkout, Billing Portal, webhooks", installBilling},

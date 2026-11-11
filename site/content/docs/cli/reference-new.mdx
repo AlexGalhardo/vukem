@@ -301,7 +301,40 @@ In production a missing `resources/public/build/.vite/manifest.json` is a failed
 
 `vukem doctor` prints the CLI revision and the Go runtime on consecutive lines, then the `upgrade` URL. That pair is the set you tested. A newer CLI is not a promise that an older revision still matches today's images or examples. The assets image pins `oven/bun:1.4.4-alpine` and the Node image pins an exact tag; the workflow audit installs Bun `1.4.4`. When those pins change, the changelog for the CLI revision names the new tags. Do not read a future tag back onto an old revision.
 
-There is no command that rewrites a project in place. `vukem new` refuses a folder that already exists. `install:*` and `make:*` refuse a file that already exists unless you pass `--force`. A file you edited stays as you left it. To take a scaffold change, read the changelog for the `cli` revision, apply that diff yourself, and run the checks that revision's workflow runs (`go test`, `govulncheck`, and the lockfile audit when the project has one). `--force` replaces the file. It is the explicit overwrite, not the upgrade path.
+No command rewrites a project in place: `vukem upgrade` reports and never overwrites a file (below). `vukem new` refuses a folder that already exists. `install:*` and `make:*` refuse a file that already exists unless you pass `--force`. A file you edited stays as you left it. To take a scaffold change, read the changelog for the `cli` revision, apply that diff yourself, and run the checks that revision's workflow runs (`go test`, `govulncheck`, and the lockfile audit when the project has one). `--force` replaces the file. It is the explicit overwrite, not the upgrade path.
+
+## `vukem upgrade`
+
+Compare the project with this CLI. It reports; it never overwrites a project file.
+
+```text
+vukem upgrade [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-check` | bool | `false` | Write nothing and run no `go` command. Exit 1 when the project is behind the CLI, 0 otherwise. Safe in CI. |
+| `-json` | bool | `false` | Print the report as JSON: `framework` (`required`, `cli`, `state`), `modules` and `scaffold.differ`. |
+
+The report has three parts:
+
+- **framework**: the `github.com/AlexGalhardo/vukem` version in `go.mod` against the CLI's, as `up_to_date`, `behind`, `ahead`, `replaced` (a `replace` to a local checkout) or `devel` (the CLI is a development build). The check needs no network.
+- **modules**: the `drivers/*` and `contrib/*` modules the project requires, with their versions. They are listed, not compared: each has its own version line.
+- **scaffold**: the files that exist both in the project and in the starter this CLI would generate, and differ (line endings ignored). `go.mod`, `go.sum`, `README.md`, `.env.example` and `storage/` are skipped. A file you edited, or that an `install:*` overlay replaced (`routes/web.go` on an Inertia project), shows up here; that is information, not an error, so a file difference never fails `--check`.
+
+Without `-check`, `vukem upgrade` also writes the current starter to `.vukem/upgrade/starter/` (already in the starter's `.gitignore`) so you can compare a file with `git diff --no-index .vukem/upgrade/starter/<file> <file>`, and when the project is behind it runs `go get github.com/AlexGalhardo/vukem@<cli version>` and `go mod tidy`. Those two commands and `.vukem/upgrade/` are the only things it writes.
+
+```bash
+vukem upgrade -check
+```
+
+```text
+framework: v0.38.0 in go.mod, CLI is v0.40.0 (behind)
+scaffold: 2 file(s) differ from the v0.40.0 starter
+  Dockerfile
+  vite.config.ts
+docs: https://vukem.dev/docs/cli/reference-new#upgrading-a-starter
+```
 
 ## `vukem list` and `vukem help`
 
