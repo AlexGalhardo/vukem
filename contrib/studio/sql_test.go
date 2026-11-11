@@ -337,21 +337,36 @@ func TestSecurity_A01_StudioConsoleIsReadOnly(t *testing.T) {
 
 	h := newSQLHarness(t)
 
-	for _, q := range []string{
+	statements := []string{
 		`DELETE FROM users`,
 		`INSERT INTO users (id, name) VALUES (9, 'x')`,
 		`INSERT INTO users (id, name) VALUES (9, 'x') RETURNING id`,
 		`DELETE FROM users WHERE id = 1 RETURNING id`,
 		`UPDATE users SET name = 'x' RETURNING id`,
 		`DROP TABLE users`,
-	} {
-		_, err := h.src.Query(t.Context(), q, false)
-		if err == nil {
-			t.Errorf("%q ran in the read-only console", q)
-		}
+		// DDL: MySQL and MariaDB commit implicitly before it, which would end a READ ONLY transaction.
+		`CREATE TABLE made (id INTEGER)`,
+		`ALTER TABLE users ADD COLUMN extra INTEGER`,
+		`TRUNCATE TABLE users`,
+		`/* a read */ DROP TABLE users`,
+		`(DROP TABLE users)`,
+		`SELECT id INTO made FROM users`,
+		`SELECT id FROM users INTO OUTFILE '/tmp/studio'`,
+		`VACUUM`,
+		`REPLACE INTO users (id, name) VALUES (1, 'x')`,
+	}
 
-		if err != nil && strings.Contains(err.Error(), "readonly") {
-			t.Errorf("the database text reached the error of %q: %v", q, err)
+	for _, q := range statements {
+		_, err := h.src.Query(t.Context(), q, false)
+		if !errors.Is(err, errInput) {
+			t.Errorf("%q = %v, want a refusal before it runs", q, err)
+		}
+	}
+
+	// The verb check is the first barrier; the read-only connection is the second, and holds alone.
+	for _, q := range statements[:6] {
+		if _, err := h.src.exec(t.Context(), q, false); err == nil {
+			t.Errorf("%q ran on the read-only connection", q)
 		}
 	}
 
@@ -359,9 +374,79 @@ func TestSecurity_A01_StudioConsoleIsReadOnly(t *testing.T) {
 		t.Fatalf("users has %d rows after the read-only console, want 5", n)
 	}
 
+	for _, q := range []string{
+		`SELECT id, name FROM users WHERE id < 3 ORDER BY id`,
+		`WITH x AS (SELECT 1 AS n) SELECT n FROM x`,
+		`  -- comment` + "\n" + `SELECT 1 UNION SELECT 2`,
+		`EXPLAIN QUERY PLAN SELECT * FROM users`,
+		`VALUES (1), (2)`,
+		`PRAGMA table_info(users)`,
+		`SELECT 'INTO' AS "into"`,
+	} {
+		if _, err := h.src.Query(t.Context(), q, false); err != nil {
+			t.Errorf("%q = %v, want it to run", q, err)
+		}
+	}
+
 	rs, err := h.src.Query(t.Context(), `SELECT id, name FROM users WHERE id < 3 ORDER BY id`, false)
 	if err != nil || len(rs.Rows) != 2 || rs.Columns[1] != "name" || rs.Rows[1][1].Text != "linus" {
 		t.Errorf("SELECT = %+v, %v", rs, err)
+	}
+}
+
+func TestReadOnlyStatement(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		text, family string
+		want         bool
+	}{
+		{"SELECT 1", "mysql", true},
+		{"select 1", "postgres", true},
+		{"  WITH a AS (SELECT 1) SELECT * FROM a", "mysql", true},
+		{"SHOW TABLES", "mysql", true},
+		{"EXPLAIN SELECT 1", "postgres", true},
+		{"DESCRIBE users", "mysql", true},
+		{"DESC users", "mysql", true},
+		{"TABLE users", "postgres", true},
+		{"VALUES (1)", "postgres", true},
+		{"/* c */ SELECT 1 -- c", "mysql", true},
+		{"(SELECT 1)", "mysql", true},
+		{"SELECT 'into'", "mysql", true},
+		{"SELECT `into` FROM t", "mysql", true},
+		{"SELECT 1 /* INTO */", "postgres", true},
+		{"CREATE TABLE t (id int)", "mysql", false},
+		{"alter table t add c int", "mysql", false},
+		{"TRUNCATE t", "mysql", false},
+		{"DROP TABLE t", "postgres", false},
+		{"RENAME TABLE a TO b", "mysql", false},
+		{"INSERT INTO t VALUES (1)", "mysql", false},
+		{"CALL p()", "mysql", false},
+		{"SET @a = 1", "mysql", false},
+		{"USE other", "mysql", false},
+		{"LOCK TABLES t WRITE", "mysql", false},
+		{"GRANT ALL ON *.* TO x", "mysql", false},
+		{"SELECT * INTO t2 FROM t", "postgres", false},
+		{"SELECT 1 INTO @v", "mysql", false},
+		{"SELECT 1 INTO OUTFILE '/x'", "mysql", false},
+		{"SELECT 1 /*! INTO t */", "mysql", false},
+		{"", "mysql", false},
+		{"-- only a comment", "mysql", false},
+		{"PRAGMA table_info(t)", "sqlite", true},
+		{"PRAGMA table_info(t)", "mysql", false},
+	} {
+		if got := readOnlyStatement(tt.text, tt.family); got != tt.want {
+			t.Errorf("readOnlyStatement(%q, %s) = %v, want %v", tt.text, tt.family, got, tt.want)
+		}
+	}
+
+	// In MySQL "--1" is arithmetic, not a comment, so the semicolon after it counts.
+	if singleStatement("SELECT 1--1; DROP TABLE t", true) {
+		t.Error("a MySQL --1 hid the second statement")
+	}
+
+	if !singleStatement("SELECT 1 -- ; DROP TABLE t", true) || !singleStatement("SELECT 1--1", true) {
+		t.Error("a real MySQL comment, or arithmetic, was refused")
 	}
 }
 

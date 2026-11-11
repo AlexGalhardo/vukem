@@ -178,7 +178,7 @@ func (s *SQLDB) Insert(ctx context.Context, table string, fields map[string]Fiel
 
 	if len(cols) == 0 {
 		q = "INSERT INTO " + d.Quote(t.Name) + " DEFAULT VALUES"
-		if d == database.MySQL {
+		if s.family() == "mysql" {
 			q = "INSERT INTO " + d.Quote(t.Name) + " () VALUES ()"
 		}
 	} else {

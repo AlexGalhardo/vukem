@@ -113,7 +113,7 @@ func filterClause(d database.Dialect, t Table, f Filter, bind func(any) string) 
 		}
 
 		// PostgreSQL has no LIKE on numbers or dates.
-		if d == database.Postgres {
+		if database.MustCapabilities(d).Family == "postgres" {
 			col = "CAST(" + col + " AS TEXT)"
 		}
 
