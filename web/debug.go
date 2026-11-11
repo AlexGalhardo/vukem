@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -61,6 +62,9 @@ type debugData struct {
 	Headers   [][2]string
 	Go        string
 	Nonce     string
+	// Production is the problem+json a client receives for this error with
+	// Debug off: no detail, so nothing from err.
+	Production string
 }
 
 func (c *Ctx) debugData(status int, err error) debugData {
@@ -75,6 +79,15 @@ func (c *Ctx) debugData(status int, err error) debugData {
 		RequestID: RequestID(c.Context()),
 		Go:        runtime.Version(),
 		Nonce:     CSPNonce(c.Context()),
+	}
+
+	// A struct keeps the keys in problem+json order.
+	if prod, err := json.MarshalIndent(struct {
+		Type   string `json:"type"`
+		Title  string `json:"title"`
+		Status int    `json:"status"`
+	}{"about:blank", http.StatusText(status), status}, "", "  "); err == nil {
+		d.Production = string(prod)
 	}
 
 	for e := err; e != nil; e = errors.Unwrap(e) {
@@ -267,6 +280,11 @@ td:first-child { color: var(--muted); width: 14rem; }
 <section>
 <h2>Error chain</h2>
 <ol class="chain">{{range .Chain}}<li><code>{{.Type}}</code> {{.Message}}</li>{{end}}</ol>
+</section>
+
+<section>
+<h2>What clients see in production</h2>
+<pre>{{.Production}}</pre>
 </section>
 
 <section>
