@@ -584,19 +584,32 @@ func failedStore(app *App) (queue.FailedStore, error) {
 }
 
 func queueFailedCommand() Command {
-	var asJSON *bool
+	var (
+		asJSON *bool
+		limit  *int
+	)
 
 	return CommandFunc{
 		CommandName: "queue:failed",
 		Desc:        "List failed jobs",
-		DefineFlags: func(fs *flag.FlagSet) { asJSON = fs.Bool("json", false, "print JSON") },
+		DefineFlags: func(fs *flag.FlagSet) {
+			asJSON = fs.Bool("json", false, "print JSON")
+			limit = fs.Int("limit", 100, "list at most this many jobs; 0 lists all")
+		},
 		Fn: func(ctx context.Context, app *App, _ []string) error {
 			fs, err := failedStore(app)
 			if err != nil {
 				return err
 			}
 
-			jobs, err := fs.Failed(ctx)
+			var jobs []queue.FailedJob
+
+			if pager, ok := fs.(queue.FailedPager); ok {
+				jobs, err = pager.FailedPage(ctx, *limit)
+			} else {
+				jobs, err = fs.Failed(ctx)
+			}
+
 			if err != nil {
 				return err
 			}

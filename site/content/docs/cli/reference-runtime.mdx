@@ -236,7 +236,7 @@ vukem queue:work -queue high,default -concurrency 8
 
 ## `vukem queue:failed`
 
-List failed jobs. **App.** Flag: `-json` (bool, default `false`).
+List failed jobs, newest first. **App.** Flags: `-json` (bool, default `false`) and `-limit` (int, default `100`; `0` lists all). `-limit` bounds the query on the database driver; drivers that cannot page ignore it.
 
 ```bash
 QUEUE_CONNECTION=database vukem queue:failed

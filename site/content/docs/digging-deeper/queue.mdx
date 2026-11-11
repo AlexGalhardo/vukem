@@ -387,7 +387,7 @@ ID        QUEUE    KIND          ATTEMPTS  FAILED AT             ERROR
 4f2a9c..  default  send_invoice  4         2026-10-17T09:12:03Z  smtp: 421
 ```
 
-- `queue:failed` lists the newest first; the table shows the first line of the error, `-json` the full record.
+- `queue:failed` lists the newest first, at most 100 (`-limit N`; `-limit 0` lists all); the table shows the first line of the error, `-json` the full record.
 - `queue:retry` puts jobs back on their queue with attempts reset to 0, available now. It prints `2 failed job(s) re-queued`.
 - `queue:forget` deletes them and prints `2 failed job(s) deleted`.
 - Both need IDs or `all`; nothing else fails with `queue:retry needs job IDs or "all"`.

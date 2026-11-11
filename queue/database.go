@@ -516,8 +516,23 @@ func (d *Database) Fail(ctx context.Context, m *Message) error {
 
 // Failed implements FailedStore, newest first.
 func (d *Database) Failed(ctx context.Context) ([]FailedJob, error) {
-	rows, err := d.db.QueryContext(ctx, d.q(d.db.Dialect(),
-		`SELECT `+jobColumns+`, failed_at FROM {f} ORDER BY failed_at DESC, id`))
+	return d.FailedPage(ctx, 0)
+}
+
+// FailedPage implements FailedPager: at most limit failed jobs, newest
+// first; limit < 1 lists all of them.
+func (d *Database) FailedPage(ctx context.Context, limit int) ([]FailedJob, error) {
+	sqlText := `SELECT ` + jobColumns + `, failed_at FROM {f} ORDER BY failed_at DESC, id`
+
+	var args []any
+
+	if limit >= 1 {
+		sqlText += ` LIMIT ?`
+
+		args = append(args, limit)
+	}
+
+	rows, err := d.db.QueryContext(ctx, d.q(d.db.Dialect(), sqlText), args...)
 	if err != nil {
 		return nil, err
 	}

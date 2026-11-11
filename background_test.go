@@ -214,6 +214,21 @@ func TestQueueCommandsOnDatabase(t *testing.T) {
 	if _, err := run("queue:retry"); err == nil {
 		t.Error("queue:retry without IDs accepted")
 	}
+
+	for range 3 {
+		if _, err := run("test:dispatch"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, _ = run("queue:work", "-stop-when-empty")
+
+	for limit, want := range map[string]int{"1": 1, "2": 2, "0": 3} {
+		out, err := run("queue:failed", "-limit", limit)
+		if err != nil || strings.Count(out, "card declined") != want {
+			t.Errorf("queue:failed -limit %s = %q %v, want %d job lines", limit, out, err, want)
+		}
+	}
 }
 
 func TestFailedCommandsNeedAStore(t *testing.T) {

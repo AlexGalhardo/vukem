@@ -252,6 +252,62 @@ func TestDatabaseStaleWorkerCannotSettleAReReservedJob(t *testing.T) {
 	}
 }
 
+func TestDatabaseFailedPageLimitsNewestFirst(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	d := newDatabaseDriver(t, openSQLite(t), queue.DatabaseOptions{Now: func() time.Time { return now }})
+	ctx := t.Context()
+
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		m := &queue.Message{
+			ID: id, Kind: "k", Queue: "default", Payload: []byte(`{}`),
+			AvailableAt: now, CreatedAt: now, LastError: "boom",
+		}
+		if err := d.Push(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+
+		now = now.Add(time.Minute)
+
+		if err := d.Fail(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ids := func(jobs []queue.FailedJob) []string {
+		var out []string
+		for _, j := range jobs {
+			out = append(out, j.ID)
+		}
+
+		return out
+	}
+
+	for name, tt := range map[string]struct {
+		limit int
+		want  []string
+	}{
+		"limit 2":        {2, []string{"e", "d"}},
+		"zero lists all": {0, []string{"e", "d", "c", "b", "a"}},
+		"negative all":   {-1, []string{"e", "d", "c", "b", "a"}},
+	} {
+		got, err := d.FailedPage(ctx, tt.limit)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+
+		if diff := cmp.Diff(tt.want, ids(got)); diff != "" {
+			t.Errorf("%s (-want +got):\n%s", name, diff)
+		}
+	}
+
+	all, err := d.Failed(ctx)
+	if err != nil || len(all) != 5 {
+		t.Errorf("Failed() = %d jobs, %v, want 5", len(all), err)
+	}
+}
+
 func TestDatabaseRetryResetsAttemptsAndAvailability(t *testing.T) {
 	t.Parallel()
 
