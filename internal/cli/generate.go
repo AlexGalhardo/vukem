@@ -611,12 +611,27 @@ func makeMail(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return makeReactMail(env, d, *force)
 		}
 
-		if err := generate(env, "mail.go.tmpl", "app/mail/"+d.Snake+".go", d, *force); err != nil {
+		return generateAll(env, d, *force, [][2]string{
+			{"mail.go.tmpl", "app/mail/" + d.Snake + ".go"},
+			{"mail.html.tmpl", "resources/views/mail/" + d.Snake + ".html"},
+		})
+	}
+}
+
+// generateAll renders every {stub, path} pair and writes them all or none.
+func generateAll(env *Env, data stubData, force bool, pairs [][2]string) error {
+	files := make([]plannedFile, 0, len(pairs))
+
+	for _, p := range pairs {
+		out, err := renderStub(env, p[0], data)
+		if err != nil {
 			return err
 		}
 
-		return generate(env, "mail.html.tmpl", "resources/views/mail/"+d.Snake+".html", d, *force)
+		files = append(files, plannedFile{rel: p[1], content: out})
 	}
+
+	return createAll(env, files, force)
 }
 
 // React Email packages make:mail --react asks for: exact stable versions,
@@ -627,11 +642,11 @@ const (
 )
 
 func makeReactMail(env *Env, d stubData, force bool) error {
-	if err := generate(env, "mail_react.go.tmpl", "app/mail/"+d.Snake+".go", d, force); err != nil {
-		return err
-	}
-
-	if err := generate(env, "mail.tsx.tmpl", "resources/js/emails/"+d.Snake+".tsx", d, force); err != nil {
+	err := generateAll(env, d, force, [][2]string{
+		{"mail_react.go.tmpl", "app/mail/" + d.Snake + ".go"},
+		{"mail.tsx.tmpl", "resources/js/emails/" + d.Snake + ".tsx"},
+	})
+	if err != nil {
 		return err
 	}
 

@@ -2,10 +2,12 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -300,5 +302,85 @@ func TestSourceDefaultsRankBelowEnvFiles(t *testing.T) {
 		if got := src.Get(key); got != want {
 			t.Errorf("Get(%s) = %q, want %q", key, got, want)
 		}
+	}
+}
+
+func TestLoadSourceExpandsChainedReferences(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     string
+		process map[string]string
+		want    map[string]string
+		wantErr string
+	}{
+		{
+			name: "chain",
+			env:  "A=${B}\nB=${C}\nC=x",
+			want: map[string]string{"A": "x", "B": "x"},
+		},
+		{
+			name:    "process value wins and is not expanded",
+			env:     "A=${B}\nB=file\nC=x",
+			process: map[string]string{"B": "${C}"},
+			want:    map[string]string{"A": "${C}"},
+		},
+		{
+			name:    "cycle",
+			env:     "A=${B}\nB=${A}",
+			wantErr: "references itself",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fsys := fstest.MapFS{".env": {Data: []byte(tt.env)}}
+
+			src, err := LoadSource(fsys, fakeEnv(tt.process), nil)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("LoadSource() error = %v, want %q", err, tt.wantErr)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for k, v := range tt.want {
+				if got, _ := src.Lookup(k); got != v {
+					t.Errorf("Lookup(%q) = %q, want %q", k, got, v)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadSourceBoundsExpansionSize(t *testing.T) {
+	t.Parallel()
+
+	// Each level doubles the one before: 30 levels would be a gigabyte of
+	// text, and 2^30 lookups without a per-key cache.
+	const levels = 30
+
+	lines := []string{"A0=x"}
+	for i := 1; i <= levels; i++ {
+		lines = append(lines, fmt.Sprintf("A%d=${A%d}${A%d}", i, i-1, i-1))
+	}
+
+	start := time.Now()
+	_, err := LoadSource(fstest.MapFS{".env": {Data: []byte(strings.Join(lines, "\n"))}}, fakeEnv(nil), nil)
+
+	if err == nil || !strings.Contains(err.Error(), "64 KiB") {
+		t.Fatalf("LoadSource() error = %v, want a size error naming 64 KiB", err)
+	}
+
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("LoadSource() took %v, want a fast refusal", d)
 	}
 }

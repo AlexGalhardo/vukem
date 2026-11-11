@@ -234,18 +234,7 @@ func LoadSource(
 
 	values := make(map[string]string, len(merged))
 
-	lookup := func(k string) (string, bool) {
-		if v, ok := getenv(k); ok {
-			return v, true
-		}
-
-		e, ok := merged[k]
-		if !ok {
-			return "", false
-		}
-
-		return unescape(e.Value), true
-	}
+	expandValue := newExpander(merged, getenv)
 
 	for k, e := range merged {
 		if v, ok := getenv(k); ok {
@@ -255,7 +244,10 @@ func LoadSource(
 
 		v := e.Value
 		if e.Expand {
-			v = expand(v, lookup)
+			var err error
+			if v, err = expandValue(k); err != nil {
+				return nil, err
+			}
 		}
 
 		if lit, ok := escapedFileRef(v); ok {
@@ -271,6 +263,68 @@ func LoadSource(
 	}
 
 	return &Source{values: values, env: env, getenv: getenv, readFile: readFile}, nil
+}
+
+// maxExpandedValue bounds one expanded .env value: references can double a
+// value per level, so a short file could otherwise ask for gigabytes.
+const maxExpandedValue = 64 << 10
+
+// newExpander returns a function that expands the value of an Expand entry
+// of merged. A reference to another file value is expanded in turn (A=${B},
+// B=${C}), each key once, a process variable wins and is not expanded, a
+// cycle is an error, and so is a value over 64 KiB.
+func newExpander(merged map[string]Entry, getenv func(string) (string, bool)) func(string) (string, error) {
+	var failure error
+
+	done := map[string]string{}
+
+	var resolve func(k string, seen map[string]bool) (string, bool)
+
+	resolve = func(k string, seen map[string]bool) (string, bool) {
+		if v, ok := getenv(k); ok {
+			return v, true
+		}
+
+		e, ok := merged[k]
+		if !ok {
+			return "", false
+		}
+
+		if !e.Expand {
+			return unescape(e.Value), true
+		}
+
+		if v, ok := done[k]; ok {
+			return v, true
+		}
+
+		if failure != nil {
+			return "", true
+		}
+
+		if seen[k] {
+			failure = fmt.Errorf("config: .env: %s references itself", k)
+			return "", true
+		}
+
+		seen[k] = true
+		defer delete(seen, k)
+
+		v := expand(e.Value, func(n string) (string, bool) { return resolve(n, seen) })
+		if len(v) > maxExpandedValue {
+			failure = fmt.Errorf("config: .env: %s expands to more than 64 KiB", k)
+			return "", true
+		}
+
+		done[k] = v
+
+		return v, true
+	}
+
+	return func(k string) (string, error) {
+		v, _ := resolve(k, map[string]bool{})
+		return v, failure
+	}
 }
 
 func readEnvFile(fsys fs.FS, name string) ([]Entry, error) {

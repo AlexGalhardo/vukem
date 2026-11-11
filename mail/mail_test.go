@@ -658,3 +658,28 @@ func TestSetReplyToDefault(t *testing.T) {
 		t.Fatal("injected default reply-to accepted")
 	}
 }
+
+func TestSMTPRejectsInvalidAddresses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		msg  *Message
+	}{
+		{"sender", &Message{From: "not an address", To: []string{"a@x.io"}, Subject: "s", Text: "t"}},
+		{"recipient", &Message{From: "me@x.io", To: []string{"<"}, Subject: "s", Text: "t"}},
+		{"bcc", &Message{From: "me@x.io", To: []string{"a@x.io"}, Bcc: []string{"<"}, Subject: "s", Text: "t"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Port 1 is never dialed: validation runs first.
+			err := NewSMTP(SMTPConfig{Host: "127.0.0.1", Port: 1}).Send(t.Context(), tt.msg)
+			if err == nil || !strings.Contains(err.Error(), "invalid") {
+				t.Fatalf("Send() error = %v, want an invalid address error", err)
+			}
+		})
+	}
+}

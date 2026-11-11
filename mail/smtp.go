@@ -60,6 +60,11 @@ func (s *SMTP) Send(ctx context.Context, msg *Message) error {
 		return err
 	}
 
+	from, rcpts, err := envelopeAddresses(msg)
+	if err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 
@@ -110,17 +115,13 @@ func (s *SMTP) Send(ctx context.Context, msg *Message) error {
 		}
 	}
 
-	from, _ := mail.ParseAddress(msg.From)
-	if err := c.Mail(from.Address); err != nil {
+	if err := c.Mail(from); err != nil {
 		return fmt.Errorf("mail: smtp MAIL FROM: %w", err)
 	}
 
-	for _, list := range [][]string{msg.To, msg.Cc, msg.Bcc} {
-		for _, r := range list {
-			a, _ := mail.ParseAddress(r)
-			if err := c.Rcpt(a.Address); err != nil {
-				return fmt.Errorf("mail: smtp RCPT TO: %w", err)
-			}
+	for _, r := range rcpts {
+		if err := c.Rcpt(r); err != nil {
+			return fmt.Errorf("mail: smtp RCPT TO: %w", err)
 		}
 	}
 
@@ -138,6 +139,30 @@ func (s *SMTP) Send(ctx context.Context, msg *Message) error {
 	}
 
 	return c.Quit()
+}
+
+// envelopeAddresses parses the sender and every To, Cc and Bcc recipient up
+// front, so an invalid address is an error before any connection is made.
+func envelopeAddresses(msg *Message) (string, []string, error) {
+	from, err := mail.ParseAddress(msg.From)
+	if err != nil {
+		return "", nil, fmt.Errorf("mail: smtp: invalid sender address: %w", err)
+	}
+
+	var rcpts []string
+
+	for _, list := range [][]string{msg.To, msg.Cc, msg.Bcc} {
+		for _, r := range list {
+			a, err := mail.ParseAddress(r)
+			if err != nil {
+				return "", nil, fmt.Errorf("mail: smtp: invalid recipient address: %w", err)
+			}
+
+			rcpts = append(rcpts, a.Address)
+		}
+	}
+
+	return from.Address, rcpts, nil
 }
 
 // Build renders msg as RFC 5322 bytes: multipart/mixed (attachments) over
