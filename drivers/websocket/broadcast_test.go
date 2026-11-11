@@ -45,7 +45,13 @@ func (secretChanged) BroadcastAs() string  { return "secret.changed" }
 func broadcastServer(t *testing.T, maxChannels int) (*broadcast.Server, string) {
 	t.Helper()
 
-	b := broadcast.New(broadcast.Config{User: bcCurrentUser, MaxChannels: maxChannels})
+	return broadcastServerWith(t, broadcast.Config{User: bcCurrentUser, MaxChannels: maxChannels})
+}
+
+func broadcastServerWith(t *testing.T, cfg broadcast.Config) (*broadcast.Server, string) {
+	t.Helper()
+
+	b := broadcast.New(cfg)
 	t.Cleanup(b.Close)
 
 	for _, err := range []error{
@@ -215,6 +221,34 @@ func TestBroadcast_PresenceHereJoiningLeaving(t *testing.T) {
 		alice,
 		websocket.Frame{Type: websocket.TypeLeaving, Channel: room, Data: json.RawMessage(`{"id":"b"}`)},
 	)
+}
+
+// brokenMembers is a presence store whose member list fails.
+type brokenMembers struct{ broadcast.PresenceStore }
+
+func (brokenMembers) Members(context.Context, string) ([]broadcast.Member, error) {
+	return nil, errors.New("store down")
+}
+
+// A presence store that cannot list the members is an error for the client,
+// not an empty "here" list, and the channel is not left subscribed.
+func TestBroadcast_PresenceStoreFailure(t *testing.T) {
+	t.Parallel()
+
+	_, url := broadcastServerWith(t, broadcast.Config{
+		User: bcCurrentUser, Presence: brokenMembers{broadcast.NewMemoryPresence()},
+	})
+	c := dialAs(t, url, "a")
+
+	const room = "presence-room.1"
+
+	sendReq(t, c, websocket.TypeSubscribe, room)
+	expectFrame(t, c, websocket.Frame{
+		Type: websocket.TypeError, Channel: room, Status: 503, Message: "Service Unavailable",
+	})
+
+	sendReq(t, c, websocket.TypeSubscribe, "posts")
+	expectFrame(t, c, websocket.Frame{Type: websocket.TypeSubscribed, Channel: "posts"})
 }
 
 func TestBroadcast_ProtocolErrors(t *testing.T) {
