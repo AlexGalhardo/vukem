@@ -20,13 +20,16 @@ type requestScope struct {
 	// operation from a slow one.
 	lastProgress time.Time
 	dirty        []flusher
-	loaders      map[any]any // *Loader[K,V] → *loaderState[K,V]
+	// ctx is the operation's context (scope attached). Batches run with it,
+	// never with the context of the resolver that happened to trigger them.
+	ctx     context.Context //nolint:containedctx // request-scoped: the scope lives exactly as long as the operation context
+	loaders map[any]any     // *Loader[K,V] → *loaderState[K,V]
 }
 
 // flusher is a loader state with keys waiting for a batch.
 type flusher interface {
 	// flushLocked starts the pending batches; called with scope.mu held.
-	flushLocked(ctx context.Context, s *requestScope)
+	flushLocked(s *requestScope)
 }
 
 type scopeKey struct{}
@@ -40,8 +43,13 @@ func scopeFrom(ctx context.Context) *requestScope {
 	return s
 }
 
-func newScope() *requestScope {
-	return &requestScope{running: 1, loaders: map[any]any{}}
+// newScope returns the scope of an operation running under ctx; the scope's
+// own context carries the scope, so loader batches can find it.
+func newScope(ctx context.Context) *requestScope {
+	s := &requestScope{running: 1, loaders: map[any]any{}}
+	s.ctx = withScope(ctx, s)
+
+	return s
 }
 
 // begin counts a goroutine about to start work.
@@ -54,21 +62,21 @@ func (s *requestScope) begin() {
 
 // end uncounts a finished (or blocking) goroutine and dispatches pending
 // batches when nothing else can make progress.
-func (s *requestScope) end(ctx context.Context) {
+func (s *requestScope) end() {
 	s.mu.Lock()
 	s.running--
-	s.dispatchLocked(ctx)
+	s.dispatchLocked()
 	s.mu.Unlock()
 }
 
 // wait blocks on wg without holding back the loaders.
-func (s *requestScope) wait(ctx context.Context, wg *sync.WaitGroup) {
-	s.end(ctx)
+func (s *requestScope) wait(wg *sync.WaitGroup) {
+	s.end()
 	wg.Wait()
 	s.begin()
 }
 
-func (s *requestScope) dispatchLocked(ctx context.Context) {
+func (s *requestScope) dispatchLocked() {
 	s.lastProgress = time.Now()
 
 	if s.running > 0 || len(s.dirty) == 0 {
@@ -79,6 +87,6 @@ func (s *requestScope) dispatchLocked(ctx context.Context) {
 	s.dirty = nil
 
 	for _, f := range d {
-		f.flushLocked(ctx, s)
+		f.flushLocked(s)
 	}
 }

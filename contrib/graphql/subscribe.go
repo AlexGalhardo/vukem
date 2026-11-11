@@ -186,7 +186,7 @@ func (s *Schema) subscribe(ctx context.Context, p *prepared) (iter.Seq[*Response
 		return func(yield func(*Response) bool) { yield(resp) }, nil
 	}
 
-	e := s.newExecutor(p)
+	e := s.newExecutor(ctx, p)
 
 	groups := e.collectFields(s.subscr, p.op.sel, map[string]bool{}, nil)
 	if len(groups) != 1 {

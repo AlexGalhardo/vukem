@@ -205,8 +205,8 @@ func (s *Schema) run(ctx context.Context, p *prepared) *Response {
 	return s.execute(ctx, p, root, nil, p.op.kind == opMutation)
 }
 
-func (s *Schema) newExecutor(p *prepared) *executor {
-	e := &executor{s: s, frags: map[string]*fragmentDef{}, vars: p.vars, scope: newScope()}
+func (s *Schema) newExecutor(ctx context.Context, p *prepared) *executor {
+	e := &executor{s: s, frags: map[string]*fragmentDef{}, vars: p.vars, scope: newScope(ctx)}
 	for _, f := range p.doc.fragments {
 		e.frags[f.name] = f
 	}
@@ -216,11 +216,11 @@ func (s *Schema) newExecutor(p *prepared) *executor {
 
 // execute runs the operation's selection set on rootValue of root.
 func (s *Schema) execute(ctx context.Context, p *prepared, root *namedType, rootValue any, serial bool) *Response {
-	e := s.newExecutor(p)
-	ctx = withScope(ctx, e.scope)
+	e := s.newExecutor(ctx, p)
+	ctx = e.scope.ctx
 
 	obj, ok := e.selectionSet(ctx, p.op.sel, root, rootValue, nil, serial)
-	e.scope.end(ctx)
+	e.scope.end()
 
 	var data []byte
 
@@ -437,7 +437,7 @@ func (e *executor) selectionSet(
 
 		e.scope.begin()
 		wg.Go(func() {
-			defer e.scope.end(ctx)
+			defer e.scope.end()
 			defer e.recoverInto(ctx, g.fields, fp)
 
 			obj.vals[i], oks[i] = e.field(ctx, objType, value, g, fd, fp)
@@ -445,7 +445,7 @@ func (e *executor) selectionSet(
 	}
 
 	if e.s.concurrent && !serial {
-		e.scope.wait(ctx, &wg)
+		e.scope.wait(&wg)
 	}
 
 	if slices.Contains(oks, false) {
@@ -720,14 +720,14 @@ func (e *executor) completeList(
 
 			e.scope.begin()
 			wg.Go(func() {
-				defer e.scope.end(ctx)
+				defer e.scope.end()
 				defer e.recoverInto(ctx, fields, ip)
 
 				out[i], oks[i] = e.complete(ctx, fd, t.ofType, fields, item, ip)
 			})
 		}
 
-		e.scope.wait(ctx, &wg)
+		e.scope.wait(&wg)
 	}
 
 	if slices.Contains(oks, false) {
