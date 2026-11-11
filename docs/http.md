@@ -195,6 +195,22 @@ func (quotaError) HTTPStatus() int    { return http.StatusPaymentRequired }
 
 The status only picks the response code and template: a 5xx is still rendered without its message (`docs/security.md`, A10).
 
+### Mapping errors by type
+
+`web.MapError(s, fn)` registers, once and in `Services.ErrorMappers`, how errors of a type are rendered: `fn(c, e)` receives the first `E` in the chain (`errors.AsType`, so a wrapped one is found) and returns the error to render instead, usually an `*errs.HTTPError`. That error goes through `web.DefaultErrorHandler`, so format negotiation, headers and masking are unchanged:
+
+```go
+web.MapError(app.Router.Services(), func(c *web.Ctx, e *billing.InsufficientFunds) error {
+	return errs.New(http.StatusPaymentRequired, "Not enough balance.").WithExtension("balance", e.Balance)
+})
+```
+
+The first registered mapper that matches wins (no chaining); a `nil` result leaves the error alone; the original error is the one logged; a mapped 5xx is masked like any other (`TestSecurity_A10_MappedErrorCannotExposeServerFaults`); `web.Fail` errors are mapped too. Register mappers while building the app: the slice is read on every request and is not locked.
+
+### Problem types
+
+A problem's `type` is `about:blank` unless the app sets `APP_PROBLEM_BASE_URL`. With it, a problem that has no `type` of its own gets `<base>/<status slug>` (`/not-found`, `/internal-server-error`; only `a-z`, `0-9` and dashes survive, so 418 is `/im-a-teapot`), and validation problems get `<base>/validation`. `HTTPError.WithType` and `Services.ProblemDecorator` always win. The debug page shows the same `type` in "What clients see in production".
+
 ### Debug error page
 
 With `APP_DEBUG=true` outside production (`Services.Debug`), 5xx errors in a browser render a youch-style page (decision F7): the error message and root type, the `Unwrap` chain, the stack with source snippets (app frames open, framework and standard library frames collapsed), the request (method, URL, route, request id, headers with `Authorization`, `Cookie` and token headers redacted) and the Go version. The page carries the CSP nonce. JSON clients keep getting problem+json (with the error text as `detail`), htmx gets the fragment. In `vukem serve` the same report is printed in color on stderr (`Services.DebugOut`).
