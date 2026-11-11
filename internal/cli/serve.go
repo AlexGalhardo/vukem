@@ -55,6 +55,7 @@ func (s snapshot) changed(next snapshot) bool {
 func serveCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	interval := set.Duration("poll", 500*time.Millisecond, "how often to check Go files for changes")
 	noVite := set.Bool("no-vite", false, "do not start the Vite dev server")
+	noCodegen := set.Bool("no-codegen", false, "do not regenerate routes.ts and the API clients after each build")
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		if !exists(env, filepath.Join("cmd", "app")) {
@@ -82,15 +83,16 @@ func serveCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}()
 		}
 
-		return watch(ctx, env, *interval, args)
+		return watch(ctx, env, *interval, !*noCodegen, args)
 	}
 }
 
 // watch builds and runs the app, rebuilding and restarting it when Go or
 // templ sources change; templ components are generated before each build.
 // Templates reload inside the app (no restart needed). A failed build keeps
-// the previous process running.
-func watch(ctx context.Context, env *Env, interval time.Duration, args []string) error {
+// the previous process running. After each build, with codegen, the app's
+// "codegen" command refreshes the generated frontend files that exist.
+func watch(ctx context.Context, env *Env, interval time.Duration, codegen bool, args []string) error {
 	dir := env.dirOrDot()
 	binDir := env.path(filepath.Join(cacheDir, "serve"))
 	bin := filepath.Join(binDir, exe("app"))
@@ -140,6 +142,8 @@ func watch(ctx context.Context, env *Env, interval time.Duration, args []string)
 			return
 		}
 
+		refreshGenerated(ctx, env, bin, codegen)
+
 		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir, cmd.Stdout, cmd.Stderr = env.Dir, env.Stdout, env.Stderr
 
@@ -181,4 +185,26 @@ func watch(ctx context.Context, env *Env, interval time.Duration, args []string)
 			}
 		}
 	}
+}
+
+// refreshGenerated runs the codegen step when enabled and reports a failure
+// without stopping the restart.
+func refreshGenerated(ctx context.Context, env *Env, bin string, enabled bool) {
+	if !enabled {
+		return
+	}
+
+	if err := runCodegen(ctx, env, bin); err != nil && ctx.Err() == nil {
+		fmt.Fprintln(env.Stderr, "vukem serve: codegen failed:", err)
+	}
+}
+
+// runCodegen runs the built app's "codegen" command, which rewrites a
+// generated file only when its bytes change, so the Go files it may touch
+// cause at most one more rebuild and not a loop.
+func runCodegen(ctx context.Context, env *Env, bin string) error {
+	cmd := exec.CommandContext(ctx, bin, "codegen")
+	cmd.Dir, cmd.Stdout, cmd.Stderr = env.Dir, env.Stdout, env.Stderr
+
+	return cmd.Run()
 }

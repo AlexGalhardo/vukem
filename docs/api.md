@@ -338,6 +338,10 @@ apidocs.Serve(app, r, "/api/docs", apidocs.Config{SpecURL: "/api/v1/openapi.json
 
 ```sh
 vukem codegen:client                                  # TypeScript → resources/js/api.ts
+vukem codegen:client -style throw                     # TypeScript that throws ApiError
+vukem codegen:client -tanstack                        # plus createQueries for TanStack Query
+vukem codegen:client -check                           # fail if resources/js/api.ts is stale
+vukem codegen --check                                 # the same for every generated file (CI)
 vukem codegen:client -lang go -package apiclient      # Go → internal/apiclient/client.go
 vukem codegen:client -lang go -o -                    # print to stdout
 vukem codegen:client -prefix /api                     # only routes under /api
@@ -345,25 +349,29 @@ vukem codegen:client -prefix /api                     # only routes under /api
 
 `-prefix` scopes generation to one path prefix, the flag form of `OPENAPI_PREFIX` and of [`OpenAPIOptions.PathPrefix`](#openapi); `openapi:export` and `codegen:types` take it too. An explicit `-prefix` overrides `OPENAPI_PREFIX`; without the flag the environment variable still applies. Use it in an app that also serves server-rendered pages, so the client does not grow a method per page (`dashboard()`, `login()`).
 
-TypeScript (`openapi.TypeScriptClient(doc)`) emits the `codegen:types` types (no Zod), `<Op>Params` for path parameters and `createClient`. It has no dependencies and runs in browsers and Node 18+:
+TypeScript (`openapi.TypeScriptClient(doc)`, or `TypeScriptClientWith(doc, openapi.ClientOptions{...})`) emits the `codegen:types` types (no Zod), `<Op>Params` for path parameters, `<Op>Error` for the declared error responses and `createClient`. It has no dependencies and runs in browsers and Node 18+. The default style returns the Eden format, `{ data, error, status, headers, response }`, and an HTTP error is a value that narrows by status:
 
 ```ts
-import { ApiError, createClient } from "./api";
+import { createClient } from "./api";
 
 const api = createClient({ baseUrl: "", headers: () => ({ Authorization: `Bearer ${token}` }) });
-const product = await api.productsStore({ params: { shop: 1 }, body: { name: "Lamp" } });
+const { data, error } = await api.productsStore({ params: { shop: 1 }, body: { name: "Lamp" } });
 
-try {
-  await api.productsStore({ params: { shop: 1 }, body: { name: "x" } });
-} catch (err) {
-  if (err instanceof ApiError && err.status === 422) console.log(err.errors.name);
+if (error) {
+  if (error.status === 422) console.log(error.value.errors?.name); // the declared problem body
+  return;
 }
+console.log(data.id); // data is the product here, not null
 ```
 
 - One async method per operation with an operationId, camelCase (`products.store` → `productsStore`). Its single argument `{ params, query, body }` holds only what the operation takes, and each part (and the argument) is required only when the operation requires it.
 - Path parameters are URL-encoded; query values skip `undefined`/`null` and repeat arrays (`?tags=a&tags=b`); bodies are JSON.
-- Options: `baseUrl` (default `""`, the page's origin), `fetch` (default `globalThis.fetch`), `headers` (object or per-request function), `credentials` (default `"same-origin"`).
-- Any non-2xx response throws `ApiError` with `status`, the parsed RFC 9457 `problem` and `errors` (field → messages on 422).
+- Each method takes the argument object, then an optional `CallOptions` (`{ signal, headers }`) for that call only.
+- Options: `baseUrl` (default `""`, the page's origin), `fetch` (default `globalThis.fetch`), `headers` (object or per-request function), `credentials` (default `"same-origin"`), `onRequest` (returns a `RequestInit` merged over the one built), `onResponse`, `throwHttpError`.
+- A non-2xx response resolves to `{ data: null, error: { status, value }, ... }`. `<Op>Error` has one member per 4xx or 5xx status the operation declares (`value` is its schema, usually the problem) and a last member for every other status (`value: ApiProblem | undefined`); that last member names the remaining statuses with `Exclude`, which is what makes `error.status === 422` narrow. A failed `fetch` (network, abort) still rejects.
+- `-style throw` (`ClientOptions{Style: openapi.StyleThrow}`) is the previous behavior: methods resolve to the data and throw `ApiError` with `status`, the parsed RFC 9457 `problem` and `errors` (field → messages on 422). `throwHttpError: true` does the same from a result-style client.
+- `-tanstack` appends `createQueries(client)`: for each GET and HEAD operation a `queryKey` and `queryFn`, for the others a `mutationKey` and `mutationFn`, plain objects that `useQuery`, `queryOptions`, `useMutation` and `mutationOptions` accept. The functions throw `ApiError` on an HTTP error, as TanStack Query expects. The file imports nothing; it needs the result style.
+- The header of the file records the flags (`// Code generated by vukem codegen:client -style throw. DO NOT EDIT.`), which is how `vukem codegen` regenerates it with the same flags.
 
 Go (`openapi.GoClient(doc, pkg)`) emits gofmt'd, stdlib-only source:
 
@@ -381,7 +389,7 @@ if apiErr, ok := errors.AsType[*apiclient.Error](err); ok && apiErr.Status == 42
 - `Client{BaseURL, HTTP, Header}`: `HTTP` defaults to `http.DefaultClient`; `Header` is called on every request. Each method takes `ctx`, the path parameters as typed arguments, then the query struct and the body; operations without a response body return only `error`.
 - Any non-2xx response returns `*apiclient.Error{Status, Problem}`.
 
-Golden outputs live in `openapi/testdata/shop.client.ts` and `shop.client.go`; a round-trip test runs the generated Go client against a live app, and CI type-checks the TypeScript client with `tsc --strict`.
+Golden outputs live in `openapi/testdata/shop.client.ts` (and `shop.client.throw.ts`, `shop.client.tanstack.ts`; `shop.client.usage.ts` is a hand-written file that proves the narrowing at compile time) and `shop.client.go`; a round-trip test runs the generated Go client against a live app, and CI type-checks the TypeScript client with `tsc --strict`.
 
 ## gRPC
 
