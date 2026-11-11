@@ -414,10 +414,10 @@ func (g *goGen) method(b *strings.Builder, op *clientOp) {
 		body = "body"
 	}
 
-	fmt.Fprintf(b, "// %s calls %s %s", name, op.method, op.path)
+	fmt.Fprintf(b, "// %s calls %s %s", name, op.method, docLine(op.path))
 
 	if op.summary != "" && op.summary != op.id {
-		fmt.Fprintf(b, ": %s", strings.TrimSuffix(op.summary, "."))
+		fmt.Fprintf(b, ": %s", strings.TrimSuffix(docLine(op.summary), "."))
 	}
 
 	b.WriteString(".\n")

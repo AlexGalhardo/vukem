@@ -234,11 +234,19 @@ func writeThrowClient(b *strings.Builder, ops []*clientOp) {
 	b.WriteString("  };\n}\n")
 }
 
+// docLine makes text safe for one line of a generated comment: a line break
+// would start a line of code in a // comment, and "*/" would close a /** */
+// one early. The text comes from route patterns and summaries, which are
+// source code, but a generated file must not run what a comment holds.
+func docLine(s string) string {
+	return strings.ReplaceAll(strings.Join(strings.Fields(s), " "), "*/", "* /")
+}
+
 func writeTSDoc(b *strings.Builder, op *clientOp, indent string) {
-	fmt.Fprintf(b, "%s/**\n%s * %s %s", indent, indent, op.method, op.path)
+	fmt.Fprintf(b, "%s/**\n%s * %s %s", indent, indent, op.method, docLine(op.path))
 
 	if op.summary != "" && op.summary != op.id {
-		fmt.Fprintf(b, ": %s", strings.ReplaceAll(op.summary, "*/", "* /"))
+		fmt.Fprintf(b, ": %s", docLine(op.summary))
 	}
 
 	b.WriteString("\n")
