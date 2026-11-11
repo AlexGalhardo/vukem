@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -537,4 +538,74 @@ func sortedCopy(s []string) []string {
 	slices.Sort(out)
 
 	return out
+}
+
+func TestRecordsAreBounded(t *testing.T) {
+	t.Parallel()
+
+	const suffix = "\n[truncated by devtools]"
+
+	args := make([]any, 1000)
+	for i := range args {
+		args[i] = i
+	}
+
+	d := New(Config{NPlusOneThreshold: 2})
+	r := router.New(nil)
+	r.UseServer(d.Middleware())
+	r.Use(d.RouteMiddleware())
+
+	r.Get("/", func(c *web.Ctx) error {
+		ctx := c.Context()
+		// Two long statements that differ only past the cut must not count as one for N+1.
+		d.ObserveQuery(ctx, database.Query{SQL: "SELECT " + strings.Repeat("x", 1<<20) + "a"})
+		d.ObserveQuery(ctx, database.Query{SQL: "SELECT " + strings.Repeat("x", 1<<20) + "b"})
+		// A multibyte rune straddles the cut: the stored SQL must stay valid UTF-8.
+		d.ObserveQuery(ctx, database.Query{SQL: "SELECT " + strings.Repeat("é", maxQuerySQL)})
+		d.ObserveQuery(ctx, database.Query{SQL: "SELECT 1", Args: args})
+
+		err := d.MailTransport(mail.NewArray()).Send(ctx, &mail.Message{
+			Subject: strings.Repeat("s", 10<<10), To: []string{"a@b.c"},
+		})
+		if err != nil {
+			return err
+		}
+
+		return c.NoContent()
+	})
+
+	h, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	get(t, h, "/", "127.0.0.1:1", "localhost")
+
+	qs := d.Queries()
+
+	if len(qs) != 4 {
+		t.Fatalf("queries = %d, want 4", len(qs))
+	}
+
+	for _, q := range qs[1:] {
+		if len(q.SQL) > maxQuerySQL+len(suffix) || !strings.HasSuffix(q.SQL, suffix) || !utf8.ValidString(q.SQL) {
+			t.Errorf(
+				"SQL len=%d valid=%v, want truncated valid UTF-8 within the limit",
+				len(q.SQL),
+				utf8.ValidString(q.SQL),
+			)
+		}
+
+		if q.NPlusOne {
+			t.Error("distinct long statements flagged as N+1")
+		}
+	}
+
+	if got := qs[0].Args; len(got) != maxQueryArgs+1 || got[maxQueryArgs] != "… +936 more" {
+		t.Errorf("args = %d items, want %d ending in a summary", len(got), maxQueryArgs+1)
+	}
+
+	if s := d.Mails()[0].Subject; len(s) > maxSubject+len(suffix) {
+		t.Errorf("subject len = %d, want at most %d", len(s), maxSubject+len(suffix))
+	}
 }
