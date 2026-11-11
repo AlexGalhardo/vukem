@@ -45,7 +45,7 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 
 | Hook | Jobs |
 | --- | --- |
-| `pre-commit` | `golangci-lint fmt` on staged `.go` (re-staged), `golangci-lint run --new-from-rev=HEAD`, `go mod tidy -diff`, `markdownlint-cli2` on staged `.md` (not `.claude/skills/`) |
+| `pre-commit` | `golangci-lint fmt` on staged `.go` (re-staged), `golangci-lint run --new-from-rev=HEAD`, `task tidy:check` (`go mod tidy -diff` in every module), `markdownlint-cli2` on staged `.md` (not `.claude/skills/`) |
 | `commit-msg` | `go run ./internal/tools/commitlint {1}` |
 | `pre-push` | `go vet ./...`, `govulncheck ./...`, `doc dates` (refreshes `site/content/last-updated.json` when `site/content/` changed; [maintenance](maintenance.md#release-routine)); tests, race and the OS matrix run in GitHub Actions |
 
@@ -264,7 +264,7 @@ The root keeps only what tools or Go require there; everything else has a fixed 
 
 | Path | What lives there |
 | --- | --- |
-| root | the `vukem` package (grouped by theme: `app.go`, `http.go`, `database.go`, `background.go`, `services.go`, `command.go`, `codegen.go`, `boost.go`, `doc.go` and their tests), one directory per public package, `go.mod`/`go.sum`/`go.work`, `README.md`, `LICENSE`, `CHANGELOG.md`, `AGENTS.md`, `Taskfile.yml`, `lefthook.yml` and the configs tools only discover at the root (`.editorconfig`, `.gitattributes`, `.gitignore`, `.golangci.yml`, `.markdownlint-cli2.jsonc`, `osv-scanner.toml`, which OpenSSF Scorecard reads) |
+| root | the `vukem` package (grouped by theme: `app.go`, `http.go`, `database.go`, `background.go`, `services.go`, `command.go`, `codegen.go`, `boost.go`, `doc.go` and their tests), one directory per public package, `go.mod`/`go.sum`/`go.work`, `README.md`, `LICENSE`, `CHANGELOG.md`, `AGENTS.md`, `Taskfile.yml`, `lefthook.yml` and the configs tools only discover at the root (`.editorconfig`, `.gitattributes`, `.gitignore`, `.golangci.yml`, `.markdownlint-cli2.jsonc`) |
 | `.config/` | `cliff.toml` (passed with `--config`), `goreleaser.yaml` (GoReleaser finds it on its own), `compose.yaml` (passed with `-f`; `name: vukem` keeps the container names), `apicheck-exceptions.json` (read by `internal/tools/apicheck`, see [Security exceptions](#security-exceptions)), `ruleset-protect-main.json` (the `main` ruleset, applied with `gh api`, see [maintenance](maintenance.md#pull-request-flow)) |
 | `.github/` | workflows, Dependabot, issue/PR templates and the community files `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` (GitHub detects them there) |
 | `.claude/` | `CLAUDE.md`, rules, skills and settings |

@@ -16,10 +16,11 @@ import (
 var dockerFS embed.FS
 
 // Base images are pinned to exact versions so a rebuild never picks up an
-// unreviewed image; bump them with the toolchain.
+// unreviewed image, even if a tag is republished; the tag and its digest are
+// bumped together with the toolchain.
 const (
-	nodeImage = "node:24.22.0-alpine3.24"
-	bunImage  = "oven/bun:1.4.4-alpine"
+	nodeImage = "node:24.22.0-alpine3.24@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f"
+	bunImage  = "oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a"
 )
 
 type dockerData struct {

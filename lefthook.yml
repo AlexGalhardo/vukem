@@ -15,8 +15,8 @@ pre-commit:
       glob: "*.go"
       run: golangci-lint run --new-from-rev=HEAD ./...
     - name: go mod tidy
-      glob: "{go.mod,go.sum}"
-      run: go mod tidy -diff
+      glob: "**/{go.mod,go.sum}"
+      run: task tidy:check
     - name: markdownlint
       glob: "*.md"
       exclude:

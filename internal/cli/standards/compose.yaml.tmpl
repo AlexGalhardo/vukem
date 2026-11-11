@@ -49,7 +49,7 @@ services:
   # bootstrap/app.go with vukem.WithDatabaseDrivers(postgres.Driver())
   # (https://vukem.dev/docs/database/overview).
   postgres:
-    image: postgres:18.6-alpine3.24
+    image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
     environment:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
@@ -67,7 +67,7 @@ services:
   # Mailpit accepts every message and shows it in a web inbox, so password
   # resets and verification emails are readable without a mail provider.
   mailpit:
-    image: axllent/mailpit:v1.31.6
+    image: axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387
     # Only the web inbox is published; SMTP stays on the private network.
     ports: ["127.0.0.1:8025:8025"]
     environment:
