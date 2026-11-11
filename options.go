@@ -14,6 +14,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/view"
 )
@@ -50,6 +51,15 @@ var ErrRoutesCompiled = errors.New("vukem: router compiled before Boot, so route
 // are pending because Boot has not run: serving then would answer 404 for
 // them.
 var ErrNotBooted = errors.New("vukem: routes after boot are pending; call Boot before Handler")
+
+// WithModels lists the app's models for the commands that need them
+// (codegen:models). Core cannot discover models, so the app names them, as
+// it does for crypt:reseal:
+//
+//	vukem.WithModels(orm.ModelOf[models.User](), orm.ModelOf[models.Post]())
+func WithModels(models ...orm.ModelInfo) Option {
+	return func(o *options) error { o.modelList = append(o.modelList, models...); return nil }
+}
 
 // WithClock sets the clock used by sessions and other time-based features
 // (tests use vukemtest.FakeClock).

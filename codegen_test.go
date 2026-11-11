@@ -6,14 +6,18 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/router"
+	codegenmodels "github.com/AlexGalhardo/vukem/testdata/codegen/models"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -540,5 +544,174 @@ func TestRoutesTypeScriptIncludesHost(t *testing.T) {
 
 	if n := strings.Count(got, "host:"); n != 1 {
 		t.Errorf("host keys = %d, want 1 (only the route with a host)", n)
+	}
+}
+
+func registeredModels() []orm.ModelInfo {
+	return []orm.ModelInfo{orm.ModelOf[codegenmodels.User](), orm.ModelOf[codegenmodels.Post]()}
+}
+
+func runCodegenModels(t *testing.T, models []orm.ModelInfo, args ...string) (string, error) {
+	t.Helper()
+
+	var out bytes.Buffer
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithModels(models...))...)
+	}
+
+	err := RunMain(t.Context(), append([]string{"app", "codegen:models"}, args...), testSource(nil).Lookup, build)
+
+	return out.String(), err
+}
+
+func TestCodegenModels_Golden(t *testing.T) {
+	t.Parallel()
+
+	got, err := runCodegenModels(t, registeredModels(), "-o", "-", "-pkg", "cols")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	golden := filepath.Join("testdata", "codegen", "cols", "cols_gen.go")
+	if *update {
+		if err := os.WriteFile(golden, []byte(got), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(string(want), got); diff != "" {
+		t.Errorf("codegen:models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// The generated file compiles against the models, so a typed column of the
+// wrong shape would fail here.
+func TestCodegenModels_GoldenCompiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles a package")
+	}
+
+	cmd := exec.CommandContext(t.Context(), "go", "build", "./testdata/codegen/cols")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build of the generated columns: %v\n%s", err, out)
+	}
+}
+
+func TestCodegenModels_CheckAndErrors(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "cols", "cols_gen.go")
+
+	if _, err := runCodegenModels(t, registeredModels(), "-o", file); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runCodegenModels(t, registeredModels(), "-o", file, "-check"); err != nil {
+		t.Errorf("-check on an up-to-date file = %v", err)
+	}
+
+	if err := os.WriteFile(file, []byte("package cols\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := runCodegenModels(t, registeredModels(), "-o", file, "-check")
+	if err == nil || !strings.Contains(err.Error(), "is out of date; run codegen:models") {
+		t.Errorf("-check on a stale file = %v", err)
+	}
+
+	if b, _ := os.ReadFile(file); string(b) != "package cols\n" {
+		t.Error("-check rewrote the file")
+	}
+
+	_, err = runCodegenModels(t, nil, "-o", "-")
+	if err == nil || !strings.Contains(err.Error(), "no models registered") {
+		t.Errorf("without models = %v", err)
+	}
+}
+
+type dupA struct {
+	ID int64 `db:"id"`
+}
+
+func (dupA) Table() string { return "blog_posts" }
+
+type dupB struct {
+	ID int64 `db:"id"`
+}
+
+func (dupB) Table() string { return "blog__posts" }
+
+func TestCodegenModels_DuplicateNames(t *testing.T) {
+	t.Parallel()
+
+	_, err := modelsGo("cols", []orm.ModelInfo{orm.ModelOf[dupA](), orm.ModelOf[dupB]()})
+	if err == nil || !strings.Contains(err.Error(), "both generate the name BlogPosts") {
+		t.Errorf("two tables with one generated name = %v", err)
+	}
+}
+
+func TestCodegenModels_ImportAlias(t *testing.T) {
+	t.Parallel()
+
+	for path, want := range map[string]string{
+		"example.com/shop/app/models": "models",
+		"example.com/shop/models/v2":  "models",
+		"example.com/go-lib":          "go_lib",
+		"example.com/x.y":             "x_y",
+	} {
+		if got, err := importAlias(path); err != nil || got != want {
+			t.Errorf("importAlias(%q) = %q, %v; want %q", path, got, err, want)
+		}
+	}
+
+	if _, err := importAlias("main"); err == nil || !strings.Contains(err.Error(), "package main") {
+		t.Errorf("importAlias(main) = %v, want an error naming package main", err)
+	}
+}
+
+func TestCodegenModels_ColumnNamesThatAreNotGoNames(t *testing.T) {
+	t.Parallel()
+
+	m := orm.ModelOf[dupA]()
+	m.Fields = append(m.Fields, orm.FieldInfo{Column: "_1", Type: reflect.TypeFor[int]()})
+
+	if _, err := modelsGo("cols", []orm.ModelInfo{m}); err == nil || !strings.Contains(err.Error(), `"_1"`) {
+		t.Errorf("a column that does not make a Go name = %v, want an error citing it", err)
+	}
+}
+
+func TestCodegenModels_CheckIgnoresLineEndingsAndNeverPrints(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "cols", "cols_gen.go")
+
+	if _, err := runCodegenModels(t, registeredModels(), "-o", file); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(file, bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runCodegenModels(t, registeredModels(), "-o", file, "-check"); err != nil {
+		t.Errorf("-check on a CRLF checkout = %v", err)
+	}
+
+	out, err := runCodegenModels(t, registeredModels(), "-o", "-", "-check")
+	if err == nil || out != "" {
+		t.Errorf("-o - -check printed %q and returned %v; want no output and an error", out, err)
 	}
 }

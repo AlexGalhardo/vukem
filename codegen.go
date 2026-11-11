@@ -1,17 +1,26 @@
 package vukem
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"go/format"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/openapi"
+	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/router"
 )
 
@@ -270,4 +279,314 @@ func codegenClientCommand() Command {
 			return os.WriteFile(path, src, 0o600) //nolint:gosec // G703: path from the developer's own -o flag
 		},
 	}
+}
+
+const defaultColsGo = "app/models/cols/cols_gen.go"
+
+var errNoModels = errors.New(
+	"codegen:models: no models registered; pass vukem.WithModels(orm.ModelOf[T]()...)",
+)
+
+func codegenModelsCommand() Command {
+	var (
+		out   *string
+		pkg   *string
+		check *bool
+	)
+
+	return CommandFunc{
+		CommandName: "codegen:models",
+		Desc:        "Generate typed column references for the models of vukem.WithModels (" + defaultColsGo + "; -check verifies)",
+		DefineFlags: func(fs *flag.FlagSet) {
+			out = fs.String("o", defaultColsGo, `write to this file ("-" for stdout)`)
+			pkg = fs.String("pkg", "", "package name of the generated file (default: the name of the directory of -o)")
+			check = fs.Bool("check", false, "write nothing; fail when the file differs from what would be generated")
+		},
+		Fn: func(_ context.Context, app *App, _ []string) error {
+			if len(app.modelList) == 0 {
+				return errNoModels
+			}
+
+			name := *pkg
+			if name == "" {
+				name = filepath.Base(filepath.Dir(filepath.FromSlash(*out)))
+				if *out == "-" {
+					name = "cols"
+				}
+			}
+
+			src, err := modelsGo(name, app.modelList)
+			if err != nil {
+				return err
+			}
+
+			switch {
+			case *check && *out == "-":
+				return errors.New("codegen:models: -check needs -o to name the file to check")
+			case *out == "-":
+				_, err := app.stdout.Write(src)
+				return err
+			case *check:
+				// A checkout with CRLF line endings holds the same file.
+				have, err := os.ReadFile(filepath.FromSlash(*out))
+				if err != nil || !bytes.Equal(bytes.ReplaceAll(have, []byte("\r\n"), []byte("\n")), src) {
+					return fmt.Errorf("codegen:models: %s is out of date; run codegen:models", *out)
+				}
+
+				return nil
+			}
+
+			path := filepath.FromSlash(*out)
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+				return fmt.Errorf("codegen:models: %w", err)
+			}
+
+			return os.WriteFile(path, src, 0o600)
+		},
+	}
+}
+
+// goInitialisms are the words a column name spells in capitals.
+var goInitialisms = map[string]string{ //nolint:gochecknoglobals // read-only lookup table
+	"id": "ID", "url": "URL", "uri": "URI", "uuid": "UUID", "ip": "IP", "api": "API", "http": "HTTP",
+	"sql": "SQL", "html": "HTML", "json": "JSON",
+}
+
+// pascal turns snake_case into PascalCase ("blog_posts" is "BlogPosts").
+func pascal(snake string) string {
+	var b strings.Builder
+
+	for w := range strings.SplitSeq(snake, "_") {
+		if w == "" {
+			continue
+		}
+
+		if up, ok := goInitialisms[w]; ok {
+			b.WriteString(up)
+			continue
+		}
+
+		b.WriteString(strings.ToUpper(w[:1]) + w[1:])
+	}
+
+	return b.String()
+}
+
+// colsImports hands out the import names of the packages the generated file
+// uses, aliasing a package whose name is taken. Every package outside the
+// standard library is imported under an explicit alias: reflect knows the
+// import path of a type but not the name its package declares, so the alias
+// is what the generated code relies on.
+type colsImports struct {
+	byPath map[string]string // import path -> name used in the file
+	taken  map[string]string // name -> import path
+	err    error
+}
+
+var versionSuffixRe = regexp.MustCompile(`^v\d+$`)
+
+// importAlias derives a Go identifier from an import path: its last element,
+// or the one before it for a major version suffix (".../models/v2"). A
+// package main cannot be imported.
+func importAlias(importPath string) (string, error) {
+	if importPath == "main" || importPath == "" {
+		return "", errors.New("codegen:models: a model lives in package main, which cannot be imported; " +
+			"move the models to their own package")
+	}
+
+	parts := strings.Split(importPath, "/")
+	name := parts[len(parts)-1]
+
+	if versionSuffixRe.MatchString(name) && len(parts) > 1 {
+		name = parts[len(parts)-2]
+	}
+
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+			return r
+		}
+
+		return '_'
+	}, name)
+
+	if name == "" || unicode.IsDigit(firstRune(name)) {
+		name = "pkg_" + name
+	}
+
+	return name, nil
+}
+
+func firstRune(s string) rune {
+	r, _ := utf8.DecodeRuneInString(s)
+	return r
+}
+
+func (c *colsImports) name(importPath, preferred string) string {
+	if n, ok := c.byPath[importPath]; ok {
+		return n
+	}
+
+	n := preferred
+	for i := 2; c.taken[n] != ""; i++ {
+		n = preferred + strconv.Itoa(i)
+	}
+
+	c.byPath[importPath], c.taken[n] = n, importPath
+
+	return n
+}
+
+// typeExpr writes the Go spelling of rt for the generated file. A generic
+// instantiation (orm.JSON[T], sql.Null[T]) is "any": printing it would need
+// the imports of its arguments.
+func (c *colsImports) typeExpr(rt reflect.Type) string {
+	switch rt.Kind() { //nolint:exhaustive // the remaining kinds are basic types, named below
+	case reflect.Pointer:
+		return "*" + c.typeExpr(rt.Elem())
+	case reflect.Slice:
+		if rt.Name() == "" {
+			return "[]" + c.typeExpr(rt.Elem())
+		}
+	case reflect.Array:
+		if rt.Name() == "" {
+			return "[" + strconv.Itoa(rt.Len()) + "]" + c.typeExpr(rt.Elem())
+		}
+	case reflect.Map:
+		if rt.Name() == "" {
+			return "map[" + c.typeExpr(rt.Key()) + "]" + c.typeExpr(rt.Elem())
+		}
+	case reflect.Interface:
+		if rt.Name() == "" {
+			return "any"
+		}
+	}
+
+	if rt.Name() == "" || strings.Contains(rt.Name(), "[") {
+		// shortcut: a generic or unnamed type loses its value type check on that column; give it a named type to get it back.
+		return "any"
+	}
+
+	if rt.PkgPath() == "" {
+		return rt.Name()
+	}
+
+	alias, err := importAlias(rt.PkgPath())
+	if err != nil && c.err == nil {
+		c.err = err
+	}
+
+	return c.name(rt.PkgPath(), alias) + "." + rt.Name()
+}
+
+// modelsGo renders the typed column file for models: one variable per table,
+// in table order, one Column per mapped field in field order.
+func modelsGo(pkg string, models []orm.ModelInfo) ([]byte, error) {
+	sorted := slices.SortedFunc(
+		slices.Values(models),
+		func(a, b orm.ModelInfo) int { return strings.Compare(a.Table, b.Table) },
+	)
+
+	imp := &colsImports{byPath: map[string]string{}, taken: map[string]string{}}
+	imp.name("github.com/AlexGalhardo/vukem/orm", "orm")
+
+	var body strings.Builder
+
+	seen := map[string]string{}
+
+	for _, m := range sorted {
+		name := pascal(m.Table)
+		if prev, dup := seen[name]; dup {
+			return nil, fmt.Errorf("codegen:models: tables %q and %q both generate the name %s", prev, m.Table, name)
+		}
+
+		seen[name] = m.Table
+
+		if !token.IsIdentifier(name) {
+			return nil, fmt.Errorf("codegen:models: table %q does not make a Go name (%q)", m.Table, name)
+		}
+
+		model := imp.typeExpr(m.Type)
+
+		fmt.Fprintf(&body, "// %s holds the columns of %s (table %q).\nvar %s = struct {\n", name, model, m.Table, name)
+
+		used := map[string]string{}
+		decl := make([]string, 0, len(m.Fields))
+		inits := make([]string, 0, len(m.Fields))
+
+		for _, f := range m.Fields {
+			field := pascal(f.Column)
+			if !token.IsIdentifier(field) {
+				return nil, fmt.Errorf(
+					"codegen:models: column %q of %s does not make a Go name (%q)",
+					f.Column,
+					m.Table,
+					field,
+				)
+			}
+
+			if prev, dup := used[field]; dup {
+				return nil, fmt.Errorf(
+					"codegen:models: columns %q and %q of %s both generate the name %s",
+					prev,
+					f.Column,
+					m.Table,
+					field,
+				)
+			}
+
+			used[field] = f.Column
+			typ := fmt.Sprintf("orm.Column[%s, %s]", model, imp.typeExpr(f.Type))
+			decl = append(decl, field+" "+typ)
+			inits = append(inits, fmt.Sprintf("%s: orm.Col[%s, %s](%q),", field, model, imp.typeExpr(f.Type), f.Column))
+		}
+
+		body.WriteString(strings.Join(decl, "\n") + "\n}{\n" + strings.Join(inits, "\n") + "\n}\n\n")
+	}
+
+	if imp.err != nil {
+		return nil, imp.err
+	}
+
+	var std, own, other []string
+
+	for p, n := range imp.byPath {
+		line := strconv.Quote(p)
+		if n != filepath.Base(p) || strings.Contains(strings.SplitN(p, "/", 2)[0], ".") {
+			line = n + " " + line
+		}
+
+		switch {
+		case p == "github.com/AlexGalhardo/vukem/orm":
+			own = append(own, line)
+		case !strings.Contains(strings.SplitN(p, "/", 2)[0], "."):
+			std = append(std, line)
+		default:
+			other = append(other, line)
+		}
+	}
+
+	var out strings.Builder
+
+	out.WriteString("// Code generated by vukem codegen:models. DO NOT EDIT.\n\n")
+	out.WriteString(
+		"// Package " + pkg + " holds typed column references for the app's models.\npackage " + pkg + "\n\nimport (\n",
+	)
+
+	for _, group := range [][]string{std, own, other} {
+		if len(group) == 0 {
+			continue
+		}
+
+		slices.Sort(group)
+		out.WriteString("\t" + strings.Join(group, "\n\t") + "\n\n")
+	}
+
+	out.WriteString(")\n\n" + strings.TrimRight(body.String(), "\n") + "\n")
+
+	src, err := format.Source([]byte(out.String()))
+	if err != nil {
+		return nil, fmt.Errorf("codegen:models: format generated code: %w", err)
+	}
+
+	return src, nil
 }

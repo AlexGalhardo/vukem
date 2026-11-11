@@ -112,6 +112,15 @@ func conflictSQL(d database.Dialect, m *meta, conflict []string, updates []field
 			}
 		}
 
+		if v := m.version; v != "" && len(updates) > 0 {
+			col := d.Quote(v)
+			if m.soft {
+				sets = append(sets, col+" = IF("+live+", "+col+" + 1, "+col+")")
+			} else {
+				sets = append(sets, col+" = "+col+" + 1")
+			}
+		}
+
 		if len(sets) == 0 {
 			// A no-op update: INSERT IGNORE would also hide other errors.
 			col := d.Quote(conflict[0])
@@ -135,6 +144,10 @@ func conflictSQL(d database.Dialect, m *meta, conflict []string, updates []field
 	sets := make([]string, len(updates))
 	for i, f := range updates {
 		sets[i] = d.Quote(f.column) + " = excluded." + d.Quote(f.column)
+	}
+
+	if v := m.version; v != "" {
+		sets = slices.Concat(sets, []string{d.Quote(v) + " = " + d.Quote(m.table+"."+v) + " + 1"})
 	}
 
 	out += " DO UPDATE SET " + strings.Join(sets, ", ")
@@ -242,6 +255,7 @@ func Upsert[T any](ctx context.Context, ex database.Executor, model *T, on OnCon
 
 	setTime(rv, m, "created_at", now, true)
 	setTime(rv, m, "updated_at", now, true)
+	startVersion(rv, m)
 
 	pk := rv.FieldByIndex(m.byColumn[m.pk].index)
 	genID := m.autoID && pk.IsZero()
@@ -259,7 +273,7 @@ func Upsert[T any](ctx context.Context, ex database.Executor, model *T, on OnCon
 		return err
 	}
 
-	if err := execUpsert(ctx, ex, m, q, args, pk, genID); err != nil {
+	if err := execUpsert(ctx, ex, m, q, args, rv, genID); err != nil {
 		return err
 	}
 
@@ -271,21 +285,41 @@ func Upsert[T any](ctx context.Context, ex database.Executor, model *T, on OnCon
 		return err
 	}
 
+	if m.version != "" && !capsOf(ex).Returning {
+		return readVersion(ctx, ex, m, conflict, rv)
+	}
+
 	return nil
 }
 
 // execUpsert runs the INSERT ... ON CONFLICT and writes a generated key into
 // pk: from RETURNING, or from LAST_INSERT_ID(id) on MySQL.
 func execUpsert(
-	ctx context.Context, ex database.Executor, m *meta, q string, args []any, pk reflect.Value, genID bool,
+	ctx context.Context, ex database.Executor, m *meta, q string, args []any, rv reflect.Value, genID bool,
 ) error {
 	d := ex.Dialect()
+	pk := rv.FieldByIndex(m.byColumn[m.pk].index)
 
-	if genID && capsOf(ex).Returning {
-		q += " RETURNING " + d.Quote(m.pk)
+	if capsOf(ex).Returning && (genID || m.version != "") {
+		// The key of the inserted or updated row, and the version it now has.
+		var (
+			cols  []string
+			dests []any
+		)
+
+		if genID {
+			cols, dests = append(cols, d.Quote(m.pk)), append(dests, pk.Addr().Interface())
+		}
+
+		if m.version != "" {
+			cols = append(cols, d.Quote(m.version))
+			dests = append(dests, rv.FieldByIndex(m.byColumn[m.version].index).Addr().Interface())
+		}
+
+		q += " RETURNING " + strings.Join(cols, ", ")
 
 		// No row back: DoNothing on a live row, or a trashed row left alone.
-		err := queryRowWrite(ctx, ex, rebind(q, d), args...).Scan(pk.Addr().Interface())
+		err := queryRowWrite(ctx, ex, rebind(q, d), args...).Scan(dests...)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("orm: upsert %s: %w", m.table, mapError(ex, err))
 		}
@@ -298,19 +332,45 @@ func execUpsert(
 		return fmt.Errorf("orm: upsert %s: %w", m.table, mapError(ex, err))
 	}
 
-	if !genID {
-		return nil
+	if genID {
+		// MySQL: LAST_INSERT_ID(id) in the update reports the id of an
+		// existing row too (the ORM needs clientFoundRows=true).
+		id, err := res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("orm: upsert %s: %w", m.table, err)
+		}
+
+		if err := setID(pk, id); err != nil {
+			return fmt.Errorf("orm: upsert %s: %w", m.table, err)
+		}
 	}
 
-	// MySQL: LAST_INSERT_ID(id) in the update reports the id of an existing
-	// row too (the ORM needs clientFoundRows=true).
-	id, err := res.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("orm: upsert %s: %w", m.table, err)
+	return nil
+}
+
+// readVersion loads the version of the row the conflict columns identify,
+// for dialects without RETURNING.
+func readVersion(ctx context.Context, ex database.Executor, m *meta, conflict []string, rv reflect.Value) error {
+	d := ex.Dialect()
+	where := make([]string, len(conflict))
+	args := make([]any, len(conflict))
+
+	for i, c := range conflict {
+		where[i] = d.Quote(c) + " = ?"
+
+		v, err := bindValue(ex, m.table, c, rv.FieldByIndex(m.byColumn[c].index).Interface())
+		if err != nil {
+			return err
+		}
+
+		args[i] = v
 	}
 
-	if err := setID(pk, id); err != nil {
-		return fmt.Errorf("orm: upsert %s: %w", m.table, err)
+	q := "SELECT " + d.Quote(m.version) + " FROM " + d.Quote(m.table) + " WHERE " + strings.Join(where, " AND ")
+	dest := rv.FieldByIndex(m.byColumn[m.version].index).Addr().Interface()
+
+	if err := queryRowWrite(ctx, ex, rebind(q, d), args...).Scan(dest); err != nil {
+		return fmt.Errorf("orm: upsert %s: read the version: %w", m.table, err)
 	}
 
 	return nil
@@ -345,6 +405,7 @@ func UpsertMany[T any](ctx context.Context, ex database.Executor, models []T, on
 		rv := reflect.ValueOf(&models[i]).Elem()
 		setTime(rv, m, "created_at", now, true)
 		setTime(rv, m, "updated_at", now, true)
+		startVersion(rv, m)
 	}
 
 	genID, err := generatedIDs(m, models)

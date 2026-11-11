@@ -36,6 +36,7 @@ import (
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/openapi"
+	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/router"
@@ -344,6 +345,7 @@ type App struct {
 	dbErr      error
 	drivers    []database.Driver
 	queryObs   []database.QueryObserver
+	modelList  []orm.ModelInfo
 	migrations []schema.Migration
 	seeders    []AppSeeder
 	// benchScenarios are the load-test scenarios of bench:run (WithBench).
@@ -442,6 +444,7 @@ type options struct {
 	schedules      []func(*schedule.Schedule, *App)
 	drivers        []database.Driver
 	queryObs       []database.QueryObserver
+	modelList      []orm.ModelInfo
 	stdout         io.Writer
 	stderr         io.Writer
 	stdin          io.Reader
@@ -545,6 +548,7 @@ func New(opts ...Option) (*App, error) {
 		noHTTP:    o.noHTTP,
 		drivers:   o.drivers,
 		queryObs:  o.queryObs,
+		modelList: o.modelList,
 		now:       now,
 		proxies:   proxies,
 

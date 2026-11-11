@@ -145,7 +145,7 @@ func clean(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
 	s := schema.New(ctx, db)
-	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks", "dbt_conflict", "dbt_upserts", "dbt_trash_upserts", "dbt_qbook_tag", "dbt_qreviews", "dbt_qtags", "dbt_qbooks", "dbt_qauthors"} {
+	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks", "dbt_conflict", "dbt_upserts", "dbt_trash_upserts", "dbt_versioned", "dbt_qbook_tag", "dbt_qreviews", "dbt_qtags", "dbt_qbooks", "dbt_qauthors"} {
 		if err := s.DropIfExists(table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -398,6 +398,8 @@ func testORM(ctx context.Context, t *testing.T, db *database.DB) {
 	if n, err := base.Where("name", "Cid").Delete(ctx); err != nil || n != 1 || count(base) != 1 {
 		t.Fatalf("query Delete = %d %v", n, err)
 	}
+
+	testVersioned(ctx, t, db)
 }
 
 func testTransactions(ctx context.Context, t *testing.T, db *database.DB) {
@@ -447,6 +449,59 @@ func testTransactions(ctx context.Context, t *testing.T, db *database.DB) {
 
 	if n, _ := orm.QueryOf[author](db).Where("name", "Panicked").Count(ctx); n != 0 {
 		t.Fatal("insert before panic is visible")
+	}
+
+	// A savepoint undoes only its own work; Nested on a Tx is a savepoint.
+	err = db.Tx(ctx, func(tx *database.Tx) error {
+		outer := author{Name: "SpOuter"}
+		if err := orm.Create(ctx, tx, &outer); err != nil {
+			return err
+		}
+
+		_ = tx.Savepoint(ctx, func(sp *database.Tx) error {
+			inner := author{Name: "SpInner"}
+			if err := orm.Create(ctx, sp, &inner); err != nil {
+				return err
+			}
+
+			return boom
+		})
+
+		kept := author{Name: "SpKept"}
+
+		return database.Nested(ctx, tx, func(sp *database.Tx) error { return orm.Create(ctx, sp, &kept) })
+	})
+	if err != nil {
+		t.Fatalf("savepoint transaction: %v", err)
+	}
+
+	for name, want := range map[string]int64{"SpOuter": 1, "SpInner": 0, "SpKept": 1} {
+		if n, _ := orm.QueryOf[author](db).Where("name", name).Count(ctx); n != want {
+			t.Errorf("%s rows = %d, want %d", name, n, want)
+		}
+	}
+
+	// Options: a read-only transaction reads and refuses writes, on every
+	// dialect. A refused write aborts the transaction on PostgreSQL, so the
+	// function returns it and the transaction rolls back.
+	var writeErr error
+
+	err = db.TxWith(ctx, database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
+		if n, err := orm.QueryOf[author](tx).Where("name", "SpOuter").Count(ctx); err != nil || n != 1 {
+			t.Errorf("read-only transaction Count = %d, %v", n, err)
+		}
+
+		writeErr = orm.Create(ctx, tx, &author{Name: "ReadOnlyWrite"})
+
+		return writeErr
+	})
+
+	if writeErr == nil || err == nil {
+		t.Errorf(
+			"a write in a read-only transaction: write error %v, transaction error %v; want both set",
+			writeErr,
+			err,
+		)
 	}
 }
 
@@ -735,5 +790,81 @@ func testConflict(ctx context.Context, t *testing.T, db *database.DB) {
 	err = orm.Create(ctx, db, &conflictRow{Code: "bad", Note: "duplicate key"})
 	if err == nil || errors.Is(err, orm.ErrConflict) {
 		t.Errorf("check violation = %v, want an error that is not ErrConflict", err)
+	}
+}
+
+// versioned has an orm:"version" counter for optimistic locking.
+type versioned struct {
+	ID      int64 `db:"id"`
+	Code    string
+	Title   string
+	Version int64 `        orm:"version"`
+}
+
+// Table implements orm.Tabler.
+func (versioned) Table() string { return "dbt_versioned" }
+
+// testVersioned checks the optimistic lock on every dialect: two readers of
+// one row, the second to write is stale.
+func testVersioned(ctx context.Context, t *testing.T, db *database.DB) {
+	t.Helper()
+
+	mustOK(t, "create versioned", schema.New(ctx, db).Create("dbt_versioned", func(t *schema.Table) {
+		t.ID()
+		t.String("code").Unique()
+		t.String("title")
+		t.BigInteger("version").Default(0)
+	}))
+
+	row := versioned{Code: "v1", Title: "first"}
+	mustOK(t, "create", orm.Create(ctx, db, &row))
+
+	if row.Version != 1 {
+		t.Fatalf("created version = %d, want 1", row.Version)
+	}
+
+	one, err := orm.QueryOf[versioned](db).Find(ctx, row.ID)
+	mustOK(t, "first reader", err)
+
+	two := one
+
+	one.Title = "by one"
+	mustOK(t, "first write", orm.Update(ctx, db, &one))
+
+	two.Title = "by two"
+	if err := orm.Update(ctx, db, &two); !errors.Is(err, orm.ErrStale) {
+		t.Errorf("second write = %v, want ErrStale", err)
+	}
+
+	if err := orm.Update(
+		ctx,
+		db,
+		&versioned{ID: row.ID + 1000, Title: "x", Version: 1},
+	); !errors.Is(
+		err,
+		orm.ErrNotFound,
+	) {
+		t.Errorf("write to a missing row = %v, want ErrNotFound", err)
+	}
+
+	got, err := orm.QueryOf[versioned](db).Find(ctx, row.ID)
+	mustOK(t, "read back", err)
+
+	if got.Title != "by one" || got.Version != 2 {
+		t.Errorf("row = %+v, want the first writer's change at version 2", got)
+	}
+
+	// An Upsert that updates the row bumps the version too, so a reader from
+	// before it cannot overwrite it silently.
+	up := versioned{Code: "v1", Title: "by upsert"}
+	mustOK(t, "upsert", orm.Upsert(ctx, db, &up, orm.OnConflict{Columns: []string{"code"}, Update: []string{"title"}}))
+
+	if up.Version != 3 {
+		t.Errorf("version after an updating Upsert = %d, want 3", up.Version)
+	}
+
+	got.Title = "late write"
+	if err := orm.Update(ctx, db, &got); !errors.Is(err, orm.ErrStale) {
+		t.Errorf("write by a reader from before the Upsert = %v, want ErrStale", err)
 	}
 }

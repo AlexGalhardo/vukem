@@ -1075,3 +1075,26 @@ func TestUnknownDialectFailsClosed(t *testing.T) {
 		t.Fatalf("Delete on a dialect without capabilities = %v, want the unknown dialect error", err)
 	}
 }
+
+func TestModelOf(t *testing.T) {
+	t.Parallel()
+
+	info := ModelOf[Post]()
+
+	if info.Table != "posts" || info.Type.Name() != "Post" || !slices.Equal(info.Keys, []string{"id"}) {
+		t.Errorf("ModelOf[Post] = %+v", info)
+	}
+
+	cols := make([]string, len(info.Fields))
+	for i, f := range info.Fields {
+		cols[i] = f.Column
+	}
+
+	if !slices.Equal(cols, Columns[Post]()) {
+		t.Errorf("fields %v differ from Columns %v", cols, Columns[Post]())
+	}
+
+	if got := ModelOf[relPost]().Relations; !slices.Equal(got, []string{"Tags", "User"}) {
+		t.Errorf("relations = %v", got)
+	}
+}
