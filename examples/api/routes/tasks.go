@@ -27,7 +27,7 @@ func Tasks(r *router.Router, app *vukem.App) error {
 	}
 
 	// RATE_LIMIT_STORE=cache shares the limits between servers (CACHE_STORE=database or Redis).
-	limiters, err := app.RateLimiters()
+	limiters, err := rateLimiters(app)
 	if err != nil {
 		return err
 	}
