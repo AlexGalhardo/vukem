@@ -1,0 +1,41 @@
+name: Documentation
+description: Something in the docs is wrong, missing or unclear.
+title: "docs: "
+labels: [documentation, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping the docs. One page or topic per issue.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: The package or part of the framework. It becomes the commit scope.
+      options: [router, ctx, config, validate, session, view, htmx, orm, schema, database, auth, authz, mail, cache, storage, event, queue, schedule, inertia, vite, cli, postgres, redis, mongo, otel, websocket, graphql, docs, repo, other]
+    validations:
+      required: true
+  - type: input
+    id: page
+    attributes:
+      label: Page URL or file path
+      placeholder: https://vukem.dev/docs/...
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested text or fix
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues and found no duplicate.
+          required: true

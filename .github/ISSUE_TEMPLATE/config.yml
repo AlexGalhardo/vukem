@@ -3,3 +3,6 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/AlexGalhardo/vukem/security/advisories/new
     about: Report vulnerabilities privately, never in public issues.
+  - name: Documentation
+    url: https://vukem.dev/docs
+    about: Guides, reference and tutorials. Check here before opening a question.

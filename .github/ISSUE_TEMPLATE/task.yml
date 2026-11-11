@@ -1,0 +1,61 @@
+name: Task
+description: A planned piece of work with a clear done criterion (maintainers and agents).
+title: "task: "
+labels: [task, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For planned work: a roadmap item, an audit finding or tech debt.
+        Bugs and feature ideas have their own forms.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [router, ctx, config, validate, session, view, htmx, orm, schema, database, auth, authz, mail, cache, storage, event, queue, schedule, inertia, vite, cli, postgres, redis, mongo, otel, websocket, graphql, docs, repo, other]
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this matters
+      description: The problem and its cost, in two to five sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Files or packages in scope, and what is explicitly out of scope.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done criteria
+      description: Commands and expected results, one per line. No prose like "works correctly".
+      placeholder: |
+        - `go test ./orm/...` passes, including the new TestX
+        - `task ci` exits 0
+    validations:
+      required: true
+  - type: input
+    id: refs
+    attributes:
+      label: Reference
+      description: The plan task or finding id, if any.
+      placeholder: "P.3.2, plan 071, VE-12"
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options: [S, M, L]
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues and found no duplicate.
+          required: true
