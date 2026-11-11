@@ -202,9 +202,16 @@ func TestSecurity_A01_SSGRejectsTraversal(t *testing.T) {
 
 	testutil.Symlink(t, outside, link)
 
+	// The default mode never writes into an existing OutDir it did not create.
 	_, err = ssg.Generate(t.Context(), h, []ssg.Page{{Path: "/linked"}}, ssg.Options{OutDir: dir})
+	if !errors.Is(err, ssg.ErrNotGenerated) {
+		t.Fatalf("symlink, default mode = %v, want ErrNotGenerated", err)
+	}
+
+	// NoClean writes in place, so the link inside OutDir must be refused.
+	_, err = ssg.Generate(t.Context(), h, []ssg.Page{{Path: "/linked"}}, ssg.Options{OutDir: dir, NoClean: true})
 	if err == nil || !errors.Is(err, ssg.ErrEscape) {
-		t.Fatalf("symlink = %v, want ErrEscape", err)
+		t.Fatalf("symlink, NoClean = %v, want ErrEscape", err)
 	}
 
 	if _, statErr := os.Stat(filepath.Join(outside, "index.html")); !os.IsNotExist(statErr) {
