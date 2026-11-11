@@ -12,6 +12,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/accounts"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/pages"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/requests"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/ratelimit"
@@ -53,7 +54,7 @@ func LoginThrottleKey(r *http.Request) string {
 }
 
 // ShowLogin renders the login page.
-func (*Handlers) ShowLogin(c *web.Ctx) error { return inertia.Render(c, "Auth/Login", nil) }
+func (*Handlers) ShowLogin(c *web.Ctx) error { return pages.Login.Render(c, struct{}{}) }
 
 // Login signs the user in and goes to the page they wanted.
 func (h *Handlers) Login(c *web.Ctx) error {
@@ -84,7 +85,7 @@ func (h *Handlers) Login(c *web.Ctx) error {
 }
 
 // ShowRegister renders the registration page.
-func (*Handlers) ShowRegister(c *web.Ctx) error { return inertia.Render(c, "Auth/Register", nil) }
+func (*Handlers) ShowRegister(c *web.Ctx) error { return pages.Register.Render(c, struct{}{}) }
 
 // Register creates the account, logs in and asks for email verification.
 func (h *Handlers) Register(c *web.Ctx) error {
@@ -118,4 +119,4 @@ func (h *Handlers) Logout(c *web.Ctx) error {
 
 // Dashboard is the first page after login; the user arrives as the shared
 // auth.user prop.
-func (*Handlers) Dashboard(c *web.Ctx) error { return inertia.Render(c, "Dashboard", nil) }
+func (*Handlers) Dashboard(c *web.Ctx) error { return pages.Dashboard.Render(c, struct{}{}) }

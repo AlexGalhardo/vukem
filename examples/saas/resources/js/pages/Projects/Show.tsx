@@ -1,8 +1,8 @@
 import { Head, Link } from "@inertiajs/react";
 
-import type { Project } from "../../types";
+import type { Page } from "../../page-props";
 
-export default function Show({ project }: { project: Project }) {
+export default function Show({ project }: Page<"Projects/Show">) {
   return (
     <>
       <Head title={project.name} />

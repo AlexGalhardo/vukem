@@ -2,20 +2,12 @@ import { Head, Link, useForm } from "@inertiajs/react";
 import type { FormEvent } from "react";
 
 import Field from "../../components/Field";
-
-interface Props {
-  enabled: boolean;
-  pending: boolean;
-  secret: string | null;
-  qr: string | null;
-  recoveryCodes: string[] | null;
-  recoveryCodesLeft: number;
-}
+import type { Page } from "../../page-props";
 
 const button =
   "rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-500 disabled:opacity-50";
 
-export default function TwoFactor({ enabled, pending, secret, qr, recoveryCodes, recoveryCodesLeft }: Props) {
+export default function TwoFactor({ enabled, pending, secret, qr, recoveryCodes, recoveryCodesLeft }: Page<"Auth/TwoFactor">) {
   const confirm = useForm({ code: "" });
   const disable = useForm({ password: "" });
   const regenerate = useForm({ password: "" });

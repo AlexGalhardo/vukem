@@ -8,6 +8,7 @@ import (
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/billing"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/models"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/pages"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -21,24 +22,15 @@ type BillingHandlers struct {
 // NewBilling returns the billing handlers.
 func NewBilling(b *billing.Billing) *BillingHandlers { return &BillingHandlers{b: b} }
 
-type planView struct {
-	Name    string `json:"name"`
-	Label   string `json:"label"`
-	Current bool   `json:"current"`
-}
-
-type subscriptionView struct {
-	Plan              string `json:"plan"`
-	Status            string `json:"status"`
-	Valid             bool   `json:"valid"`
-	CurrentPeriodEnd  string `json:"currentPeriodEnd"`
-	CancelAtPeriodEnd bool   `json:"cancelAtPeriodEnd"`
-}
+type (
+	planView         = pages.BillingPlan
+	subscriptionView = pages.BillingSubscription
+)
 
 type billingPage struct {
-	Plans        []planView        `json:"plans"`
-	Subscription *subscriptionView `json:"subscription"`
-	Subscribed   bool              `json:"subscribed"`
+	Plans        []planView
+	Subscription *subscriptionView
+	Subscribed   bool
 }
 
 func (h *BillingHandlers) page(c *web.Ctx, u models.User) (billingPage, error) {

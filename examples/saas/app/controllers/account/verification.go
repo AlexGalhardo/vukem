@@ -4,6 +4,7 @@ import (
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/models"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/pages"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -19,7 +20,7 @@ func (*Handlers) Notice(c *web.Ctx) error {
 		return c.Redirect("/dashboard")
 	}
 
-	return inertia.Render(c, "Auth/VerifyEmail", nil)
+	return pages.VerifyEmail.Render(c, struct{}{})
 }
 
 // Verify handles the signed link from the verification email.

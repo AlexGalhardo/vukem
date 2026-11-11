@@ -2,8 +2,9 @@ import { Head, useForm } from "@inertiajs/react";
 import type { FormEvent } from "react";
 
 import Field from "../../components/Field";
+import type { Page } from "../../page-props";
 
-export default function ResetPassword({ token, email }: { token: string; email: string }) {
+export default function ResetPassword({ token, email }: Page<"Auth/ResetPassword">) {
   const form = useForm({ token, email, password: "", password_confirmation: "" });
 
   const submit = (e: FormEvent) => {

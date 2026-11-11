@@ -1,6 +1,6 @@
 import { Head, Link, usePage } from "@inertiajs/react";
 
-import type { SharedProps } from "../types";
+import type { SharedProps } from "../page-props";
 
 export default function Dashboard() {
   const user = usePage<SharedProps>().props.auth?.user;

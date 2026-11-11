@@ -3,7 +3,7 @@ package account
 import (
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/models"
-	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/pages"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -19,10 +19,10 @@ func (h *BillingHandlers) Show(c *web.Ctx) error {
 		return err
 	}
 
-	return inertia.Render(c, "Billing", inertia.Props{
-		"plans":        page.Plans,
-		"subscription": page.Subscription,
-		"subscribed":   page.Subscribed,
-		"checkout":     c.Query("checkout") == "success",
+	return pages.Billing.Render(c, pages.BillingProps{
+		Plans:        page.Plans,
+		Subscription: page.Subscription,
+		Subscribed:   page.Subscribed,
+		Checkout:     c.Query("checkout") == "success",
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/accounts"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/models"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/pages"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/requests"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/web"
@@ -24,13 +25,14 @@ func (h *TwoFactorHandlers) Show(c *web.Ctx) error {
 		return err
 	}
 
-	props := inertia.Props{
-		"enabled":           tf.Enabled(),
-		"pending":           tf.Pending(),
-		"recoveryCodes":     flashedCodes(c),
-		"recoveryCodesLeft": len(tf.TwoFactorRecoveryCodes.V),
-		"secret":            nil,
-		"qr":                nil,
+	props := pages.TwoFactorProps{
+		Enabled:           tf.Enabled(),
+		Pending:           tf.Pending(),
+		RecoveryCodesLeft: len(tf.TwoFactorRecoveryCodes.V),
+	}
+
+	if codes := flashedCodes(c); codes != nil {
+		props.RecoveryCodes = &codes
 	}
 
 	if tf.Pending() {
@@ -41,10 +43,10 @@ func (h *TwoFactorHandlers) Show(c *web.Ctx) error {
 
 		// The page inserts qr as raw HTML: safe because totp.QR writes this
 		// SVG itself (numbers and path commands, no input text).
-		props["secret"], props["qr"] = tf.TwoFactorSecret.V, svg
+		props.Secret, props.QR = &tf.TwoFactorSecret.V, &svg
 	}
 
-	return inertia.Render(c, "Auth/TwoFactor", props)
+	return pages.TwoFactor.Render(c, props)
 }
 
 // Enable creates a secret to scan; it is active once confirmed.
@@ -151,7 +153,7 @@ func (h *TwoFactorHandlers) ShowChallenge(c *web.Ctx) error {
 		return expiredChallenge(c, err)
 	}
 
-	return inertia.Render(c, "Auth/TwoFactorChallenge", nil)
+	return pages.TwoFactorChallenge.Render(c, struct{}{})
 }
 
 // Challenge finishes the login with a code from the app or a recovery

@@ -1,20 +1,15 @@
 import { Head, Link, router } from "@inertiajs/react";
 import { useState } from "react";
 
-import type { Project } from "../../types";
+import type { Page } from "../../page-props";
+import { route } from "../../routes";
 
-interface Props {
-  projects: Project[];
-  filters: { q: string };
-  freeLimit: number;
-}
-
-export default function Index({ projects, filters, freeLimit }: Props) {
+export default function Index({ projects, filters, freeLimit }: Page<"Projects/Index">) {
   const [q, setQ] = useState(filters.q);
 
   const search = (value: string) => {
     setQ(value);
-    router.get("/projects", value ? { q: value } : {}, { preserveState: true, replace: true });
+    router.get(route("projects.index"), value ? { q: value } : {}, { preserveState: true, replace: true });
   };
 
   return (
@@ -22,7 +17,7 @@ export default function Index({ projects, filters, freeLimit }: Props) {
       <Head title="Projects" />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Projects</h1>
-        <Link href="/projects/create" className="rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-500">
+        <Link href={route("projects.create")} className="rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-500">
           New project
         </Link>
       </div>

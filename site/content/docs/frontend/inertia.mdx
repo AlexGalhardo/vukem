@@ -658,6 +658,58 @@ vukem.WithInertia(inertia.Config{
 
 Other helpers: `inertia.IsInertia(r)` and `inertia.IsPrefetch(r)` read the request, `app.Inertia.Version()` returns the current version, and the protocol header names are exported as constants (`inertia.HeaderInertia`, `inertia.HeaderVersion`, `inertia.HeaderLocation`, ...).
 
+## Typed pages
+
+A page and its controller can share one declaration. Declare the props as a Go struct, render it, and let `vukem codegen:pages` write the TypeScript type:
+
+```go title="app/pages/pages.go"
+type ProjectsIndexProps struct {
+	Projects  []models.Project `json:"projects"`
+	Filters   ProjectFilters   `json:"filters"`
+	FreeLimit int              `json:"freeLimit"`
+}
+
+var ProjectsIndex = inertia.Define[ProjectsIndexProps]("Projects/Index")
+
+// All lists the typed pages for inertia.Config.Pages.
+func All() []inertia.PageInfo { return []inertia.PageInfo{ProjectsIndex.Info()} }
+```
+
+```go title="app/controllers/project_controller.go"
+return pages.ProjectsIndex.Render(c, pages.ProjectsIndexProps{
+	Projects:  projects,
+	Filters:   pages.ProjectFilters{Q: c.Query("q")},
+	FreeLimit: policies.FreeProjects,
+})
+```
+
+```go title="bootstrap/app.go"
+vukem.WithInertia(inertia.Config{Pages: pages.All(), SharedType: reflect.TypeFor[pages.Shared]()})
+```
+
+```tsx title="resources/js/pages/Projects/Index.tsx"
+import type { Page } from "../../page-props";
+
+export default function Index({ projects, filters, freeLimit }: Page<"Projects/Index">) {
+  // ...
+}
+```
+
+`Page<N>` is the page's own props plus the shared ones. The same file works for React, Vue (`defineProps<Page<"X">>()`) and Svelte (`$props()`); only the React example is tested here.
+
+Rules for the struct:
+
+- Keys follow `encoding/json`: the `json` tag, `-` to skip, `omitempty` and `omitzero`, embedded structs flattened. Two fields with one key panic in `Define`.
+- The `inertia` tag gives a prop its behavior: `optional`, `always`, `defer` or `defer=<group>`, `merge`, `deepmerge`, `once`. `defer,merge`, `defer,once` and `merge,once` combine. Anything else panics in `Define`, at boot.
+- A field may be `func(context.Context) (T, error)`: it is called only when the prop is sent, and TypeScript sees `T`.
+- `omitempty` or `omitzero` together with an `inertia` tag, an `inertia` tag on an embedded struct and the key `errors` (the server always sets it) panic in `Define`. Of two fields with one key, the shallower one wins, as in `encoding/json`; at the same depth it is an error.
+- A nil slice or map is sent as `[]` or `{}`, so the TypeScript `T[]` is true. Values nested inside a struct are left as they are.
+- `optional` and `defer` props are optional in TypeScript (`stats?: number`); a pointer or `omitempty` field is too. A page without props is `struct{}` in Go and `Record<string, never>` in TypeScript.
+
+`Config.SharedType` is a struct for the props shared with every page (`Config.Shared` and `inertia.Share`); `errors` is always part of `SharedProps`, typed `Record<string, string | Record<string, string>>` because an error bag nests the messages under the bag name. A dotted key shared with `inertia.Share` is checked by its first segment. With it set, the adapter fails closed (this includes middleware that shares a key, such as `flags.Share`, which shares `flags`: declare it in the struct): `inertia.New` returns an error for a `Config.Shared` key the struct does not declare, and a request that shares such a key with `inertia.Share` gets a `500` rather than an untyped prop. Without it, `SharedProps` stays open (`[key: string]: unknown`).
+
+`vukem codegen:pages -check` fails when `page-props.ts` is stale, `vukem codegen --check` does the same for every generated file, and `vukem serve` regenerates them after each build. The map form, `inertia.Render(c, "Name", inertia.Props{...})`, keeps working beside the typed one. Scroll props are not typed yet.
+
 ## Typed routes
 
 `vukem codegen:routes` writes `resources/js/routes.ts` with every **named** route, so components build URLs with type checks instead of string concatenation:

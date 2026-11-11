@@ -3,9 +3,12 @@
 package bootstrap
 
 import (
+	"reflect"
+
 	vukem "github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/jobs"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/listeners"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/pages"
 	"github.com/AlexGalhardo/vukem/examples/saas/database/migrations"
 	"github.com/AlexGalhardo/vukem/examples/saas/database/seeders"
 	"github.com/AlexGalhardo/vukem/examples/saas/resources"
@@ -24,7 +27,7 @@ func New(opts ...vukem.Option) (*vukem.App, error) {
 		vukem.WithSchedule(routes.Schedule),
 		vukem.WithViews(resources.Views()),
 		vukem.WithVite(resources.Public()),
-		vukem.WithInertia(inertia.Config{}),
+		vukem.WithInertia(inertia.Config{Pages: pages.All(), SharedType: reflect.TypeFor[pages.Shared]()}),
 	}
 
 	for _, fn := range routes.All() {

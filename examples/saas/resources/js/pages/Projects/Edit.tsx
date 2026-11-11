@@ -1,9 +1,9 @@
 import { Head } from "@inertiajs/react";
 
 import ProjectForm from "../../components/ProjectForm";
-import type { Project } from "../../types";
+import type { Page } from "../../page-props";
 
-export default function Edit({ project }: { project: Project }) {
+export default function Edit({ project }: Page<"Projects/Edit">) {
   return (
     <>
       <Head title={`Edit ${project.name}`} />
