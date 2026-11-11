@@ -1,0 +1,38 @@
+// Package views declares the data type of each typed html/template view, so
+// `app view:check` can compare the templates with it.
+package views
+
+import (
+	"github.com/AlexGalhardo/vukem/view"
+
+	"{{.Module}}/app/models"
+)
+
+// PostsIndexData is what posts/index receives.
+type PostsIndexData struct {
+	Posts  []models.Post
+	Search string
+}
+
+// UploadsIndexData is what uploads/index receives.
+type UploadsIndexData struct {
+	Files []string
+}
+
+// The typed views of the starter. A block is an htmx fragment that a handler
+// renders on its own.
+var (
+	Home         = view.Of[struct{}]("home")
+	PostsIndex   = view.Of[PostsIndexData]("posts/index", "post-list")
+	PostsShow    = view.Of[models.Post]("posts/show")
+	PostsCreate  = view.Of[struct{}]("posts/create")
+	PostsEdit    = view.Of[models.Post]("posts/edit")
+	UploadsIndex = view.Of[UploadsIndexData]("uploads/index", "upload-list")
+)
+
+// All lists the typed views for vukem.WithViewPages.
+func All() []view.Decl {
+	return []view.Decl{
+		Home.Decl(), PostsIndex.Decl(), PostsShow.Decl(), PostsCreate.Decl(), PostsEdit.Decl(), UploadsIndex.Decl(),
+	}
+}

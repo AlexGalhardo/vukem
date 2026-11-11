@@ -12,6 +12,8 @@ import (
 	"github.com/AlexGalhardo/vukem/storage"
 	"github.com/AlexGalhardo/vukem/upload"
 	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/views"
 )
 
 // UploadController is the example upload page: files stream to a private
@@ -81,7 +83,7 @@ func (uc *UploadController) Index(c *web.Ctx) error {
 		return c.JSON(http.StatusOK, map[string]any{"data": names})
 	}
 
-	return c.Render("uploads/index", map[string]any{"Files": names}, web.Block("upload-list"))
+	return views.UploadsIndex.Render(c, views.UploadsIndexData{Files: names}, web.Block("upload-list"))
 }
 
 // Store receives the images. Rejected uploads (too large, wrong type,

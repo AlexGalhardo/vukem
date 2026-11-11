@@ -201,6 +201,14 @@ func applyStack(project *Env, st stack, data starterData) error {
 	return nil
 }
 
+// dropTypedViews removes the typed views (app/views) from the bootstrap of a
+// stack without html/template pages: the import and vukem.WithViewPages.
+func dropTypedViews(src []byte, module string) []byte {
+	src = bytes.ReplaceAll(src, []byte("\t\""+module+"/app/views\"\n"), nil)
+
+	return bytes.ReplaceAll(src, []byte("\t\tvukem.WithViewPages(views.All()...),\n"), nil)
+}
+
 // resolveModules points the framework dependency at its source, adds the
 // tools the stack needs and tidies go.mod.
 func resolveModules(ctx context.Context, project *Env, st stack, framework string) error {
@@ -376,7 +384,7 @@ var apiStarterRemove = []string{
 	"resources/public", "app/controllers/home.go", "app/controllers/post_controller.go", "routes/web.go",
 	"tests/home_test.go", "package.json", "vite.config.ts", "resources/css", "resources/js", "resources/vite",
 	"resources/views/components", "resources/views/uploads", "app/controllers/upload_controller.go",
-	"tests/uploads_test.go",
+	"tests/uploads_test.go", "app/views",
 	// An API project has no app/controllers package, only app/controllers/apiv1.
 	"app/controllers/doc.go",
 }
@@ -390,7 +398,8 @@ func makeAPIStarter(env *Env, sd starterData) error {
 		}
 	}
 
-	// No frontend assets: drop Vite from the bootstrap.
+	// No frontend assets or html/template pages: drop Vite and the typed
+	// views from the bootstrap.
 	app := env.path(filepath.Join("bootstrap", "app.go"))
 
 	src, err := os.ReadFile(app)
@@ -398,10 +407,9 @@ func makeAPIStarter(env *Env, sd starterData) error {
 		return err
 	}
 
-	if err := writeFile(
-		app,
-		bytes.ReplaceAll(src, []byte("\t\tvukem.WithVite(resources.Public()),\n"), nil),
-	); err != nil {
+	src = bytes.ReplaceAll(src, []byte("\t\tvukem.WithVite(resources.Public()),\n"), nil)
+
+	if err := writeFile(app, dropTypedViews(src, sd.Module)); err != nil {
 		return err
 	}
 

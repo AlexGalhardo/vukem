@@ -17,7 +17,7 @@ var inertiaReplaced = []string{
 	"resources/views/home.html", "resources/views/layouts", "resources/views/partials", "resources/views/posts",
 	"resources/public/js", "resources/js/app.ts",
 	"resources/views/components", "resources/views/uploads", "app/controllers/upload_controller.go",
-	"tests/uploads_test.go",
+	"tests/uploads_test.go", "app/views",
 }
 
 func installInertia(set *flag.FlagSet) func(context.Context, *Env, []string) error {
@@ -136,6 +136,14 @@ func applyInertia(env *Env, framework string) error {
 	if err != nil {
 		return err
 	}
+
+	module, err := modulePath(env)
+	if err != nil {
+		return err
+	}
+
+	// The html/template pages go, and their typed views with them.
+	patched = dropTypedViews(patched, module)
 
 	for _, rel := range inertiaReplaced {
 		if err := os.RemoveAll(env.path(filepath.FromSlash(rel))); err != nil {

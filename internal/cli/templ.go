@@ -21,7 +21,12 @@ const govulncheckTool = "golang.org/x/vuln/cmd/govulncheck@v1.9.0"
 // templReplaced lists the HTMX starter's html/template views; the templ
 // scaffold rewrites the controllers, routes and resources package.
 // shortcut: the upload demo is html/template only, port it to templ when asked.
-var templReplaced = []string{"resources/views", "app/controllers/upload_controller.go", "tests/uploads_test.go"}
+var templReplaced = []string{
+	"resources/views",
+	"app/controllers/upload_controller.go",
+	"tests/uploads_test.go",
+	"app/views",
+}
 
 const withViews = "\t\tvukem.WithViews(resources.Views()),\n"
 
@@ -55,7 +60,12 @@ func applyTempl(env *Env) error {
 		return err
 	}
 
-	return writeFile(app, bytes.Replace(src, []byte(withViews), nil, 1))
+	module, err := modulePath(env)
+	if err != nil {
+		return err
+	}
+
+	return writeFile(app, dropTypedViews(bytes.Replace(src, []byte(withViews), nil, 1), module))
 }
 
 // addTempl pins the templ generator as a go tool of the project.
