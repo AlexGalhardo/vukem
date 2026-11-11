@@ -2,6 +2,7 @@ package vukem
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -43,6 +44,8 @@ func (a *App) boot(ctx context.Context) error {
 		return err
 	}
 
+	var started []Provider
+
 	for _, p := range a.providers {
 		b, ok := p.(Booter)
 		if !ok || !runsIn(p, a.Kind) {
@@ -50,11 +53,62 @@ func (a *App) boot(ctx context.Context) error {
 		}
 
 		if err := b.Boot(ctx, a); err != nil {
-			return fmt.Errorf("vukem: boot %T: %w", p, err)
+			return a.unwindBoot(ctx, fmt.Errorf("vukem: boot %T: %w", p, err), started)
+		}
+
+		started = append(started, p)
+	}
+
+	if err := a.addBootRoutes(); err != nil {
+		return a.unwindBoot(ctx, err, started)
+	}
+
+	return nil
+}
+
+// unwindBoot shuts down the providers whose Boot returned nil, in reverse
+// order, after a failed boot, and returns bootErr (joined with any shutdown
+// error). The provider that failed is not shut down: it never finished
+// booting. Hooks are not run: Run and RunMain never reach them on a boot
+// failure, and App.Shutdown would also stop providers that never started.
+// A cancelled ctx (the usual cause of a boot failure under a signal) must
+// not skip the cleanup, so it runs on a context without the cancellation,
+// bounded by SHUTDOWN_TIMEOUT.
+func (a *App) unwindBoot(ctx context.Context, bootErr error, started []Provider) error {
+	// The unwind is the shutdown: a later App.Shutdown (a deferred call, a
+	// test cleanup) must not stop these providers, or the one that failed to
+	// boot, again.
+	a.mu.Lock()
+	a.shutdown = true
+	a.mu.Unlock()
+
+	ctx = context.WithoutCancel(ctx)
+
+	if t := a.Config.ShutdownTimeout; t > 0 {
+		var cancel context.CancelFunc
+
+		ctx, cancel = context.WithTimeout(ctx, t)
+		defer cancel()
+	}
+
+	errs := []error{bootErr}
+
+	for _, p := range slices.Backward(started) {
+		s, ok := p.(Shutdowner)
+		if !ok {
+			continue
+		}
+
+		if err := s.Shutdown(ctx, a); err != nil {
+			errs = append(errs, fmt.Errorf("vukem: shutdown %T: %w", p, err))
 		}
 	}
 
-	return a.addBootRoutes()
+	if len(errs) == 1 {
+		return bootErr
+	}
+
+	return errors.Join(errs...)
 }
 
 // addBootRoutes runs the WithRoutesAfterBoot functions once.

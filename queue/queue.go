@@ -124,8 +124,15 @@ func Retries(n int) Option { return func(o *options) { o.retries = max(n, 0) } }
 // Backoff sets the delay before retry attempt n (1-based).
 func Backoff(fn func(attempt int) time.Duration) Option { return func(o *options) { o.backoff = fn } }
 
-// Timeout bounds one attempt (default 1 minute).
-func Timeout(d time.Duration) Option { return func(o *options) { o.timeout = d } }
+// Timeout bounds one attempt (default 1 minute); a non-positive d keeps the
+// default.
+func Timeout(d time.Duration) Option {
+	return func(o *options) {
+		if d > 0 {
+			o.timeout = d
+		}
+	}
+}
 
 // OnQueue selects the queue (default "default").
 func OnQueue(name string) Option { return func(o *options) { o.queue = name } }

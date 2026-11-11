@@ -86,8 +86,18 @@ func (h *Hub) Publish(ctx context.Context, topic string, ev Event) error {
 
 // Subscribe returns a channel of the events of topics and a function that
 // unsubscribes. The channel closes on unsubscribe, ctx cancellation,
-// Close, or when the subscriber falls too far behind.
+// Close, or when the subscriber falls too far behind. When a Broker cannot
+// subscribe, the channel comes back already closed; TrySubscribe reports why.
 func (h *Hub) Subscribe(ctx context.Context, topics ...string) (<-chan Event, func()) {
+	ch, unsub, _ := h.TrySubscribe(ctx, topics...)
+
+	return ch, unsub
+}
+
+// TrySubscribe is Subscribe that reports a broker failure: when a topic's
+// relay cannot subscribe to the broker it returns that error together with
+// an already closed channel, and no subscriber stays registered.
+func (h *Hub) TrySubscribe(ctx context.Context, topics ...string) (<-chan Event, func(), error) {
 	s := &sub{ch: make(chan Event, subscriberBuffer), topics: topics}
 
 	h.mu.Lock()
@@ -95,7 +105,7 @@ func (h *Hub) Subscribe(ctx context.Context, topics ...string) (<-chan Event, fu
 		h.mu.Unlock()
 		close(s.ch)
 
-		return s.ch, func() {}
+		return s.ch, func() {}, nil
 	}
 
 	type pending struct {
@@ -149,11 +159,12 @@ func (h *Hub) Subscribe(ctx context.Context, topics ...string) (<-chan Event, fu
 			// Fail closed: never leave a stream on a topic that receives
 			// nothing. The client reconnects and the next Subscribe retries.
 			h.remove(s)
-			break
+
+			return s.ch, func() {}, r.err
 		}
 	}
 
-	return s.ch, func() { h.remove(s) }
+	return s.ch, func() { h.remove(s) }, nil
 }
 
 // relay subscribes to the broker channel of topic, waiting at most

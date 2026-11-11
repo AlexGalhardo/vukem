@@ -540,3 +540,30 @@ func TestFakeRecordsAUniqueJobOnce(t *testing.T) {
 		t.Fatalf("Fake recorded %d messages for 3 dispatches of one unique job, want 1", n)
 	}
 }
+
+func TestTimeoutIgnoresNonPositive(t *testing.T) {
+	t.Parallel()
+
+	for _, d := range []time.Duration{0, -time.Second} {
+		var ok atomic.Int32
+
+		mem := queue.NewMemory()
+		q := newQueue(t, mem, queue.Handle(func(ctx context.Context, _ sendInvoice) error {
+			if ctx.Err() == nil {
+				ok.Add(1)
+			}
+
+			return nil
+		}, queue.Retries(0), queue.Timeout(d)))
+
+		_ = q.Dispatch(t.Context(), sendInvoice{OrderID: 1})
+
+		if err := q.Work(t.Context(), queue.WorkOptions{StopWhenEmpty: true}); err != nil {
+			t.Fatal(err)
+		}
+
+		if ok.Load() != 1 {
+			t.Errorf("Timeout(%v): handler ran with an expired context", d)
+		}
+	}
+}
