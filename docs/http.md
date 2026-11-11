@@ -209,7 +209,7 @@ The first registered mapper that matches wins (no chaining); a `nil` result leav
 
 ### Problem types
 
-A problem's `type` is `about:blank` unless the app sets `APP_PROBLEM_BASE_URL`. With it, a problem that has no `type` of its own gets `<base>/<status slug>` (`/not-found`, `/internal-server-error`; only `a-z`, `0-9` and dashes survive, so 418 is `/im-a-teapot`), and validation problems get `<base>/validation`. `HTTPError.WithType` and `Services.ProblemDecorator` always win. The debug page shows the same `type` in "What clients see in production".
+A problem's `type` is `about:blank` unless the app sets `APP_PROBLEM_BASE_URL`, which must be an `http` or `https` URL without credentials, query or fragment (the boot refuses anything else; a trailing slash is dropped). With it, a problem that has no `type` of its own gets `<base>/<status slug>` (`/not-found`, `/internal-server-error`; only `a-z`, `0-9` and dashes survive, so 418 is `/im-a-teapot`), and validation problems get `<base>/validation`. `HTTPError.WithType` and `Services.ProblemDecorator` always win. The debug page shows the same `type` in "What clients see in production".
 
 ### Debug error page
 

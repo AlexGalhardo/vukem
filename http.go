@@ -742,7 +742,7 @@ func (a *App) newRouter() *router.Router {
 	services := &web.Services{
 		Log:            a.Log,
 		Debug:          debug,
-		ProblemBaseURL: a.Source.Get("APP_PROBLEM_BASE_URL"),
+		ProblemBaseURL: a.Config.ProblemBaseURL,
 		CheckResponses: !a.Config.IsProduction(),
 		TrustedProxies: a.proxies,
 		ClientIPHeader: a.Config.ClientIPHeader,

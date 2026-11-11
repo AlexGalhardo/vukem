@@ -158,6 +158,11 @@ type Config struct {
 	// https APP_URL in every environment but is applied only in production
 	// (docs/security.md, A02).
 	HSTSForce bool `env:"HSTS_FORCE"`
+	// ProblemBaseURL prefixes the "type" URI of every RFC 9457 problem
+	// (BASE/not-found, BASE/validation); empty means "about:blank".
+	// It must be an http or https URL without credentials, query or
+	// fragment; a trailing slash is dropped (docs/security.md, A05).
+	ProblemBaseURL string `env:"APP_PROBLEM_BASE_URL"`
 	// ClientIPHeader names a single-IP header set by the trusted proxy
 	// (such as X-Real-IP) that c.IP() reads instead of X-Forwarded-For.
 	// It requires TRUSTED_PROXIES.
