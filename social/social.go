@@ -163,7 +163,9 @@ type Social struct {
 	key       []byte
 	previous  [][]byte
 	providers map[string]Provider
-	// HTTP is the client for provider calls (timeouts by default).
+	// HTTP is the client for provider calls. The default has a timeout and
+	// refuses redirects to plain http; a client you set is not changed, so
+	// give it a CheckRedirect with the same rule.
 	HTTP *http.Client
 	// StateTTL bounds the time between redirect and callback.
 	StateTTL time.Duration
@@ -204,7 +206,7 @@ func New(key []byte, providers ...Provider) *Social {
 	s := &Social{
 		key:       key,
 		providers: map[string]Provider{},
-		HTTP:      &http.Client{Timeout: 10 * time.Second},
+		HTTP:      &http.Client{Timeout: 10 * time.Second, CheckRedirect: redirectGuard},
 		StateTTL:  10 * time.Minute,
 		now:       time.Now,
 		used:      map[string]int64{},
@@ -262,7 +264,16 @@ type statePayload struct {
 	Expires  int64  `json:"e"`
 }
 
-func cookieName(provider string) string { return "social_" + provider }
+// cookieName is the state cookie of provider: Secure, Path=/ and no Domain
+// make it eligible for the __Host- prefix, which stops a sibling subdomain
+// from planting it.
+func (s *Social) cookieName(provider string) string {
+	if s.InsecureCookies {
+		return "social_" + provider
+	}
+
+	return "__Host-social_" + provider
+}
 
 // Redirect starts sign-in with provider: it stores state, PKCE verifier
 // and nonce in a signed cookie and redirects to the provider.
@@ -317,7 +328,7 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 		return User{}, err
 	}
 
-	raw := c.Cookie(cookieName(provider))
+	raw := c.Cookie(s.cookieName(provider))
 	c.SetCookie(s.cookie(provider, "", -1)) // single use, whatever happens next
 
 	// response_mode=form_post providers (Apple) send the result in a POST body.
@@ -513,7 +524,7 @@ func (s *Social) cookie(provider, value string, maxAge int) *http.Cookie {
 	// G124: Secure unless the app opts out; SameSite=Lax lets the provider's
 	// top-level redirect back carry the cookie.
 	return &http.Cookie{ //nolint:gosec // see above
-		Name: cookieName(provider), Value: value, Path: "/", MaxAge: maxAge,
+		Name: s.cookieName(provider), Value: value, Path: "/", MaxAge: maxAge,
 		HttpOnly: true, Secure: !s.InsecureCookies, SameSite: http.SameSiteLaxMode,
 	}
 }

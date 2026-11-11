@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -35,6 +37,8 @@ type OIDCProvider struct {
 	// secret builds the client secret per exchange (Apple signs a JWT).
 	secret   func(now time.Time) (string, error)
 	formPost bool
+	// insecureHTTP allows plain http beyond loopback (see InsecureHTTP).
+	insecureHTTP bool
 
 	mu   sync.Mutex
 	disc *discovery
@@ -75,29 +79,127 @@ func Microsoft(tenant string, cfg Config) *OIDCProvider {
 // Name implements Provider.
 func (p *OIDCProvider) Name() string { return p.name }
 
+// InsecureHTTP lets the issuer and its endpoints use plain http on hosts
+// other than loopback. Dangerous: discovery and keys can be replaced in
+// transit.
+func (p *OIDCProvider) InsecureHTTP() *OIDCProvider { p.insecureHTTP = true; return p }
+
 // AuthParams adds authorization URL parameters (e.g. prompt=select_account).
 func (p *OIDCProvider) AuthParams(v map[string][]string) *OIDCProvider { p.extra = v; return p }
 
+// discover returns the cached discovery document, fetching it outside the
+// lock so a slow issuer does not queue every login behind one request.
 func (p *OIDCProvider) discover(ctx context.Context, h *http.Client) (*discovery, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	d := p.disc
+	p.mu.Unlock()
 
-	if p.disc != nil {
-		return p.disc, nil
+	if d != nil {
+		return d, nil
 	}
 
-	var d discovery
-	if err := getJSON(ctx, h, p.issuer+"/.well-known/openid-configuration", "", &d); err != nil {
+	if err := secureURL(p.issuer, p.insecureHTTP); err != nil {
+		return nil, errors.New("social: oidc issuer must use https")
+	}
+
+	var fetched discovery
+	if err := getJSON(ctx, h, p.issuer+"/.well-known/openid-configuration", "", &fetched); err != nil {
 		return nil, fmt.Errorf("social: oidc discovery: %w", err)
 	}
 
-	if d.Auth == "" || d.Token == "" || d.JWKS == "" {
+	if fetched.Auth == "" || fetched.Token == "" || fetched.JWKS == "" {
 		return nil, errors.New("social: oidc discovery document is incomplete")
 	}
 
-	p.disc = &d
+	if err := p.checkDiscovery(&fetched); err != nil {
+		return nil, err
+	}
 
-	return &d, nil
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.disc == nil {
+		p.disc = &fetched
+	}
+
+	return p.disc, nil
+}
+
+// checkDiscovery holds the document to the issuer the app configured: the
+// document names the endpoints that receive codes and verify tokens, so a
+// document for another issuer, or one that points at plain http, is refused.
+func (p *OIDCProvider) checkDiscovery(d *discovery) error {
+	if err := p.sameIssuer(d.Issuer); err != nil {
+		return err
+	}
+
+	for _, e := range []struct{ name, url string }{
+		{"authorization endpoint", d.Auth}, {"token endpoint", d.Token}, {"jwks uri", d.JWKS}, {"userinfo endpoint", d.UserInfo},
+	} {
+		if e.url == "" && e.name == "userinfo endpoint" {
+			continue
+		}
+
+		if err := secureURL(e.url, p.insecureHTTP); err != nil {
+			return fmt.Errorf("social: oidc discovery %s must use https", e.name)
+		}
+	}
+
+	return nil
+}
+
+var errIssuerMismatch = errors.New("social: oidc discovery issuer does not match the configured issuer")
+
+// sameIssuer compares the issuer of the discovery document with the
+// configured one. A "{tenantid}" placeholder (Microsoft multi-tenant
+// metadata) only has to keep the configured scheme and host.
+func (p *OIDCProvider) sameIssuer(issuer string) error {
+	if !strings.Contains(issuer, "{tenantid}") {
+		if strings.TrimSuffix(issuer, "/") != p.issuer {
+			return errIssuerMismatch
+		}
+
+		return nil
+	}
+
+	got, err1 := url.Parse(issuer)
+	want, err2 := url.Parse(p.issuer)
+
+	if err1 != nil || err2 != nil || got.Scheme != want.Scheme || !strings.EqualFold(got.Host, want.Host) {
+		return errIssuerMismatch
+	}
+
+	return nil
+}
+
+// secureURL accepts an https URL, or an http one for a loopback host (tests
+// and local identity providers) or when insecure is set.
+func secureURL(raw string, insecure bool) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case u.Scheme == "https" && u.Host != "":
+		return nil
+	case u.Scheme == "http" && u.Host != "" && (insecure || loopbackHost(u.Hostname())):
+		return nil
+	}
+
+	return errors.New("must use https")
+}
+
+// loopbackHost is "localhost" or a loopback address; unlike isLoopback it
+// excludes the unspecified address, which is not a host to trust.
+func loopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+
+	ip, err := netip.ParseAddr(host)
+
+	return err == nil && ip.IsLoopback()
 }
 
 // AuthURL implements Provider.
@@ -397,4 +499,36 @@ func pad32(b []byte) []byte {
 	}
 
 	return append(make([]byte, 32-len(b)), b...)
+}
+
+// maxRedirects bounds the redirects the default client follows.
+const maxRedirects = 5
+
+// redirectGuard is the default client's CheckRedirect: the https check of
+// secureURL looks at the first URL only, so every hop is checked too. A
+// request that started on https stays on https; one that started on a
+// loopback or InsecureHTTP host may only follow what secureURL allows for
+// it, so a redirect never leaves for another plain http host. A client the
+// app supplies (Social.HTTP) is its own to configure: set the same policy.
+func redirectGuard(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("social: stopped after %d redirects", maxRedirects)
+	}
+
+	first := via[0].URL
+	if first.Scheme == "https" {
+		if req.URL.Scheme != "https" {
+			return fmt.Errorf("social: redirect to %s must use https", req.URL.Host)
+		}
+
+		return nil
+	}
+
+	// The first URL was plain http, allowed as loopback or by InsecureHTTP.
+	insecure := secureURL(first.String(), false) != nil
+	if err := secureURL(req.URL.String(), insecure); err != nil {
+		return fmt.Errorf("social: redirect to %s must use https", req.URL.Host)
+	}
+
+	return nil
 }
