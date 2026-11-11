@@ -840,6 +840,11 @@ func (c *colsImports) typeExpr(rt reflect.Type) string {
 // modelsGo renders the typed column file for models: one variable per table,
 // in table order, one Column per mapped field in field order.
 func modelsGo(pkg string, models []orm.ModelInfo) ([]byte, error) {
+	// The name is written into the file as source text.
+	if !token.IsIdentifier(pkg) {
+		return nil, fmt.Errorf("codegen:models: %q is not a Go package name; pass -pkg with a plain identifier", pkg)
+	}
+
 	sorted := slices.SortedFunc(
 		slices.Values(models),
 		func(a, b orm.ModelInfo) int { return strings.Compare(a.Table, b.Table) },
