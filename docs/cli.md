@@ -27,6 +27,17 @@ The global CLI never imports user code and never wraps `go build` with custom se
 
 There is no `--env` flag: set `APP_ENV` in the environment or `.env`.
 
+Generator output has one format: each line starts with a prefix, and an indented snippet may follow a `next:` line.
+
+| Prefix | When | Example |
+| --- | --- | --- |
+| `created <path>` | a new file was written | `created app/models/post.go` |
+| `updated <path>` | a codemod changed an existing file | `updated database/seeders/registry.go` |
+| `next: <instruction>` | something to do by hand | `next: add vukem.WithAppSeeders(seeders.AllApp()...) to bootstrap/app.go` |
+| `note: <remark>` | information that needs no action now | `note: the policy takes *models.User, ...` |
+
+The `install:*` commands and `vukem new` print their own summaries and keep their format. The app binary suggests the closest command when one is mistyped (`./app migrte` prints `unknown command "migrte" (did you mean "migrate"?)`); with no close match it prints the full command list.
+
 Exit codes: `0` success, `1` failure, `2` usage error.
 
 ## Commands by phase
@@ -57,7 +68,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem down [--secret s \| --with-secret] [--retry 60s]`, `vukem up` | Maintenance mode: `storage/framework/down` makes `middleware.Maintenance` (in both default stacks) answer 503 with `Retry-After` (the `errors/503` view or problem+json); `/up` stays served. Visiting `/<secret>` sets a signed bypass cookie; the secret is stored hashed. An unreadable state file keeps the app down |
 | `vukem boost:install` | Agent setup (Laravel Boost-style): guidelines block in `AGENTS.md` (re-runnable, text outside the markers is kept), `@AGENTS.md` in `CLAUDE.md`, skills in `.claude/skills/vukem-*`, and the `vukem-boost` MCP server in `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` |
 | `vukem version` | Print the CLI version |
-| `vukem doctor` | Report project checks (CLI version, Go runtime, lockfile, `APP_KEY` set or not, SQLite directory, port, proxy, Vite manifest) and optional tools. `--json` prints one report. `--strict` exits 1 when a project check fails. A missing optional tool still exits 0 |
+| `vukem doctor` | Report project checks (CLI version, Go runtime, the Go version against the `go.mod` minimum (`go_version`), lockfile, `APP_KEY` set or not, `APP_ENV` (a failed check outside `development`, `test` and `production`), SQLite directory, port, proxy, Vite manifest) and optional tools. `--json` prints one report. `--strict` exits 1 when a project check fails. A missing optional tool still exits 0 |
 | `vukem stub:publish [name...] [--force]` | Copy the embedded `make:*` stubs (all, or the named ones: `controller`, `controller.go`, `controller.go.tmpl`) into `stubs/`; refuses an existing file without `--force` and checks every target before writing. A name that matches no stub or several is a usage error |
 | `vukem upgrade [--check] [--json]` | Report the `go.mod` framework version against the CLI and the starter files that differ (no network). `--check` writes nothing and exits 1 only when the project is behind; without it the current starter goes to `.vukem/upgrade/starter/` and a behind project gets `go get` and `go mod tidy`. Never overwrites a project file |
 | app: `db [-force] [-print]` | Open `sqlite3` or `psql` for `DATABASE_URL`; the password goes in `PGPASSWORD`, never in argv; `-force` in production. `mysql://` and `mariadb://` are refused until their password handling is verified |

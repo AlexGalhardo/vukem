@@ -155,6 +155,8 @@ A line with an invalid key stops the boot with the file and line number, for exa
 
 ## Core settings
 
+The repository lists every variable with its type and default in [Every environment variable](https://github.com/AlexGalhardo/vukem/blob/main/docs/configuration.md#every-environment-variable), generated from the code.
+
 `vukem.New` loads these into `app.Config` (a `vukem.Config`). It checks them all before it fails, so a misconfigured deploy reports every invalid setting in one error (one per line), not just the first:
 
 | Variable | Default | What it does |
