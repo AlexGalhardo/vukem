@@ -38,7 +38,7 @@ schema, err := graphql.New(sdl,
 
 - `Field[P, A, O](type, field, fn, opts...)`, `Query[A, O]`, `Mutation[A, O]`. `P` is the parent value (T and *T convert both ways); `A` is decoded from the coerced arguments through `json` tags, then checked with `validate` tags (package [`z`](validation.md); nested input structs, pointers and lists included) and a `Validate() error` method, whose error is mapped like a resolver error (a plain error is masked as `Internal server error` and logged; return `z.FieldError`, `errs.New(422, ...)` or `graphql.NewError` for client messages); `O` is serialized per the selection set. A Go argument the field does not declare, a binding to an unknown field, a root field without a resolver, and an object field without a resolver that the Go type behind it (parent and result types of the bindings, `Object[T]`) cannot answer are boot errors.
 - Unbound fields read the parent: a `map[string]any` key, or a struct field by `json` name (`json:"-"` hides it), falling back to a case-insensitive Go name, tagged or not (`ID` → `id`, ``PriceCents `json:"price_cents"` `` → `priceCents`). An exact `json` name wins over another field's Go name. Folding makes a json-renamed field reachable by its Go name too (`Password json:"pw"` answers `password`) whenever the schema declares that field: what clients can read is decided by the SDL, so keep secrets out of it or hide them with `json:"-"`. A nil Go slice is an empty list.
-- Built-in scalars: `Int` (32-bit, out-of-range values are errors on input and output), `Float` (finite), `String`, `Boolean`, `ID` (string or integer input, string output). Custom scalars: `graphql.Scalar("DateTime", graphql.ScalarFuncs{Serialize, Parse})`; unbound custom scalars pass values through.
+- Built-in scalars: `Int` (32-bit, out-of-range values are errors on input and output), `Float` (finite), `String`, `Boolean`, `ID` (string or integer input, string output). Custom scalars: `graphql.Scalar("DateTime", graphql.ScalarFuncs{Serialize, Parse})`; unbound custom scalars pass values through. A `Parse` error reaches the client only when it is a `*graphql.Error` or a 4xx error; anything else is reported as `<Scalar>: invalid value`.
 - Interfaces and unions resolve through `graphql.ResolveType(name, fn)`, a `GraphQLTypename() string` method, `graphql.Object[T]("Type")` mappings or a `"__typename"` map key.
 - `extend type`, descriptions, `@deprecated`, `@specifiedBy` and custom directive definitions are supported.
 
@@ -140,14 +140,14 @@ users := graphql.NewLoader(graphql.ByKey(orm.QueryOf[User](db), "id", func(u *Us
 postsByUser := graphql.NewLoader(graphql.GroupByKey(orm.QueryOf[Post](db), "user_id", func(p *Post) int64 { return p.UserID }))
 ```
 
-`ByKey` (belongs-to) and `GroupByKey` (has-many) run one `WhereIn` query per batch: 20 posts with their authors and the authors' posts cost 3 queries instead of 41 (asserted by `TestLoaderAvoidsNPlusOne`). `MaxBatch(n)` splits batches; `BatchWait(d)` (default 10ms) is the fallback when resolvers block on something other than a loader (a mutex, a channel): a pending batch is sent once the operation made no progress for `d` (or at the latest `10×d` after its first key), so slow siblings that keep reaching their loads on a busy machine still share one batch; `BatchWait(0)` disables it. `LoadMany` batches its keys; outside `Execute` a load calls `fetch` directly.
+`ByKey` (belongs-to) and `GroupByKey` (has-many) run one `WhereIn` query per batch: 20 posts with their authors and the authors' posts cost 3 queries instead of 41 (asserted by `TestLoaderAvoidsNPlusOne`). `MaxBatch(n)` splits batches; `BatchWait(d)` (default 10ms) is the fallback when resolvers block on something other than a loader (a mutex, a channel): a pending batch is sent once the operation made no progress for `d` (or at the latest `10×d` after its first key), so slow siblings that keep reaching their loads on a busy machine still share one batch; `BatchWait(0)` disables it. Batch functions run with the operation's context, not a resolver's. `LoadMany` batches its keys; outside `Execute` a load calls `fetch` directly.
 
 ## Limits
 
 | Limit | Default | Option |
 | --- | --- | --- |
 | Depth (introspection fields excluded) | 12 | `Limits.MaxDepth` |
-| Complexity: field cost (`graphql.Cost(n)`, default 1); `first` / `last` / `limit` arguments multiply the cost of the selection (their SDL default when omitted) | 1000 | `Limits.MaxComplexity` |
+| Complexity: field cost (`graphql.Cost(n)`, default 1, negative values fail `New`); `first` / `last` / `limit` arguments multiply the cost of the selection (their SDL default when omitted; the largest one counts, and an explicit `null` counts as the worst case) | 1000 | `Limits.MaxComplexity` |
 | Aliases | 30 | `Limits.MaxAliases` |
 | Lexer tokens | 10000 | `Limits.MaxTokens` |
 | POST body | 1 MiB | `HandlerConfig.MaxBodyBytes` |

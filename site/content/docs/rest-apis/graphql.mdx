@@ -187,7 +187,7 @@ The SDL may use descriptions, `extend type`, `@deprecated`, `@specifiedBy` and y
 
 - `P` is the **parent**: the value the parent field's resolver returned. `T` and `*T` convert both ways, so a `Product` parent works with a `*Product` resolver.
 - `O` is serialized according to the client's selection set. A nil Go slice becomes an empty list.
-- The only field option is `graphql.Cost(n)`, the field's weight in the [complexity limit](#configuration-and-security) (default 1).
+- The only field option is `graphql.Cost(n)`, the field's weight in the [complexity limit](#configuration-and-security) (default 1; a negative value makes `graphql.New` fail).
 
 Add a `reviews` field to `Product` with its own resolver:
 
@@ -310,7 +310,7 @@ The built-in scalars follow the specification:
 | `Boolean` | `true` / `false` | boolean |
 | `ID` | string or integer | always a string (`1` becomes `"1"`) |
 
-A custom scalar is declared in the SDL (`scalar DateTime`) and bound with `graphql.Scalar`. Each function may be nil, which passes the value through unchanged; an unbound custom scalar passes everything through.
+A custom scalar is declared in the SDL (`scalar DateTime`) and bound with `graphql.Scalar`. Each function may be nil, which passes the value through unchanged; an unbound custom scalar passes everything through. A `Parse` error reaches the client only when it is a `*graphql.Error` or a 4xx error; anything else is reported as `<Scalar>: invalid value`.
 
 ```go title="app/graph/scalars.go"
 graphql.Scalar("DateTime", graphql.ScalarFuncs{
@@ -407,7 +407,7 @@ func newLoaders(db database.Executor) *graphql.Loader[int64, []*Review] {
 
 - `loader.Load(ctx, key)` returns one value; `loader.LoadMany(ctx, keys)` loads several in one batch, in the order of `keys`.
 - In a `BatchFunc`, a key missing from the returned map resolves to the zero value (nil for pointers) without an error. An error fails every key of the batch.
-- The batch is sent when every resolver of the operation is waiting (the "resolution tick"), not after a timer. 20 products with their reviews and the reviewers cost 3 queries instead of 41.
+- The batch is sent when every resolver of the operation is waiting (the "resolution tick"), not after a timer. Batch functions run with the operation's context, not a resolver's. 20 products with their reviews and the reviewers cost 3 queries instead of 41.
 - `graphql.MaxBatch(n)` splits batches larger than `n` keys (default: unlimited).
 - `graphql.BatchWait(d)` (default `graphql.DefaultBatchWait`, 10ms) is a fallback for resolvers that block on something other than a loader (a mutex, a channel): a pending batch is sent once the operation made no progress for `d`, and at the latest `10×d` after its first key. `BatchWait(0)` disables it.
 - With `WithoutConcurrency()`, a loader batches only the keys requested before the first load waits.
@@ -618,7 +618,7 @@ A single GraphQL document can ask for a huge amount of work (`products(first: 10
 | Limit | Default | What it counts |
 | --- | --- | --- |
 | `MaxDepth` | 12 (`graphql.DefaultMaxDepth`) | the deepest field nesting, leaf fields included |
-| `MaxComplexity` | 1000 (`graphql.DefaultMaxComplexity`) | the sum of field costs; a field with a `first`, `last` or `limit` argument multiplies the cost of its selection by that value |
+| `MaxComplexity` | 1000 (`graphql.DefaultMaxComplexity`) | the sum of field costs; a field with a `first`, `last` or `limit` argument multiplies the cost of its selection by that value (the largest one counts; the SDL default applies when the argument is omitted, and an explicit `null` counts as the worst case) |
 | `MaxAliases` | 30 (`graphql.DefaultMaxAliases`) | aliased fields |
 | `MaxTokens` | 10000 (`graphql.DefaultMaxTokens`) | lexer tokens in the document |
 
