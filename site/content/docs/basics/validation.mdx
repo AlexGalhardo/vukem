@@ -271,6 +271,27 @@ Under the hood:
 - Keys in the input that are not in the shape are **ignored**. `Strict()` turns them into errors with the code `unrecognized_keys` ("The evil field is not allowed.").
 - When anything fails, `Parse` returns the zero value of `T` and the issues. You never get a half-filled struct.
 - `Keys()` lists the shape keys and `Field(key)` returns the struct field a key fills (the admin panel uses both).
+- `Passthrough(func(dst *T, extra map[string]any))` hands the unknown keys to a callback instead of dropping them: they are untrusted, unvalidated input, so copy and validate them before storing (it cannot be combined with `Strict()`).
+- `z.Pick[U](s, keys...)`, `z.Omit[U](s, keys...)`, `z.Extend[U](s, extra)` and `z.Partial[U](s)` derive the schema of another struct `U` from `s`, reusing the field rules: `z.Partial[UpdatePost](CreatePostSchema)` makes every field optional. `Strict()` is inherited; the struct-level `Refine`, `Transform` and `Default` are not.
+
+### Literals, unions, tuples and recursion
+
+- **`z.Literal(values...)`** accepts exactly one of the values (a version `"v1"`, a flag `true`, a code `42`); anything else is `invalid_literal`.
+- **`z.Union[T](variants...)`** returns the first variant that parses the input. `T` is `any` for primitives or an interface the variants implement, which you narrow with a type switch. When none fits there is one `invalid_union` issue at the union's path. The order matters with coercion: `z.Union[any](z.Int(), z.String())` turns the form value `"5"` into `5`; `Check` does not coerce, so it can refuse what `Parse` accepts from a form, and the `Refine` and `Transform` of a variant run on every attempt, including those that do not match.
+- **`z.DiscriminatedUnion[T](key, variants)`** is the form for objects: it reads the string at `key`, picks the variant and reports that variant's own issues with their exact paths. An unknown or missing value is `invalid_union_discriminator` at `key`. Each variant must be a `z.Struct` whose shape has `key`.
+- **`z.Tuple[T](items...)`** reads a fixed-length array into the exported fields of the struct `T`, in order (`z.Tuple[Point](z.Float(), z.Float())`); errors point at the position, such as `location.0`.
+- **`z.Lazy[T](fn)`** builds the schema on first use, so a schema can contain itself (comments with replies). Nesting past 1000 levels is a `too_deep` issue, so a map that contains itself cannot overflow the stack. Build the schema once: each `Lazy(fn)` becomes a `$defs` entry, and `z.JSONSchema` of a sub-schema emits `$defs` only at the root it is called on. `z.JSONSchema` exports it as a `$ref` into `$defs`.
+
+None of these has a form in `validate:"..."` tags.
+
+```go
+type Payment interface{ isPayment() }
+
+var PaymentSchema = z.DiscriminatedUnion[Payment]("method", map[string]z.AnySchema{
+	"card": z.Struct[Card](z.Shape{"method": z.Literal("card"), "number": z.String().Len(16)}),
+	"pix":  z.Struct[Pix](z.Shape{"method": z.Literal("pix"), "key": z.String().Min(1)}),
+})
+```
 
 ### Custom parsers
 
@@ -439,7 +460,7 @@ The same holds for an `*errs.ValidationError` you wrap with a 5xx status: the re
 | `Params` | `{"min": 3}` | Values used in the message |
 | `Err` | the error `Refine` returned | Server-side only, never shown |
 
-Codes: `required`, `invalid_type`, `too_small`, `too_big`, `invalid_string`, `invalid_enum`, `unrecognized_keys`, `not_multiple_of`, `invalid_date`, `not_unique`, `invalid_file` and `custom`. Each has a `z.Code…` constant (`z.CodeTooSmall`).
+Codes: `required`, `invalid_type`, `too_small`, `too_big`, `invalid_string`, `invalid_enum`, `invalid_literal`, `invalid_union`, `invalid_union_discriminator`, `unrecognized_keys`, `not_multiple_of`, `invalid_date`, `not_unique`, `invalid_file` and `custom`. Each has a `z.Code…` constant (`z.CodeTooSmall`).
 
 Helpers:
 
