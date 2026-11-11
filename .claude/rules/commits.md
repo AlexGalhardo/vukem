@@ -5,5 +5,6 @@
 - Scope = package or area (`router`, `orm`, `cli`, `postgres`, `repo`, `docs`…), lowercase.
 - Description: imperative, lowercase start, no trailing period, header ≤ 100 chars.
 - Breaking change: `!` after type/scope; describe the impact in a `BREAKING CHANGE:` footer.
+- Security change: a `Security: <risk closed>` footer on the `feat`, `fix`, `perf` or `refactor` commit lists it under Security; the word in a body does nothing.
 - Reference the plan task in the body: `Refs: P.3.2`.
 - One logical change per commit. Validator: `go run ./internal/tools/commitlint <file>`.
