@@ -78,6 +78,7 @@ func Create[T any](ctx context.Context, ex database.Executor, model *T) error {
 
 	setTime(rv, m, "created_at", now, true)
 	setTime(rv, m, "updated_at", now, true)
+	startVersion(rv, m)
 
 	if err := insertOne(ctx, ex, m, rv); err != nil {
 		return err
@@ -217,7 +218,7 @@ func UpdateOnly[T any](ctx context.Context, ex database.Executor, model *T, cols
 
 // writableOnUpdate reports whether Update may write f.
 func writableOnUpdate(m *meta, f field) bool {
-	return !f.readonly && !slices.Contains(m.keys, f.column) && f.column != "created_at"
+	return !f.readonly && !slices.Contains(m.keys, f.column) && f.column != "created_at" && f.column != m.version
 }
 
 // updateColumns runs the UPDATE of one model by key: every writable column
@@ -266,6 +267,18 @@ func updateColumns[T any](ctx context.Context, ex database.Executor, model *T, o
 		args = append(args, rv.FieldByIndex(m.byColumn[k].index).Interface())
 	}
 
+	// Optimistic lock: bump the counter and only match the version the
+	// model was read with.
+	var version reflect.Value
+
+	if m.version != "" {
+		version = rv.FieldByIndex(m.byColumn[m.version].index)
+		vcol := ex.Dialect().Quote(m.version)
+		sets = slices.Concat(sets, []string{vcol + " = " + vcol + " + 1"})
+		where = slices.Concat(where, []string{vcol + " = ?"})
+		args = append(args, version.Int())
+	}
+
 	q := "UPDATE " + ex.Dialect().Quote(m.table) + " SET " + strings.Join(sets, ", ") +
 		" WHERE " + strings.Join(where, " AND ")
 	if m.soft {
@@ -278,8 +291,16 @@ func updateColumns[T any](ctx context.Context, ex database.Executor, model *T, o
 	}
 
 	n, _ := res.RowsAffected()
+	if n == 0 && m.version != "" {
+		return staleOrMissing(ctx, ex, m, rv)
+	}
+
 	if err := oneRow(m, "update", n); err != nil {
 		return err
+	}
+
+	if m.version != "" {
+		version.SetInt(version.Int() + 1)
 	}
 
 	return hook(ctx, model, AfterUpdater.AfterUpdate)
@@ -425,6 +446,12 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 		args = append(args, v)
 	}
 
+	if v := q.m.version; v != "" {
+		if _, ok := set[v]; !ok {
+			sets = slices.Concat(sets, []string{q.quote(v) + " = " + q.quote(v) + " + 1"})
+		}
+	}
+
 	where, wargs := q.whereSQL()
 	query, err := renumber(
 		"UPDATE "+q.quote(q.m.table)+" SET "+strings.Join(sets, ", ")+q.resolve(where),
@@ -514,6 +541,66 @@ func setTime(rv reflect.Value, m *meta, col string, t time.Time, onlyZero bool) 
 // ErrConflict is returned (wrapped) when a write violates a unique
 // constraint; it reports HTTP status 409 so handlers answer Conflict.
 var ErrConflict error = &conflictError{}
+
+// ErrStale reports that the row changed since the model was read: Update or
+// UpdateOnly on a model with an orm:"version" column matched no row at the
+// version the struct holds, although the row exists. It answers HTTP 409.
+var ErrStale error = &staleError{}
+
+type staleError struct{}
+
+func (*staleError) Error() string {
+	return "The record was changed by someone else; reload it and try again."
+}
+
+// HTTPStatus implements errs.StatusCoder.
+func (*staleError) HTTPStatus() int { return 409 }
+
+func (*staleError) Is(target error) bool { _, ok := target.(*staleError); return ok }
+
+// startVersion gives a new row of a model with an orm:"version" column its
+// first version.
+func startVersion(rv reflect.Value, m *meta) {
+	if m.version == "" {
+		return
+	}
+
+	if v := rv.FieldByIndex(m.byColumn[m.version].index); v.Int() == 0 {
+		v.SetInt(1)
+	}
+}
+
+// staleOrMissing tells apart the two reasons a versioned update matched no
+// row: the row is gone (ErrNotFound) or its version moved on (ErrStale).
+func staleOrMissing(ctx context.Context, ex database.Executor, m *meta, rv reflect.Value) error {
+	d := ex.Dialect()
+
+	where := make([]string, len(m.keys))
+	args := make([]any, len(m.keys))
+
+	for i, k := range m.keys {
+		where[i] = d.Quote(k) + " = ?"
+		args[i] = rv.FieldByIndex(m.byColumn[k].index).Interface()
+	}
+
+	q := "SELECT 1 FROM " + d.Quote(m.table) + " WHERE " + strings.Join(where, " AND ")
+	if m.soft {
+		q += " AND " + d.Quote("deleted_at") + " IS NULL"
+	}
+
+	var one int
+
+	err := ex.QueryRowContext(ctx, rebind(q, d), args...).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+
+	if err != nil {
+		return fmt.Errorf("orm: update %s: %w", m.table, err)
+	}
+
+	return ErrStale
+}
 
 type conflictError struct{ cause error }
 

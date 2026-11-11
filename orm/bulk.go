@@ -69,6 +69,7 @@ func createMany[T any](ctx context.Context, ex database.Executor, models []T, li
 		rv := reflect.ValueOf(&models[i]).Elem()
 		setTime(rv, m, "created_at", now, true)
 		setTime(rv, m, "updated_at", now, true)
+		startVersion(rv, m)
 	}
 
 	genID, err := generatedIDs(m, models)

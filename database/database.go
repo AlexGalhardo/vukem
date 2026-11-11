@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -481,6 +482,7 @@ type Tx struct {
 type txHooks struct {
 	mu  sync.Mutex
 	fns []func(ctx context.Context)
+	sp  int // savepoints opened so far, for their names
 }
 
 // UniqueViolation reports whether err is a unique or primary key violation
@@ -541,10 +543,43 @@ func (tx *Tx) SQL() *sql.Tx { return tx.tx }
 // Tx runs fn in a transaction on the writer pool: it commits when fn
 // returns nil and rolls back on error or panic (the panic is re-raised).
 // SQLite write transactions use BEGIN IMMEDIATE.
-func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) (err error) {
-	sqlTx, err := db.writer.BeginTx(ctx, nil)
+func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) error {
+	return db.TxWith(ctx, TxOptions{}, fn)
+}
+
+// TxOptions tunes DB.TxWith. The zero value is DB.Tx's behaviour.
+type TxOptions struct {
+	// Isolation is the isolation level; sql.LevelDefault keeps the
+	// database's default. A level the driver does not support is an error.
+	Isolation sql.IsolationLevel
+	// ReadOnly asks for a read-only transaction. On SQLite it runs on the
+	// reader pool, so it never waits for the single writer; a write inside
+	// it fails in the database.
+	ReadOnly bool
+}
+
+// TxWith is Tx with options.
+func (db *DB) TxWith(ctx context.Context, opts TxOptions, fn func(tx *Tx) error) (err error) {
+	pool := db.writer
+	if opts.ReadOnly && MustCapabilities(db.dialect).Family == "sqlite" {
+		pool = db.reader
+	}
+
+	sqlTx, err := pool.BeginTx(ctx, &sql.TxOptions{Isolation: opts.Isolation, ReadOnly: opts.ReadOnly})
 	if err != nil {
 		return fmt.Errorf("database: begin: %w", err)
+	}
+
+	// An in-memory SQLite database has one connection for reading and
+	// writing, so read-only is enforced with query_only for the transaction.
+	if opts.ReadOnly && pool == db.writer && db.reader == db.writer &&
+		MustCapabilities(db.dialect).Family == "sqlite" {
+		if _, err := sqlTx.ExecContext(ctx, "PRAGMA query_only = 1"); err != nil {
+			_ = sqlTx.Rollback()
+			return fmt.Errorf("database: begin: %w", err)
+		}
+
+		defer func() { _, _ = db.writer.ExecContext(context.WithoutCancel(ctx), "PRAGMA query_only = 0") }()
 	}
 
 	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc, obs: db.obs, hooks: &txHooks{}, log: db.log, uniq: db.uniq}
@@ -632,6 +667,93 @@ func (tx *Tx) runHook(ctx context.Context, fn func(context.Context)) {
 	}()
 
 	fn(ctx)
+}
+
+// Savepoint runs fn inside a savepoint of tx: an error or panic from fn
+// rolls back only what fn did and tx stays usable; a nil return releases the
+// savepoint, and the work commits or rolls back with tx. sp is tx itself (the
+// same connection), passed so the code reads as a transaction. The savepoint
+// name is generated, never taken from the caller. AfterCommit hooks
+// registered inside fn are dropped when fn's work is rolled back. A panic
+// is re-raised after the rollback. A Tx is not safe for concurrent use, and
+// neither is Savepoint: do not call it from several goroutines. On MySQL, DDL commits implicitly and
+// ends the transaction, so run schema changes as migrations, not inside a
+// savepoint.
+func (tx *Tx) Savepoint(ctx context.Context, fn func(sp *Tx) error) (err error) {
+	if tx.hooks == nil {
+		panic("database: Savepoint on a Tx not started by DB.Tx")
+	}
+
+	tx.hooks.mu.Lock()
+	tx.hooks.sp++
+	name := "vk_sp_" + strconv.Itoa(tx.hooks.sp)
+	kept := len(tx.hooks.fns)
+	tx.hooks.mu.Unlock()
+
+	if _, err := tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
+		return fmt.Errorf("database: savepoint: %w", err)
+	}
+
+	rollback := func() error {
+		// The caller's context may be what failed: undo regardless.
+		undo := context.WithoutCancel(ctx)
+
+		_, rbErr := tx.ExecContext(undo, "ROLLBACK TO SAVEPOINT "+name)
+		_, _ = tx.ExecContext(undo, "RELEASE SAVEPOINT "+name)
+
+		tx.hooks.mu.Lock()
+		tx.hooks.fns = tx.hooks.fns[:min(kept, len(tx.hooks.fns))]
+		tx.hooks.mu.Unlock()
+
+		if rbErr != nil {
+			return fmt.Errorf("database: rollback to savepoint: %w", rbErr)
+		}
+
+		return nil
+	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			_ = rollback()
+			panic(p)
+		}
+	}()
+
+	if err := fn(tx); err != nil {
+		if rbErr := rollback(); rbErr != nil {
+			return errors.Join(err, rbErr)
+		}
+
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+name); err != nil {
+		// Not released: undo what fn did and drop its hooks, so the outer
+		// transaction does not carry half a savepoint.
+		err = fmt.Errorf("database: release savepoint: %w", err)
+		if rbErr := rollback(); rbErr != nil {
+			return errors.Join(err, rbErr)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// Nested runs fn in a new transaction when ex is a *DB and in a savepoint
+// when ex is already a *Tx, so an error from fn undoes only fn's work. Use
+// RunInTx to join the outer transaction without a savepoint (all or
+// nothing).
+func Nested(ctx context.Context, ex Executor, fn func(tx *Tx) error) error {
+	switch e := ex.(type) {
+	case *Tx:
+		return e.Savepoint(ctx, fn)
+	case *DB:
+		return e.Tx(ctx, fn)
+	default:
+		return fmt.Errorf("database: cannot start a transaction on %T", ex)
+	}
 }
 
 // RunInTx runs fn inside ex's transaction when ex is already a *Tx, or in

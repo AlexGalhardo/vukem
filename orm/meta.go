@@ -111,6 +111,7 @@ type meta struct {
 	soft       bool
 	relations  map[string]relation
 	counts     map[string][]int // relation name -> index of its orm:"count:..." field
+	version    string           // column of the optimistic lock (orm:"version"), "" when none
 }
 
 var metaCache sync.Map //nolint:gochecknoglobals // memoization of immutable per-type metadata
@@ -176,14 +177,8 @@ func buildMeta(rt reflect.Type) *meta {
 			continue // embedded duplicates: the shallowest field wins (VisibleFields order)
 		}
 
-		readonly, count := columnTag(rt, f)
-		if count != "" {
-			if f.Type.Kind() != reflect.Int64 {
-				panic(fmt.Sprintf("orm: %s.%s is tagged orm:\"count:%s\" but is not an int64", rt, f.Name, count))
-			}
-
-			m.counts[count] = f.Index
-
+		readonly, isCount := m.applyTag(rt, f, col)
+		if isCount {
 			continue
 		}
 
@@ -227,6 +222,37 @@ func buildMeta(rt reflect.Type) *meta {
 	return m
 }
 
+// applyTag handles the orm tag options that give a field a role besides
+// being a column: orm:"count:<Relation>" (the field is not a column, the
+// result says so) and orm:"version" (the column is the optimistic lock).
+func (m *meta) applyTag(rt reflect.Type, f reflect.StructField, col string) (readonly, isCount bool) {
+	readonly, count, version := columnTag(rt, f)
+
+	if count != "" {
+		if f.Type.Kind() != reflect.Int64 {
+			panic(fmt.Sprintf("orm: %s.%s is tagged orm:\"count:%s\" but is not an int64", rt, f.Name, count))
+		}
+
+		m.counts[count] = f.Index
+
+		return readonly, true
+	}
+
+	if version {
+		if f.Type.Kind() != reflect.Int64 {
+			panic(fmt.Sprintf("orm: %s.%s is tagged orm:\"version\" but is not an int64", rt, f.Name))
+		}
+
+		if m.version != "" {
+			panic(fmt.Sprintf("orm: %s has more than one orm:\"version\" field", rt))
+		}
+
+		m.version = col
+	}
+
+	return readonly, false
+}
+
 // checkRelations panics on a belongs-to without its foreign key column and on
 // a count field that does not name a HasMany or ManyToMany relation.
 func (m *meta) checkRelations(rt reflect.Type) {
@@ -251,14 +277,17 @@ func (m *meta) checkRelations(rt reflect.Type) {
 
 // columnTag parses the orm tag of a column field: "readonly" marks a column
 // the ORM reads but never writes, "count:<Relation>" turns the field into the
-// target of WithCount (it is not a column).
-func columnTag(rt reflect.Type, f reflect.StructField) (readonly bool, count string) {
+// target of WithCount (it is not a column), "version" makes it the
+// optimistic lock counter.
+func columnTag(rt reflect.Type, f reflect.StructField) (readonly bool, count string, version bool) {
 	for opt := range strings.SplitSeq(f.Tag.Get("orm"), ",") {
 		opt = strings.TrimSpace(opt)
 
 		switch {
 		case opt == "readonly":
 			readonly = true
+		case opt == "version":
+			version = true
 		case strings.HasPrefix(opt, "count:"):
 			count = strings.TrimPrefix(opt, "count:")
 		case opt == "":
@@ -267,7 +296,7 @@ func columnTag(rt reflect.Type, f reflect.StructField) (readonly bool, count str
 		}
 	}
 
-	return readonly, count
+	return readonly, count, version
 }
 
 // keysOf returns the primary key columns of rt: CompositeKeyer, then
@@ -349,6 +378,32 @@ func FieldsOf[T any]() []FieldInfo {
 	}
 
 	return out
+}
+
+// ModelInfo describes a model for tools that work with any model
+// (codegen:models, migrate:diff).
+type ModelInfo struct {
+	// Type is the model's struct type.
+	Type reflect.Type
+	// Table is the table name.
+	Table string
+	// Keys are the primary key columns, the first one being the primary key.
+	Keys []string
+	// Fields are the mapped columns in field order.
+	Fields []FieldInfo
+	// Relations are the relation field names, sorted.
+	Relations []string
+}
+
+// ModelOf describes model T.
+func ModelOf[T any]() ModelInfo {
+	return ModelInfo{
+		Type:      reflect.TypeFor[T](),
+		Table:     TableOf[T](),
+		Keys:      PrimaryKeysOf[T](),
+		Fields:    FieldsOf[T](),
+		Relations: RelationsOf[T](),
+	}
 }
 
 // RelationsOf returns the relation field names of model T (the names

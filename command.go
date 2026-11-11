@@ -157,7 +157,7 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 // only the registered routes, never live connections.
 func isWarmupCommand(name string) bool {
 	switch name {
-	case "codegen:routes", "codegen:client", "codegen:types", "openapi:export", "view:check":
+	case "codegen:routes", "codegen:client", "codegen:types", "codegen:models", "openapi:export", "view:check":
 		return true
 	default:
 		return false
@@ -211,6 +211,7 @@ func builtinCommands() []Command {
 			openAPIExportCommand(),
 			codegenTypesCommand(),
 			codegenRoutesCommand(),
+			codegenModelsCommand(),
 			codegenClientCommand(),
 			viewCheckCommand(),
 			boostMCPCommand(),
