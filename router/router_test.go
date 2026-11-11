@@ -169,11 +169,24 @@ func TestURLGeneration(t *testing.T) {
 		{name: "comments.show", params: []any{"id", 1, "comment", "a b"}, want: "/posts/1/comments/a%20b"},
 		{name: "files", params: []any{"path", "a/b c/d"}, want: "/files/a/b%20c/d"},
 		{name: "home", want: "/home/"},
-		{name: "comments.show", params: []any{"id", 1}, wantErr: `missing param "comment"`},
-		{name: "comments.show", params: []any{"id", 1, "comment", 2, "extra", 3}, wantErr: `unknown param "extra"`},
+		{
+			name:    "comments.show",
+			params:  []any{"id", 1},
+			wantErr: `missing param "comment" (path /posts/{id}/comments/{comment})`,
+		},
+		{
+			name:    "comments.show",
+			params:  []any{"id", 1, "comment", 2, "extra", 3},
+			wantErr: `unknown param "extra" (path /posts/{id}/comments/{comment})`,
+		},
 		{name: "comments.show", params: []any{"id"}, wantErr: "name/value pairs"},
 		{name: "comments.show", params: []any{1, 2}, wantErr: "is not a string"},
 		{name: "nope", wantErr: `no route named "nope"`},
+		{name: "nope", wantErr: `no route named "nope"; run route:list to see the names`},
+		{
+			name:    "comment.show",
+			wantErr: `no route named "comment.show" (did you mean "comments.show"?); run route:list`,
+		},
 	}
 
 	for _, tt := range tests {
