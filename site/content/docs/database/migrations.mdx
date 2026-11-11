@@ -414,6 +414,23 @@ Up: func(s *schema.Schema) error {
 
 A statement that mixes `?` with `$1`, or ends inside a string literal, fails with `database: query mixes ? placeholders with $n parameters` or `database: query ends inside an unterminated literal, identifier or comment`. Without arguments the statement runs exactly as written, so PostgreSQL's jsonb `?` operator in DDL keeps working. Only the statement text, as written, goes into the checksum, not the arguments.
 
+## Rebuilding a table on SQLite
+
+SQLite cannot drop a column that has an index, a `UNIQUE` or a foreign key, nor add or drop a check on an existing table. `s.Rebuild(table, fn, opts...)` replaces the table with the full definition `fn` builds, keeping the rows (`schema.RenamedFrom(from, to)` copies a renamed column). It turns foreign keys off, copies in one transaction, runs `PRAGMA foreign_key_check` before the commit and turns them back on, so the child tables of an `ON DELETE CASCADE` keep their rows. The migration must set `NoTransaction: true`, because Rebuild owns the transaction. Declare the indexes again; the `AUTOINCREMENT` counter is kept; views are not recreated, and a table with triggers is refused unless you pass `schema.DropTriggers()`. Back up first in production. On PostgreSQL and MySQL use `s.Table` and `Column.Change()`.
+
+```go
+Up: func(s *schema.Schema) error {
+	return s.Rebuild("users", func(t *schema.Table) {
+		t.ID()
+		t.String("name")
+		t.String("email").Unique()
+		t.Timestamps()
+	})
+},
+```
+
+`vukem migrate:check` finds colliding migrations, `vukem db:pull` writes a baseline from an existing database and `vukem migrate:diff` writes a migration stub from your models; see [the database guide](/docs/database/overview) and the [CLI reference](/docs/cli/reference-database). In production `vukem migrate` refuses a pending migration that drops a table or column unless you pass `--allow-destructive`.
+
 ## Running migrations
 
 The migrate commands run inside your app's own binary (`cmd/app`), so they use your `DATABASE_URL` and your registered migrations.
