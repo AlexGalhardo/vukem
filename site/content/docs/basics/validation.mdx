@@ -162,6 +162,13 @@ slug := base.ToLower().Regex(slugRe)
 | `OneOf(values...)` | Must equal one of the values (see also `Enum`) | `invalid_enum` |
 | `Trim()` | Removes spaces, tabs and newlines at both ends **before** the checks | — |
 | `ToLower()`, `ToUpper()` | Changes the case **before** the checks | — |
+| `IP()`, `IPv4()`, `IPv6()`, `CIDR()`, `MAC()` | An address (IPv6 without a zone), an address with a prefix length, a 48-bit hardware address | `string.ip`, `string.ipv4`, `string.ipv6`, `string.cidr`, `string.mac` |
+| `Hostname()`, `E164()`, `Slug()` | A DNS hostname; an international phone number (`+5511987654321`); lowercase words joined by dashes | `string.hostname`, `string.e164`, `string.slug` |
+| `Hex()`, `Base64()`, `Base64URL()` | Hexadecimal of even length; base64 with padding; URL-safe base64 | `string.hex`, `string.base64`, `string.base64url` |
+| `JWT()` | The **shape** of a token: three base64url segments and a JSON header with an `alg`. It never verifies a signature (a token with `alg: none` passes): use `auth/jwt` to accept a token. Like `Hex()`, `Base64()` and `Base64URL()` it reads the whole value, so put a `Max(n)` on it | `string.jwt` |
+| `ISODate()`, `ISOTime()`, `ISODateTime()`, `ISODuration()` | `2026-02-28`, `10:30:00`, `2026-02-28T10:30:00Z`, `P1Y2M3DT4H5M6S` | `string.iso_date`, `string.iso_time`, `string.iso_datetime`, `string.iso_duration` |
+| `NormalizeEmail()` | Trims and lower-cases **before** the checks (put it before `Email()`) | — |
+| `Escape()` | Replaces `<`, `>`, `&`, `'`, `"` with HTML entities **before** the checks. It stores entities (`html/template` already escapes on output), escapes again a value posted back, and the checks after it count the escaped text | — |
 | `Preprocess(fn)` | Runs your `func(string) string` **before** the checks; panics at boot when `fn` is `nil` | — |
 | `Transform(fn)` | Runs your `func(string) string` **after** the checks | — |
 
@@ -388,6 +395,10 @@ JSON keeps its types: numbers stay numbers, `true` stays a boolean. Forms, query
 `Check` (for outgoing data, below) never converts text: a `"42"` in a response is a string, not a number.
 
 ## Cross-field and custom rules
+
+Rules that compare fields are methods of `StructSchema[T]`, or `validate` tags on the field: `Confirmed("password")` (against `password_confirmation`), `SameAs`, `NotSameAs`, `RequiredIf(key, other, values...)`, `RequiredWhen(key, func(T) bool)`, `RequiredIfExists`, `RequiredIfAnyExists`, `RequiredIfMissing`, `RequiredIfAnyMissing`, `AfterField`, `AfterOrEqualField`, `BeforeField` and `BeforeOrEqualField`. They run after every field was read, report at the field they are on, never pile an issue on a field that already failed, and carry field names, never values, in their params. The tags are `confirmed`, `same=key`, `different=key`, `required_if=key v1 v2`, `required_with`, `required_with_all`, `required_without`, `required_without_all`, `gtfield=key`, `gtefield=key`, `ltfield=key` and `ltefield=key`, citing the other field by its input key. A `RequiredIf*` target must be optional in the shape. `Strict()` does not reject the `<key>_confirmation` input, a derived schema (`z.Partial`, `z.Pick`, ...) keeps the rules whose keys all remain, and on a typed value (`Check`, or `Parse` given a `T`) the rules that ask what was *sent* are skipped. Rules that need a database stay in `orm.Validate`: `z` does no I/O.
+
+`EmptyAsAbsent()` on a struct reads `""` as a missing key, as an HTML form sends it, and `Bail()` makes each field report only its first issue. `z.Codec(wire, decode, encode)` reads a wire form and produces another type (`Encode` goes back, `Check` uses it), and `z.Brand[UserID](z.Int64().Positive())` converts the result to a defined type. `z.Time()` also has `AfterOrEqual`, `BeforeOrEqual`, `Future()` and `Past()` (`FutureAt(now)` and `PastAt(now)` take your own clock).
 
 `Refine` adds your own check. It receives the parsed value and returns `nil` or an error.
 

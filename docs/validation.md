@@ -68,16 +68,18 @@ if errors.As(err, &issues) {
 
 | Constructor | Go type | Checks / transforms |
 | --- | --- | --- |
-| `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `HasLower`, `HasUpper`, `HasDigit`, `HasSymbol`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)` |
+| `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `HasLower`, `HasUpper`, `HasDigit`, `HasSymbol`, `OneOf`; formats `IP`, `IPv4`, `IPv6`, `CIDR`, `MAC`, `Hostname`, `E164`, `Slug`, `Hex`, `Base64`, `Base64URL`, `JWT`, `ISODate`, `ISOTime`, `ISODateTime`, `ISODuration`; `Trim`, `ToLower`, `ToUpper`, `NormalizeEmail`, `Escape`, `Preprocess(fn)` |
 | `z.Int()`, `z.Int64()`, `z.Uint()`… | integer types | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf` (integer arithmetic, exact above 2^53; floats compare by quotient with a relative tolerance of 1e-9, so `MultipleOf(0.01)` accepts `0.07`) |
 | `z.Float()` | `float64` | `Min`, `Max`, `Positive`, `MultipleOf` (NaN and infinities are always rejected) |
 | `z.Bool()` | `bool` | — |
-| `z.Time()` | `time.Time` | `After`, `Before`, `Layouts(...)` (default RFC 3339) |
+| `z.Time()` | `time.Time` | `After`, `Before`, `AfterOrEqual`, `BeforeOrEqual`, `Future`, `Past` (read the clock at parse time; `FutureAt(now)` and `PastAt(now)` take your own), `Layouts(...)` (default RFC 3339) |
 | `z.Enum(vals...)` | `string` (or any `~string` via `z.EnumOf[T]`) | membership |
 | `z.Slice(elem)` | `[]E` (E = element schema type; a `z.Schema[[]E]`) | `Min`, `Max`, `Len`, `NonEmpty`, `Unique`; `Default([]E)`, `Refine`, `Transform`, `Message`, `Describe` |
 | `z.Map(value)` | `map[string]V` (a `z.Schema[map[string]V]`) | `Min`, `Max` (entry count); `Default(map[string]V)`, `Refine`, `Transform`, `Message`, `Describe` |
 | `z.Struct[T](z.Shape{...})` | `T` | field schemas mapped by `json`/`form`/`query` tag or field name; `Strict()` rejects unknown keys |
 | `z.Custom[T](fn)` | `T` | user parser |
+| `z.Codec(wire, decode, encode)` | the domain type `Out` | parses the wire form, decodes it into `Out`; `Encode(v)` goes back and `Check` uses it; see [Codecs and branded types](#codecs-and-branded-types) |
+| `z.Brand[B](schema)` | the defined type `B` | the inner schema, converted to `B` (`type UserID int64`) |
 | `z.Literal[T](values...)` | `T` (string, bool or number kinds) | exactly one of the values (code `invalid_literal`) |
 | `z.Union[T](variants...)` | `T`, usually `any` or a domain interface | the first variant that parses wins; when none does, one `invalid_union` issue at the union's path. Order matters with coercion: `Union[any](Int(), String())` turns `"5"` into `5`; `Check` does not coerce, so it can refuse what `Parse` takes from a form, and the `Refine`/`Transform` of a variant run on every attempt |
 | `z.DiscriminatedUnion[T](key, variants)` | `T`, usually a domain interface | picks the variant by the string value of `key`, then reports that variant's own issues; an unknown or missing value is `invalid_union_discriminator` at `key` |
@@ -140,7 +142,35 @@ var UpdatePostSchema = z.Partial[UpdatePost](CreatePostSchema)
 | `z.Extend[U](s, extra)` | the fields of `s` plus `extra`; a key of `extra` replaces the one of `s` |
 | `z.Partial[U](s)` | every field may be absent; use pointer fields in `U` to tell absent from zero |
 
-They reuse the field schemas and check the shape against `U` when built, like `z.Struct`. `Strict()` is inherited; the struct-level `Refine`, `Transform`, `Default` and `Passthrough` of `s` are not, because they are written for `s`'s type. `Strict()` rejects the keys outside the shape; `Passthrough(func(dst *T, extra map[string]any))` hands them to a callback instead (the extra keys are untrusted and unvalidated: copy and validate them before storing) (the two cannot be combined).
+They reuse the field schemas and check the shape against `U` when built, like `z.Struct`. `Strict()`, `EmptyAsAbsent()` and `Bail()` are inherited, and so are the cross-field rules (`Confirmed`, `SameAs`, `RequiredIf`, `AfterField` and the others) whose keys all remain in the derived schema: `z.Partial` keeps `Confirmed("password")`, while `z.Omit(s, "password")` drops it, as it would have nothing to compare. `RequiredWhen` is never carried over, and neither are the struct-level `Refine`, `Transform`, `Default` and `Passthrough` of `s`: they are written for `s`'s type. `Strict()` rejects the keys outside the shape; `Passthrough(func(dst *T, extra map[string]any))` hands them to a callback instead (the extra keys are untrusted and unvalidated: copy and validate them before storing) (the two cannot be combined).
+
+## Cross-field rules
+
+Rules that compare fields are methods of `StructSchema[T]`, or `validate` tags on the field they apply to. They run after every field was read, see the input as sent (to know whether a key "exists": present, not null and not empty) and the parsed struct (to compare values), and never add an issue to a field that already failed. The issue is reported at the field the rule is on, and its params carry field names, never values: a confirmation is usually a password.
+
+| Method | Tag (on the field) | Key | Code |
+| --- | --- | --- | --- |
+| `Confirmed(key)` | `confirmed` | `confirmed` | `custom` |
+| `SameAs(key, other)` | `same=other` | `same` | `custom` |
+| `NotSameAs(key, other)` | `different=other` | `different` | `custom` |
+| `RequiredIf(key, other, values...)` | `required_if=other v1 v2` | `required_if` | `required` |
+| `RequiredWhen(key, func(T) bool)` | none | `required` | `required` |
+| `RequiredIfExists(key, others...)` | `required_with_all=a b` | `required_with` | `required` |
+| `RequiredIfAnyExists(key, others...)` | `required_with=a b` | `required_with` | `required` |
+| `RequiredIfMissing(key, others...)` | `required_without_all=a b` | `required_without` | `required` |
+| `RequiredIfAnyMissing(key, others...)` | `required_without=a b` | `required_without` | `required` |
+| `AfterField(key, other)` | `gtfield=other` | `date.after_field` | `too_small` |
+| `AfterOrEqualField(key, other)` | `gtefield=other` | `date.after_or_equal_field` | `too_small` |
+| `BeforeField(key, other)` | `ltfield=other` | `date.before_field` | `too_big` |
+| `BeforeOrEqualField(key, other)` | `ltefield=other` | `date.before_or_equal_field` | `too_big` |
+
+- `Confirmed("password")` compares the input `password` with `password_confirmation`, which need not be in the shape; a missing confirmation counts as different.
+- `Strict()` does not reject the `<key>_confirmation` input of a `Confirmed` rule, and `Passthrough` does not hand it over.
+- On a typed value (`Check(v)`, or `Parse` given a `T`) there is no raw input to ask whether a key was *sent*, so the rules that depend on it are skipped: `Confirmed` and the `RequiredIf*`, `RequiredWhen`, `required_with*` and `required_without*` rules. The comparison rules (`SameAs`, `NotSameAs`, the `*Field` date rules) still apply, to the fields that hold a non-zero value. `RequiredIf` reads the parsed value of the field it watches, so a `Default` on it counts.
+- A tag cites the other field by its **input key** (`json`/`form` name), not the Go name. Tag values are separated by spaces, so a value with a space needs the method.
+- The `RequiredIf*` and `RequiredWhen` rules need the target to be optional in the shape (a required key could never be missing); a key that is not in the shape, or `SameAs` over two fields of different Go types, is a panic at boot.
+- Rules that need a database or the network do not exist in `z`: they live in `orm.Validate`.
+- `JWT()` only checks the shape of a token (three base64url segments, a JSON header with an `alg`): it never verifies a signature, so use `auth/jwt` to accept one. `Escape()` stores HTML entities (`Tom &amp; Jerry`), which is wrong anywhere that is not HTML: `html/template` already escapes on output. It is not idempotent (a form that posts back the stored value escapes it twice) and the checks after it, `Min` and `Max` among them, count the escaped text. `Hex()`, `Base64()`, `Base64URL()` and `JWT()` read the whole value to check it: put a `Max(n)` on them to bound what a client can make the server read, and note that `JWT()` accepts a token whose `alg` is `none`: it is only a shape check.
 
 ## Coercion
 
@@ -156,6 +186,27 @@ Inputs arrive as JSON values (`string`, `float64`, `bool`, `[]any`, `map[string]
 | `Struct` | JSON object; bracketed form keys (`author[email]=…`) |
 
 `Check` (outgoing data) never coerces strings. Empty strings from forms count as absent for numbers, booleans, times and enums, so `Optional()`/`Default()` apply to empty inputs.
+
+For a string, `""` is a valid value. `EmptyAsAbsent()` on a struct reads an empty string sent for any field as a missing key, the way an HTML form sends a blank input: an optional field takes its `Default`, a required one reports `required`. `Bail()` makes each field report only its first issue (the checks of strings and numbers stop at the first failure); without it every issue of every field is collected.
+
+## Codecs and branded types
+
+`z.Transform` keeps the type. A `z.Codec` changes it and says how to go back, which `Check` and the JSON Schema need:
+
+```go
+// Seconds on the wire, a time.Duration in the domain.
+var TTL = z.Codec(z.Int64().Min(0),
+	func(sec int64) (time.Duration, error) { return time.Duration(sec) * time.Second, nil },
+	func(d time.Duration) (int64, error) { return int64(d / time.Second), nil },
+)
+
+d, err := TTL.Parse(json.Number("90")) // 1m30s
+sec, err := TTL.Encode(d)              // 90, validated by the wire schema
+```
+
+An error from `decode` becomes an issue like a `Refine` error does: `z.FieldError` and `z.FieldErrorKey` are honored and any other error gets the generic message, its text kept in `Issue.Err` for the logs. The JSON Schema is the wire schema's.
+
+`z.Brand[B](schema)` converts the result to the defined type `B`, whose underlying type must be the schema's: `type UserID int64` over `z.Int64().Positive()`.
 
 ## Errors
 
@@ -269,6 +320,37 @@ Supported rules, by the field kind they apply to:
 | `positive` | number | value > 0 |
 | `default=V` | string, number | `Default(V)`: used when the key is absent, or empty with `omitempty`; it also reaches the OpenAPI document. Never re-validated, so a value outside the field's own rules is a boot error. Contradicts `required` |
 | `unique` | list | `Unique()` |
+| `ip` | string | `IP()`: an IPv4 or IPv6 address, no zone |
+| `ipv4` | string | `IPv4()` |
+| `ipv6` | string | `IPv6()`, no zone |
+| `cidr` | string | `CIDR()`: an address with a prefix length |
+| `mac` | string | `MAC()`: a 48-bit hardware address |
+| `hostname` | string | `Hostname()` |
+| `e164` | string | `E164()`: an international phone number |
+| `slug` | string | `Slug()` |
+| `hex` | string | `Hex()` |
+| `base64` | string | `Base64()` |
+| `base64url` | string | `Base64URL()` |
+| `jwt` | string | `JWT()`: the shape of a token only, never its signature (`alg: none` passes) |
+| `iso_date` | string | `ISODate()` |
+| `iso_time` | string | `ISOTime()` |
+| `iso_datetime` | string | `ISODateTime()` |
+| `iso_duration` | string | `ISODuration()` |
+| `uppercase` | string | `ToUpper()`, a pre-step, like `trim` |
+| `normalize_email` | string | `NormalizeEmail()`, a pre-step: trimmed and lower-cased |
+| `escape` | string | `Escape()`, a pre-step: HTML entities are stored, escaped again if posted back, and counted by `min`/`max`; see [Cross-field rules](#cross-field-rules) |
+| `confirmed` | any kind | `Confirmed(key)`: equals the `<key>_confirmation` input |
+| `same=KEY` | any kind | `SameAs(key, other)`; cites the other field by its input key |
+| `different=KEY` | any kind | `NotSameAs(key, other)` |
+| `required_if=KEY V1 V2` | any kind | `RequiredIf(key, other, values...)`; values separated by spaces, the field must be optional |
+| `required_with=K1 K2` | any kind | `RequiredIfAnyExists`: required when any of the keys was sent |
+| `required_with_all=K1 K2` | any kind | `RequiredIfExists`: required when all of the keys were sent |
+| `required_without=K1 K2` | any kind | `RequiredIfAnyMissing`: required when any of the keys is missing |
+| `required_without_all=K1 K2` | any kind | `RequiredIfMissing`: required when none of the keys was sent |
+| `gtfield=KEY` | time field | `AfterField` |
+| `gtefield=KEY` | time field | `AfterOrEqualField` |
+| `ltfield=KEY` | time field | `BeforeField` |
+| `ltefield=KEY` | time field | `BeforeOrEqualField` |
 
 A bool, a `time.Time`, an `any` (any JSON value), a `map[string]any` (a JSON object) and a nested struct take no rule but `required`; any other rule on them is a boot panic, as is an unknown rule or a bad argument. `required` on a string means non-empty; on a list it means present and not null (an empty list passes, as with OpenAPI `required`), so use `min=1` for a non-empty list. Pointer fields are optional and nullable. A `map[string]V` field is parsed from a JSON object with `V` derived recursively; `min`/`max` count entries and the rules after `dive` apply to each value (`map[string]string` with `validate:"min=1,dive,max=20"`). Only string keys are supported; any other key type is a boot panic, as is an unsupported field kind.
 
@@ -293,6 +375,7 @@ The table above is checked against the implementation by `TestTagRules_Documente
 
 ## Design notes
 
+- Rules never do I/O; database-backed rules live in `orm.Validate`.
 - No reflection on the hot path beyond struct field assignment: field offsets and setters are resolved once when `z.Struct` is built.
 - Schemas are immutable values; every modifier returns a new schema, so sharing them across goroutines is safe.
 - Inspired by [Zod](https://zod.dev/) and, in Go, by [zog](https://github.com/Oudwins/zog); implemented in-house to keep the core dependency-free.
