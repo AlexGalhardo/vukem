@@ -1,8 +1,8 @@
 <script lang="ts">
   import PostForm from "../../components/PostForm.svelte";
-  import type { Post } from "../../types";
+  import type { Page } from "../../page-props";
 
-  let { post }: { post: Post } = $props();
+  let { post }: Page<"Posts/Edit"> = $props();
 </script>
 
 <svelte:head>

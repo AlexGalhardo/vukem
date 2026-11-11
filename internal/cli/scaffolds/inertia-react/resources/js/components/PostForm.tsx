@@ -1,7 +1,7 @@
 import { useForm } from "@inertiajs/react";
 import type { FormEvent } from "react";
 
-import type { Post } from "../types";
+import type { Post } from "../page-props";
 
 const input =
   "mt-1 block w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 focus:border-indigo-500 focus:outline-none dark:border-zinc-700";

@@ -1,9 +1,9 @@
 <script lang="ts">
   import { Link } from "@inertiajs/svelte";
 
-  import type { Post } from "../../types";
+  import type { Page } from "../../page-props";
 
-  let { post }: { post: Post } = $props();
+  let { post }: Page<"Posts/Show"> = $props();
 </script>
 
 <svelte:head>

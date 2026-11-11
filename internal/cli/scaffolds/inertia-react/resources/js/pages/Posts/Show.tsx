@@ -1,8 +1,8 @@
 import { Head, Link } from "@inertiajs/react";
 
-import type { Post } from "../../types";
+import type { Page } from "../../page-props";
 
-export default function Show({ post }: { post: Post }) {
+export default function Show({ post }: Page<"Posts/Show">) {
   return (
     <>
       <Head title={post.title} />

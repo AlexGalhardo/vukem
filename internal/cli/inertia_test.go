@@ -55,7 +55,7 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				"bootstrap/app.go",
 			); !strings.Contains(
 				app,
-				"vukem.WithInertia(inertia.Config{})",
+				"vukem.WithInertia(inertia.Config{Pages: pages.All(), SharedType: reflect.TypeFor[pages.Shared]()})",
 			) {
 				t.Errorf("bootstrap/app.go =\n%s", app)
 			}

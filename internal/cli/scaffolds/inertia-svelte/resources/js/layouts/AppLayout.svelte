@@ -3,7 +3,7 @@
   import type { Snippet } from "svelte";
 
   import { demoInstalled, demoLink } from "../demo";
-  import type { SharedProps } from "../types";
+  import type { SharedProps } from "../page-props";
 
   let { children }: { children: Snippet } = $props();
 

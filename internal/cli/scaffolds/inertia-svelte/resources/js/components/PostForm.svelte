@@ -1,7 +1,7 @@
 <script lang="ts">
   import { useForm } from "@inertiajs/svelte";
 
-  import type { Post } from "../types";
+  import type { Post } from "../page-props";
 
   let { post }: { post?: Post } = $props();
 

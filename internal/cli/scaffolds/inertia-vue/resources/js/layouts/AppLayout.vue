@@ -3,7 +3,7 @@ import { Link, usePage } from "@inertiajs/vue3";
 import { computed } from "vue";
 
 import { demoInstalled, demoLink } from "../demo";
-import type { SharedProps } from "../types";
+import type { SharedProps } from "../page-props";
 
 const link = "text-indigo-600 hover:underline dark:text-indigo-400";
 
