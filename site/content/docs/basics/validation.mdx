@@ -124,9 +124,21 @@ curl -s -X POST localhost:3000/posts/7/comments \
   "errors": {
     "author": ["The author field must be at least 2 characters."],
     "body": ["The body field must be at least 3 characters."]
-  }
+  },
+  "issues": [
+    {
+      "path": "author", "code": "too_small", "key": "too_small.string", "on": "body",
+      "message": "The author field must be at least 2 characters.", "params": { "min": 2 }
+    },
+    {
+      "path": "body", "code": "too_small", "key": "too_small.string", "on": "body",
+      "message": "The body field must be at least 3 characters.", "params": { "min": 3 }
+    }
+  ]
 }
 ```
+
+`errors` maps each field to its messages. `issues` lists each problem with what a client needs to build its own text: `path`, `code`, the message `key` (omitted for a custom message), the `params` and `on`, where the value came from (`body` for `web.Parse`, which merges the query string into the body, `query` or `params`; omitted when unknown). `Issue.Err`, the error a `Refine` returned, is never sent.
 
 A browser posting the same form gets a redirect back to the post page instead, with the messages and the typed text kept for the next page ([see below](#what-the-client-receives)).
 
@@ -467,7 +479,7 @@ The same holds for an `*errs.ValidationError` you wrap with a 5xx status: the re
 | `Path` | `tags.2`, `author.email`, `""` | Dotted path to the value; list items use their index |
 | `Code` | `too_small` | Stable code for programs (table below) |
 | `Message` | "The title field must be at least 3 characters." | Text for people |
-| `Key` | `too_small.string` | The message key used for translation (not sent as JSON) |
+| `Key` | `too_small.string` | The message key used for translation; `key` in the `issues` member of a 422 |
 | `Params` | `{"min": 3}` | Values used in the message |
 | `Err` | the error `Refine` returned | Server-side only, never shown |
 
@@ -498,7 +510,7 @@ You never format these answers yourself. When `web.Parse` fails, the error handl
 | --- | --- |
 | HTML form post, with the session middleware | `303 See Other` back to the `Referer` (same origin only, else `/`), with the errors and the submitted input flashed |
 | htmx (`HX-Request: true`) | `422` with an HTML fragment listing the errors |
-| JSON client (`Accept: application/json`) | `422` `application/problem+json` with the `errors` map |
+| JSON client (`Accept: application/json`) | `422` `application/problem+json` with the `errors` map and the `issues` list (code, key, params, origin) |
 | `GET` or `HEAD` request | `422` error page: these never redirect back, since the previous page may be this one |
 
 After the redirect, the form page reads what was flashed:

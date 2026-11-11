@@ -137,7 +137,7 @@ Failure behaviour (centralised in the error handler):
 | HTML form | `303` back, errors + old input flashed |
 | HTMX | `422` re-rendering the form fragment (htmx 4 swaps 4xx) |
 | Inertia (BETA) | `303` back; errors shared as `props.errors` |
-| JSON / API | `422` `application/problem+json` with `errors` map |
+| JSON / API | `422` `application/problem+json` with an `errors` map and an `issues` list (path, code, key, params, `on`: body, query or params) |
 
 ## Sessions
 

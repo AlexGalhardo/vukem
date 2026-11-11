@@ -488,7 +488,7 @@ r.Post("/posts", inertia.Precognitive(requests.PostSchema, posts.Store)).
 | Request | Answer |
 | --- | --- |
 | `Precognition: true`, valid input | `204` with `Precognition: true` and `Precognition-Success: true`; the handler does not run |
-| `Precognition: true`, invalid input | `422` with `{"message": "...", "errors": {"title": ["..."]}}` |
+| `Precognition: true`, invalid input | `422` with `{"message": "...", "errors": {"title": ["..."]}, "issues": [...]}`; `issues` lists each problem with its path, code, key, params and origin, and the Inertia client ignores it |
 | `Precognition-Validate-Only: title,body` | the same, with only those fields (and their nested `title.*` paths) |
 | no `Precognition` header | the wrapped handler runs and parses the input itself |
 

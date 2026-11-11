@@ -303,7 +303,7 @@ return inertia.Render(c, "Posts/Index", inertia.Props{
 | Page object | `component`, `props` (+`errors`), `url`, `version`, `encryptHistory`, `clearHistory`, `preserveFragment`, `mergeProps`, `prependProps`, `deepMergeProps`, `matchPropsOn`, `scrollProps`, `deferredProps`, `rescuedProps`, `sharedProps`, `onceProps`, `flash` |
 | Redirects | 302 → 303 for PUT/PATCH/DELETE; `inertia.Location(url)` (409 external); fragment redirects via `X-Inertia-Redirect`; `Back` |
 | History & flash | `Config.EncryptHistory` (opt-in, needs a secure context) or `inertia.EncryptHistory(ctx, bool)` per page; `inertia.ClearHistory(c)` on logout; `inertia.Flash(c, key, value)` fills `page.flash` once (survives redirects; prefetch requests do not consume it) |
-| Precognition | `r.Post("/users", inertia.Precognitive(schema, h))`: `Precognition: true` requests only validate (204 + `Precognition-Success`, or 422 `{message, errors}` filtered by `Precognition-Validate-Only`), `Vary: Precognition` always |
+| Precognition | `r.Post("/users", inertia.Precognitive(schema, h))`: `Precognition: true` requests only validate (204 + `Precognition-Success`, or 422 `{message, errors, issues}` filtered by `Precognition-Validate-Only`; `issues` carries each problem's path, code, key, params and `on`, and is additive: the Inertia client reads `message` and `errors`), `Vary: Precognition` always |
 | Shared data | `inertia.Share(key, fn)` globally or per request (middleware); auth user + flash by default |
 | Validation | errors flashed + `303` back; surfaced as `props.errors` |
 | Version | hash of the Vite manifest |
