@@ -214,3 +214,56 @@ func TestGoClientRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// A route pattern or a summary that holds "*/" must not close the doc comment
+// of its method and turn the rest of the text into code of the client.
+func TestSecurity_A03_TypeScriptClientCommentCannotBeClosed(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.Register(r, "GET /x*/;alert(1);/*/y", api.Op{Name: "x.y", Summary: "ok */ alert(2); /*"},
+		func(*web.Ctx, struct{}) (struct{}, error) { return struct{}{}, nil })
+
+	if _, err := r.Handler(); err != nil {
+		t.Skipf("the router refuses the pattern: %v", err)
+	}
+
+	got, err := openapi.TypeScriptClient(openapi.Generate(r.Routes(), openapi.Info{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for line := range strings.Lines(got) {
+		if body := strings.TrimSpace(line); strings.HasPrefix(body, "* ") && strings.Contains(body, "*/") {
+			t.Errorf("a doc comment line closes its comment early: %q", line)
+		}
+	}
+}
+
+// A summary with a line break must not start a line of Go code in the client.
+func TestSecurity_A03_GoClientCommentCannotBeBroken(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.Register(
+		r,
+		"GET /things",
+		api.Op{Name: "things.list", Summary: "List things\nfunc init() { panic(\"injected\") }"},
+		func(*web.Ctx, struct{}) (struct{}, error) { return struct{}{}, nil },
+	)
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := openapi.GoClient(openapi.Generate(r.Routes(), openapi.Info{}), "thingsclient")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for line := range strings.Lines(string(got)) {
+		if strings.Contains(line, "injected") && !strings.HasPrefix(strings.TrimSpace(line), "//") {
+			t.Errorf("text of a summary became code: %q", line)
+		}
+	}
+}
