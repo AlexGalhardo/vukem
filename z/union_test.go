@@ -322,3 +322,18 @@ func TestUnionWorkIsBounded(t *testing.T) {
 		t.Errorf("issues = %+v", is)
 	}
 }
+
+// The counter of union work must stop at the limit: a uint16 that wrapped
+// would give the budget back after 65536 attempts.
+func TestSpendNestedSaturates(t *testing.T) {
+	t.Parallel()
+
+	c := &pctx{unions: 1}
+
+	for i := range 70_000 {
+		ok := c.spendNested()
+		if want := i < maxNestedUnionWork; ok != want {
+			t.Fatalf("attempt %d: spendNested() = %v, want %v", i+1, ok, want)
+		}
+	}
+}

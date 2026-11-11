@@ -666,8 +666,13 @@ func (s StructSchema[T]) parseAny(c *pctx, path string, in any, present bool) (a
 		out, _ := reflect.TypeAssert[T](rv)
 
 		if s.extra != nil {
+			// A copy of its own: taking the address of out itself would
+			// move it to the heap on every parse, Passthrough or not.
+			dst := out
 			m, _ := in.(map[string]any)
-			s.extra(&out, s.core.unknownKeys(m))
+			s.extra(&dst, s.core.unknownKeys(m))
+
+			out = dst
 		}
 
 		return out, true
