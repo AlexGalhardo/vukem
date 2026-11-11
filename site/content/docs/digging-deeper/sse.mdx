@@ -304,7 +304,7 @@ type Broker interface {
 }
 ```
 
-`Subscribe` must end the subscription and close the returned channel once `ctx` is done: the hub cancels that context when a topic loses its last local subscriber. Payloads that are not valid event JSON are ignored.
+`Subscribe` must end the subscription and close the returned channel once `ctx` is done: the hub cancels that context when a topic loses its last local subscriber. Payloads that are not valid event JSON are ignored. Call `ssetest.Run(t, broker, ssetest.Options{})` from `sse/ssetest` in a test to check your broker against the contract (set `MaxPayload` if it has a size limit).
 
 ## In the browser and with htmx
 
