@@ -477,6 +477,29 @@ jobs:
           MARIADB_URL: mariadb://vukem:vukem@localhost:53307/vukem_test
         run: go test -tags=integration -count=1 ./...
 
+  # Experimental module: not a required check (.config/ruleset-protect-main.json).
+  turso:
+    name: Turso driver (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Tests (module alone)
+        working-directory: drivers/turso
+        env:
+          GOWORK: "off"
+        run: go test -count=1 ./...
+      - name: Tests (workspace, current core, including the dbtest suite)
+        working-directory: drivers/turso
+        run: go test -count=1 ./...
+
   postgres:
     name: Postgres driver (integration)
     runs-on: ubuntu-latest
