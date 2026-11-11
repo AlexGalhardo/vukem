@@ -160,7 +160,7 @@ Each app has its own id prefix:
 | `vukem-email` | `VE-` |
 | `hexascore` | `HS-` |
 | `vukem-trading` | `TR-` |
-| `vukem-studio` | `ST-` |
+| `vukem-video` | `VD-` for new entries; existing `ST-` entries (from before the app was renamed) keep their ids |
 | `vukem-music` | `MU-` (proposed) |
 | `vukem-tools` | `TL-` (proposed) |
 
