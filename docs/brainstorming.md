@@ -73,6 +73,7 @@ blog/
 | D3 | SQLite | **`modernc.org/sqlite`** (pure Go, no cgo) default; WAL, `busy_timeout`, `foreign_keys` on; single-connection write pool; driver name fixed to `sqlite`; other SQLite-compatible engines plug in as a `database.Driver` whose dialect reports `Family: "sqlite"` | mattn (cgo); ncruces (wasm) | Windows + static binaries; PocketBase precedent |
 | D4 | Postgres | `jackc/pgx/v5` via `stdlib` in `drivers/postgres` module | lib/pq | De-facto standard |
 | D5 | Mongo / Redis | Separate modules; Mongo gets its own `Collection[T]` API (not the SQL builder); Redis backs cache/session/queue/locks | force Mongo into ORM | Different data models |
+| D6 | Turso | `turso.tech/database/tursogo` (pure Go, no cgo) in the experimental `drivers/turso` module, pinned to an exact pre-1.0 version; a local file with optional sync to Turso Cloud | `go-libsql` (cgo, no Windows); `libsql-client-go` (deprecated); wait for 1.0 | Only SDK that keeps Windows and no-cgo; isolated in its own module; an exception to the stable-only rule approved by the maintainer on 2026-11-11 |
 
 ## HTTP features
 

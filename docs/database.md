@@ -35,6 +35,7 @@ The ORM is SQL-first and typed. These principles decide what gets added and what
 | SQLite | `modernc.org/sqlite` (pure Go) | core | Prototype |
 | PostgreSQL | `jackc/pgx/v5/stdlib` | `drivers/postgres` | ALPHA |
 | MySQL 8 / MariaDB 11 | `go-sql-driver/mysql` | `drivers/mysql` | BETA |
+| Turso | `turso.tech/database/tursogo` (pure Go) | `drivers/turso` | Experimental |
 | Redis | `redis/go-redis/v9` | `drivers/redis` | BETA |
 | MongoDB | `go.mongodb.org/mongo-driver/v2` | `drivers/mongo` | BETA |
 
@@ -135,6 +136,56 @@ PRAGMA temp_store = MEMORY;
 - SQLite reports no column type for `MIN`/`MAX`/`COALESCE` or a subquery over a timestamp column, so the driver returns the stored text and a bare `Scan` into `time.Time` fails. `database.ScanTime(&dest)` (`*time.Time`, `**time.Time`, `*sql.NullTime`, `*sql.Null[time.Time]`) parses the driver's and SQLite's text forms (dates, date-times with `T` or a space, `Z` or an offset; not time-only text or unix integers) and passes a `time.Time` from any dialect through; zoned text comes back in a fixed zone, so compare with `Equal`; the ORM wraps its time fields with it on SQLite. String destinations stay raw (no global `_texttotime`: it would turn `MAX(day)` over text dates into RFC 3339 strings).
 
 Apps that never open a SQLite database can leave the driver out with the `vukem_nosqlite` build tag (`go build -tags vukem_nosqlite`, or `vukem_nosqlite` in the project's `.buildtags`, which `vukem new --minimal` writes). `database.Open` then refuses SQLite URLs with an error naming the tag. Tests (`vukemtest`) keep using in-memory SQLite, so run them without the tag.
+
+### Turso (experimental)
+
+Turso is a SQLite-compatible engine. `drivers/turso` keeps a **local database file** and, when you give it a Turso Cloud database, syncs that file with it. It depends on a pre-1.0 SDK (`turso.tech/database/tursogo`, exact version) and may change in any release; the module is marked experimental.
+
+```sh
+go get github.com/AlexGalhardo/vukem/drivers/turso
+```
+
+```go
+// bootstrap/app.go
+tursoOpts, err := turso.OptionsFromEnv()
+if err != nil {
+	return nil, err
+}
+
+db := turso.New(tursoOpts)
+
+base := []vukem.Option{
+	vukem.WithDatabaseDrivers(db.Driver()), // turso:// URLs
+	vukem.WithRunner("turso-sync", db),     // background sync
+	// ...
+}
+```
+
+| Variable | Example | Meaning |
+| --- | --- | --- |
+| `DATABASE_URL` | `turso://storage/database.db` | The local file, relative to the working directory. Absolute: `turso:///var/data/app.db`; Windows: `turso:///C:/data/app.db`. |
+| `TURSO_DATABASE_URL` | `libsql://myapp-org.turso.io` | The Turso Cloud database. Empty: a plain local file with no sync. |
+| `TURSO_AUTH_TOKEN` | (secret) | The database token, required with `TURSO_DATABASE_URL`. It never appears in an error or a log line. |
+| `TURSO_SYNC_INTERVAL` | `5s` | Pause between background syncs; `-1s` turns them off. |
+
+`TURSO_DATABASE_URL` must be `libsql://` or `https://`; `http://` is accepted only for a loopback host. With a remote database the app pulls on open (a failed pull is a warning when the local file already exists), pushes and pulls every interval, and pushes once more when the connection closes, so a short command such as `migrate` leaves its changes in the cloud. `(*turso.Database).Sync(ctx)` syncs on demand. Create the database and the token with the Turso CLI:
+
+```sh
+turso db create myapp
+turso db show myapp --url
+turso db tokens create myapp
+```
+
+What does not work:
+
+- `db:backup` and `db:restore` refuse: only the built-in SQLite has a file snapshot.
+- One connection for reads and writes, no reader/writer split. Inside a transaction use only the transaction's executor: a query on the database itself waits for that connection and blocks until its context ends, so give such queries a deadline. Close the database after the sync runner has stopped, so the final push does not race a background sync.
+- `Schema.Dialect()` returns `"turso"`, not `"sqlite"`: migration code must test the family (`database.CapabilitiesOf(db.Dialect())`), not the name.
+- No migration lock: with several instances, run `migrate` in one place (a release phase) and let the others pull.
+- Conflicts are "last push wins" (the upstream's rule), so several instances must not write the same row.
+- Libraries ship for linux and darwin (amd64, arm64) and windows/amd64 only; windows/arm64 and other platforms are not supported.
+- `vukemtest` keeps using the in-memory SQLite of the built-in driver.
+- A local file that is deleted (an ephemeral deploy) is rebuilt from the cloud when `TURSO_DATABASE_URL` is set; without it the data is gone, as with any SQLite file.
 
 ## Query builder
 
