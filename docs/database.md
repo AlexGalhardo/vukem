@@ -189,11 +189,62 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 | Lock | `LockForUpdate()`, `ForShare()`, then optional `SkipLocked()` / `NoWait()`; needs a `*database.Tx` (`orm.ErrLockOutsideTx` otherwise); all four are no-ops on SQLite, where `NoWait` never fails |
 | Paginate | `Paginate(ctx, page, perPage)` → `Page[T]{Items, Total, Page, PerPage, LastPage}`; `CursorPaginate(ctx, cursor, perPage, dir)` → `CursorPage[T]` (keyset = the query's `OrderBy` columns plus the primary key in `dir`, or the primary key alone; cursor values decoded into the columns' Go types; keys must be NOT NULL); `MaxPerPage(n)` |
 | Scopes | `Scope(fns ...func(Query[T]) Query[T])` |
-| Raw | `WhereRaw(sql, args...)` for conditions; `db.QueryContext` for anything else |
+| Join | `InnerJoin[J](left, op, right)`, `LeftJoin[J](...)`, `JoinRelation(name)`, `LeftJoinRelation(name)`; columns are validated and written with their table name |
+| Aggregate | `Distinct()`, `GroupBy(cols...)`, `Having(orm.Sum("col"), ">", 100)`, `HavingRaw`; terminals `Sum[V]`, `Avg`, `Min[V]`, `Max[V]`; `Count` counts distinct rows after `Distinct()` |
+| Projection | `SelectAs(col, alias)`, `SelectExpr(orm.Sum("col"), alias)`, then `Scan[R](ctx)` into any struct |
+| Subquery | `WhereExists(sub)`, `WhereNotExists(sub)`, `WhereInQuery(col, sub)`, `WhereNotInQuery`, `WhereColumn(left, op, right)`, and `sub.WhereOuter[Outer](col, op, outerCol)` to correlate |
+| Relation filters | `WhereHas[R](relation, fn)`, `WhereDoesntHave[R](relation, fn)`, `WithCount(relations...)`, `WithWhere[R](relation, fn)` |
+| Raw | `WhereRaw(sql, args...)` for conditions; `orm.Raw[R](ctx, ex, sql, args...)` and `orm.RawEach[R]` for typed SELECTs; `db.QueryContext` for anything else |
 
 `OrWhere*` conditions join with `OR` and `AND` binds tighter, as in Laravel: `Where(a).OrWhere(b).Where(c)` is `a OR (b AND c)`; use `WhereGroup` / `OrWhereGroup` to group. The ORM's own conditions (soft delete, the key of `Find`, `Chunk` and cursor pagination) wrap your `OR` filter in parentheses first, so they always apply to all of it. `ILIKE` is native on PostgreSQL; on MySQL and SQLite it is sent as `LIKE`, which is case-insensitive there only for ASCII letters (and, on MySQL, by the column collation).
 
 The ORM needs MySQL to report matched rows for `UPDATE` (`clientFoundRows=true`, the default of `drivers/mysql`): with `false`, an update that changes nothing looks like a missing row (`ErrNotFound`). That includes connections wrapped with `database.FromSQL`, whose DSN the framework does not see.
+
+### Joins and projections
+
+Joins name the other model as a type parameter, so its table and columns are checked against its metadata; nothing typed by hand becomes an identifier. The result stays `[]T`: read other tables' columns with `SelectAs` and `Scan[R]`, which maps result columns to the fields of any struct by name (a column the struct has no field for, or a repeated one, is an error, so a misspelt alias shows up in a test).
+
+```go
+type AuthorTotal struct {
+	Name  string
+	Total int64
+}
+
+rows, err := orm.QueryOf[Post](db).
+	InnerJoin[User]("users.id", "=", "posts.user_id").
+	SelectAs("users.name", "name").
+	SelectExpr(orm.Sum("posts.views"), "total").
+	GroupBy("users.name").
+	Having(orm.Sum("posts.views"), ">", 100).
+	Scan[AuthorTotal](ctx)
+```
+
+```sql
+SELECT "users"."name" AS "name", SUM("posts"."views") AS "total"
+FROM "posts" INNER JOIN "users" ON "users"."id" = "posts"."user_id"
+GROUP BY "users"."name" HAVING SUM("posts"."views") > $1
+```
+
+- With a join, the model's own columns and its soft delete filter are qualified with the table. A joined model with `SoftDeletes` adds `deleted_at IS NULL` to its `ON`. Joining a table twice (self joins) is an error: use `orm.Raw`. `Update` and `Delete` refuse joins; filter with `WhereHas` or `WhereInQuery`.
+- A join on a "many" relation repeats the rows of `T`: use `Distinct()` or `WhereHas` (an `EXISTS` subquery that never repeats rows and pages correctly). `Paginate` counts the joined rows unless the query is `Distinct()`; `CursorPaginate` refuses joins and `GroupBy`.
+- `Get`, `First`, `Each` and `Count` refuse a query with `SelectAs`, `SelectExpr` or `GroupBy`: read it with `Scan`.
+- `Sum` of no rows is zero (`COALESCE(SUM(col), 0)`, so use it on numeric columns); `Min`, `Max` and `Avg` of no rows are `orm.ErrNotFound`. Pick `V` to match the column: `SUM` and `AVG` of a `DECIMAL` column come back as text or float depending on the driver, so use `float64` or `string` there. A join on a "many" relation repeats rows before they are aggregated, so a `Sum` over it counts each parent once per child: aggregate over a `GroupBy`, or use `WhereHas`. Encrypted columns cannot be grouped or aggregated.
+- A subquery renders its own SQL and is embedded in the outer statement, which is numbered once. `WhereInQuery` needs a subquery that selects one column; MySQL rejects a `Limit` inside `IN` and its error is returned as it comes. `WhereOuter` writes both sides with their table names, so the two models must be different tables.
+- `orm.Raw[R]` rebinds `?` with `database.RebindChecked` (an unterminated literal, or `?` mixed with `$1` on PostgreSQL, is an error), reads one column into a scalar `R` or several into a struct, and never includes the whole query text in an error. Encrypted columns are not supported in `R`.
+
+### Upsert
+
+```go
+err := orm.Upsert(ctx, db, &user, orm.OnConflict{Columns: []string{"email"}, Update: []string{"name"}})
+err = orm.UpsertMany(ctx, db, users, orm.OnConflict{Columns: []string{"email"}, DoNothing: true})
+```
+
+One statement: `INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id` on PostgreSQL and SQLite, `INSERT ... ON DUPLICATE KEY UPDATE col = VALUES(col)` on MySQL and MariaDB. `Columns` is required; `Update` empty means every writable column except the key, `created_at` and `Columns`; `updated_at` is always refreshed. The generated key of the inserted or the existing row is written back (with `DoNothing` and an existing row it stays zero); `UpsertMany` writes no keys and batches under the dialect's parameter limit in one transaction. A clash on another unique index is `orm.ErrConflict`.
+
+- **No hooks run**: `Upsert` and `UpsertMany` call none of `BeforeCreate`, `AfterCreate`, `BeforeUpdate` or `AfterUpdate`, because the database, not the ORM, decides between insert and update.
+- MySQL and MariaDB have no conflict target: any unique index of the table triggers the update, so make `Columns` the columns of the unique index you mean. The generated id of an existing row comes from `LAST_INSERT_ID(id)` in the update clause (the ORM needs `clientFoundRows=true`, the `drivers/mysql` default).
+- **Soft deletes**: `Upsert` never modifies or revives a row in the trash. `deleted_at` is never among the updated columns, the update is skipped for a trashed row, and the call returns `orm.ErrConflict` (`row is trashed; Restore it first`); call `orm.Restore` first. An encrypted column cannot be a conflict column.
+- `UpsertMany`: two models with the same value in the conflict columns in one batch fail on PostgreSQL (a row cannot be affected twice); `Columns` must not be the generated key; one trashed match rolls the whole batch back.
 
 `orm.Update` writes every column of the struct, so it overwrites what another writer changed since the struct was read; `orm.UpdateOnly(ctx, ex, &m, cols...)` writes only the named columns plus `updated_at` (unknown, key, `created_at` and `orm:"readonly"` columns are errors) and runs the same hooks. Both skip a row in the trash (a model with `orm.SoftDeletes` whose `deleted_at` is set): they return `orm.ErrNotFound`; change a trashed row with `QueryOf[T](ex).OnlyTrashed().Where(...).Update(ctx, orm.Set{...})`. A unique violation is `orm.ErrConflict`, detected by the driver error code (PostgreSQL SQLSTATE `23505`, SQLite result codes, MySQL error 1062), never by searching the message text; executors that wrap a `*database.DB` fall back to the text the built-in drivers produce.
 
@@ -321,7 +372,9 @@ _, err = plain.User.Get()          // orm.ErrNotLoaded: relations are never lazy
 - Relation fields are not columns; with `json:",omitzero"` they appear in JSON only when loaded.
 - Pivot writes: `orm.Attach(ctx, db, &post, "Tags", 1, 2)` (skips ids already linked), `orm.Detach(ctx, db, &post, "Tags", 2)` (no ids: all), `orm.Sync(ctx, db, &post, "Tags", 1, 3)` (exact set, in a transaction).
 - Relation keys of a type that implements `driver.Valuer` (such as `uuid.UUID`) are matched by their column form, so `With`, `Attach` and `Sync` work with UUID keys stored as text or as the PostgreSQL `uuid` type; a `BINARY(16)` key is not supported.
-- Nested eager loading (`"Comments.User"`) is not supported yet; load the second level with its own query.
+- Nested eager loading: `With("Comments.User")` loads `Comments`, then `User` of every loaded comment (3 queries for N posts); `With("Comments", "Comments.User")` does not load `Comments` twice. Each level loads all its rows, with no limit per parent.
+- `WithWhere[R](relation, fn)` narrows a relation's rows with the `Where` conditions and `OrderBy` of the query `fn` builds (`Limit`, `Offset`, joins, locks and projections are errors).
+- `WithCount("Comments")` fills the `int64` field tagged `orm:"count:Comments"` (not a column) with one `GROUP BY` query per relation; it supports `HasMany` and `ManyToMany`.
 
 ## Migrations
 
@@ -485,19 +538,13 @@ Checked against the code at v0.40.0. Until one of these lands, the workaround is
 
 | Area | Missing today | Workaround |
 | --- | --- | --- |
-| Query shape | Joins, `DISTINCT`, `GROUP BY`/`HAVING` beyond `GroupCount`, `SUM`/`AVG`/`MIN`/`MAX`, subqueries (`EXISTS`, `IN (SELECT …)`) | `db.QueryContext` with `database.Rebind` |
-| Relations | Filtering by a relation, counting a relation, nested eager loading (`"Comments.User"`), constraints on an eager load, polymorphic and has-many-through relations | Load the second level with its own query |
-| Writes | Upsert (`ON CONFLICT` / `ON DUPLICATE KEY`), find-or-create, a version column for optimistic locking | `db.ExecContext` inside `db.Tx` |
-| Results | Typed raw queries and scanning into a struct that is not the model | `Pluck[V]` for one column, `database/sql` for the rest |
+| Query shape | `RIGHT`/`FULL` joins, self joins and table aliases, CTEs, `UNION`, window functions | `orm.Raw` |
+| Relations | Polymorphic and has-many-through relations, a limit per parent in `WithWhere` | Load the second level with its own query |
+| Writes | Find-or-create (two hidden queries; `Upsert` covers most uses), a version column for optimistic locking | `db.ExecContext` inside `db.Tx` |
 | Transactions | Savepoints, isolation levels and read-only transactions (`db.Tx` starts every transaction with the driver default) | `db.SQL().BeginTx` with `sql.TxOptions` |
 | Columns | Compile-time column references (names are strings checked at run time) | The runtime check fails before the query runs |
 | Migrations | Table rebuild on SQLite, changing a column's type, reading an existing schema, generating a migration from a diff, detecting migrations that conflict across branches | `s.Raw`; write the migration by hand |
 | Databases | Turso / libSQL | A SQLite file |
-
-Two behaviours to know until they change:
-
-- `orm.Update(ctx, ex, &model)` writes every column and does not filter on `deleted_at`, so it can overwrite another writer's change and it updates a row that is in the trash. Use `Query.Update(ctx, orm.Set{…})` to write only the columns that changed.
-- A unique-constraint violation is recognised from the driver's error text (`orm.ErrConflict`), not from a typed driver error.
 
 ## Lessons from other ORMs
 
