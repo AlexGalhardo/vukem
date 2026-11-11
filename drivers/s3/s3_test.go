@@ -789,3 +789,32 @@ func TestDefaultTransportKeepsIdleConnectionsPerHost(t *testing.T) {
 		t.Errorf("MaxIdleConnsPerHost = %d, want >= 32", got)
 	}
 }
+
+func TestSecurity_A01_URLRejectsTraversal(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig("http://localhost:9000")
+	cfg.PublicURL = "https://cdn.example.com"
+
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]string{
+		"a/b.png":     "https://cdn.example.com/a/b.png",
+		"a/./b.png":   "https://cdn.example.com/a/b.png",
+		"/a/b.png":    "https://cdn.example.com/a/b.png", // a leading slash was always trimmed
+		"a/../../x":   "",
+		"../x":        "",
+		"a/../../b/x": "",
+		`a\..\..\x`:   "",
+		"":            "",
+	}
+
+	for key, want := range tests {
+		if got := d.URL(key); got != want {
+			t.Errorf("URL(%q) = %q, want %q", key, got, want)
+		}
+	}
+}

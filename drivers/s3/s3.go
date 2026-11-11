@@ -605,13 +605,20 @@ func (d *Disk) listPage(ctx context.Context, prefix string, q url.Values) (listR
 }
 
 // URL implements storage.Disk: PublicURL + "/" + key, or "" for a private
-// disk (use PresignGet for temporary links).
+// disk (use PresignGet for temporary links). A key that storage.Clean
+// rejects, as Put would, also yields "".
 func (d *Disk) URL(p string) string {
 	if d.publicURL == "" {
 		return ""
 	}
 
-	return d.publicURL + "/" + encodePath(strings.TrimPrefix(p, "/"))
+	// A leading slash was always trimmed here; keep that, reject the rest like Put.
+	key, err := storage.Clean(strings.TrimPrefix(p, "/"))
+	if err != nil {
+		return ""
+	}
+
+	return d.publicURL + "/" + encodePath(key)
 }
 
 // PresignGet returns a URL anyone can use to download p until expires
