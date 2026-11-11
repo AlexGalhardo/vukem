@@ -20,5 +20,5 @@
     "MD060": false
   },
   "globs": ["**/*.md"],
-  "ignores": ["**/node_modules/**", "**/testdata/**", ".claude/skills/**", "CREATE.md", "plans/**"]
+  "ignores": ["**/node_modules/**", "**/testdata/**", "site/out/**", ".claude/skills/**", "CREATE.md", "plans/**"]
 }
