@@ -186,8 +186,8 @@ Rules: `Min(n)`, `Max(n)`, `Positive()` (greater than 0), `NonNegative()` (0 or 
 
 ### Lists, maps and files
 
-- **`z.Slice(elem)`** produces `[]E`, where `E` is the type of `elem`. Rules: `Min(n)`, `Max(n)`, `Len(n)`, `NonEmpty()`, `Unique()` (code `not_unique`). Each element is parsed with `elem`, so errors point at `tags.2`. From a form, a single value becomes a one-item list. `Default(v)` panics at boot when `v` is not a slice of the element type.
-- **`z.Map(value)`** produces `map[string]V` from a JSON object, with `Min(n)` and `Max(n)` keys.
+- **`z.Slice(elem)`** produces `[]E`, where `E` is the type of `elem`. Rules: `Min(n)`, `Max(n)`, `Len(n)`, `NonEmpty()`, `Unique()` (code `not_unique`). Each element is parsed with `elem`, so errors point at `tags.2`. From a form, a single value becomes a one-item list. `Default([]E)`, `Refine`, `Transform`, `Message` and `Describe` work as on every other schema, and `Parse` returns `[]E`, so a slice is a `z.Schema[[]E]` that `web.Parse` and `z.ParseJSON` accept.
+- **`z.Map(value)`** produces `map[string]V` from a JSON object, with `Min(n)` and `Max(n)` keys and the same modifiers as `z.Slice`; it is a `z.Schema[map[string]V]`.
 - **`z.File()`** validates an uploaded file (`*multipart.FileHeader`) from a multipart form: `MaxSize(bytes)`, `Types("image/png", "image/jpeg")` and `Extensions(".png", "jpg")`. The type is detected from the first 512 bytes of the file, never taken from the client's `Content-Type`. See [Uploads](/docs/digging-deeper/uploads) for large or streamed files.
 - **`z.JSONObject()`** produces `map[string]any`: a JSON object whose contents are not validated. **`z.JSON()`** produces `any` and takes any JSON value. Rules: `Optional()`, `Nullable()`, `Describe(text)`, `Refine(fn)`, `Message(code, text)`.
 
