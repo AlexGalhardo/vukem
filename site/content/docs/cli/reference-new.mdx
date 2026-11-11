@@ -254,7 +254,7 @@ vukem vX.Y.Z
 
 ## `vukem doctor`
 
-Report optional tools and the facts you need before a deploy: the CLI version next to the Go runtime, whether Go or Bun is installed, which lockfile is present, whether `APP_KEY` is set, whether the SQLite directory is writable, `PORT` and proxy settings, and the Vite manifest.
+Report optional tools and the facts you need before a deploy: the CLI version next to the Go runtime, whether Go or Bun is installed, whether the Go version satisfies the `go.mod` minimum, which lockfile is present, whether `APP_KEY` is set, whether `APP_ENV` is one of `development`, `test` and `production`, whether the SQLite directory is writable, `PORT` and proxy settings, and the Vite manifest.
 
 The report says `app_key: set` or `app_key: missing`. It never prints the key, other env values, or database credentials.
 
@@ -291,7 +291,9 @@ betterleaks: 1.9.0 (/usr/local/bin/betterleaks)
 cli: v0.38.0
 runtime: go1.27.2
 upgrade: https://vukem.dev/docs/cli/reference-new#upgrading-a-starter
+go_version: go go1.27.4 satisfies go.mod go1.27.4
 app_key: set
+app_env: development
 database: sqlite directory is writable
 ```
 
