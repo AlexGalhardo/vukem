@@ -837,7 +837,7 @@ func (a *App) initInertia(icfg inertia.Config, project fs.FS) error {
 
 func (a *App) initViews(o *options) error {
 	if o.views == nil && o.reactEmails == nil && len(o.viewFuncs) > 0 {
-		return errors.New("vukem: WithViewFuncs needs WithViews")
+		return errors.New("vukem: WithViewFuncs needs WithViews; pass vukem.WithViews(...) to vukem.New as well")
 	}
 
 	if o.views != nil {

@@ -361,6 +361,26 @@ func TestWithViewFuncs(t *testing.T) {
 			t.Errorf("New(%s) = nil error, want a boot error", name)
 		}
 	}
+
+	_, err := New(WithViewFuncs(template.FuncMap{"upper": strings.ToUpper}),
+		WithSource(testSource(nil)), WithLogger(discardLogger()))
+	if want := "pass vukem.WithViews(...) to vukem.New as well"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("New(WithViewFuncs only) = %v, want %q", err, want)
+	}
+}
+
+func TestUnknownMailerSaysTheChoices(t *testing.T) {
+	t.Parallel()
+
+	app, err := New(WithSource(testSource(map[string]string{"MAIL_MAILER": "sendgrid"})), WithLogger(discardLogger()))
+	if err == nil {
+		err = app.Boot(t.Context())
+	}
+
+	if want := `unknown MAIL_MAILER "sendgrid" (log, array, smtp, resend or mailtrap)`; err == nil ||
+		!strings.Contains(err.Error(), want) {
+		t.Errorf("New(MAIL_MAILER=sendgrid) = %v, want %q", err, want)
+	}
 }
 
 func TestWithViews(t *testing.T) {
@@ -1231,7 +1251,7 @@ func TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot(t *testing.T) {
 		{
 			name: "forced hsts without https url",
 			env:  map[string]string{"HSTS_FORCE": "true", "APP_URL": "http://example.com"},
-			want: "HSTS_FORCE requires an https APP_URL",
+			want: `HSTS_FORCE requires an https APP_URL (APP_URL is "http://example.com"); use an https APP_URL or unset HSTS_FORCE`,
 		},
 		{
 			name: "ipv6 prefix zero",
@@ -1267,7 +1287,7 @@ func TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot(t *testing.T) {
 		{
 			name: "proto without proxies",
 			env:  map[string]string{"TRUST_FORWARDED_PROTO": "true"},
-			want: "TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES",
+			want: "TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES; set TRUSTED_PROXIES to the proxy's IP or CIDR, or unset TRUST_FORWARDED_PROTO",
 		},
 	}
 

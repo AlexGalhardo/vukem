@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -33,6 +34,7 @@ import (
 	"sync/atomic"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/suggest"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -443,7 +445,12 @@ func (r *Router) URL(name string, params ...any) (string, error) {
 
 	rt, ok := r.names[name]
 	if !ok {
-		return "", fmt.Errorf("router: no route named %q", name)
+		hint := ""
+		if near := suggest.Closest(name, slices.Sorted(maps.Keys(r.names))); near != "" {
+			hint = fmt.Sprintf(" (did you mean %q?)", near)
+		}
+
+		return "", fmt.Errorf("router: no route named %q%s; run route:list to see the names", name, hint)
 	}
 
 	if len(params)%2 != 0 {
@@ -509,7 +516,7 @@ func buildPath(pattern string, values map[string]string, name string) (string, e
 
 		v, ok := values[key]
 		if !ok {
-			return "", fmt.Errorf("router: URL(%q) missing param %q", name, key)
+			return "", fmt.Errorf("router: URL(%q) missing param %q (path %s)", name, key, pattern)
 		}
 
 		used[key] = true
@@ -528,7 +535,7 @@ func buildPath(pattern string, values map[string]string, name string) (string, e
 
 	for k := range values {
 		if !used[k] {
-			return "", fmt.Errorf("router: URL(%q) unknown param %q", name, k)
+			return "", fmt.Errorf("router: URL(%q) unknown param %q (path %s)", name, k, pattern)
 		}
 	}
 

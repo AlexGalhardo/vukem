@@ -44,7 +44,12 @@ func checkBootConfig(
 		// Checked only when TRUSTED_PROXIES parsed: an invalid entry is
 		// already reported above.
 		if cfg.TrustForwardedProto && len(proxies) == 0 {
-			errs = append(errs, errors.New("vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES"))
+			errs = append(
+				errs,
+				errors.New(
+					"vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES; set TRUSTED_PROXIES to the proxy's IP or CIDR, or unset TRUST_FORWARDED_PROTO",
+				),
+			)
 		}
 
 		if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
@@ -61,7 +66,13 @@ func checkBootConfig(
 	}
 
 	if cfg.HSTSForce && !strings.HasPrefix(cfg.URL, "https://") {
-		errs = append(errs, errors.New("vukem: HSTS_FORCE requires an https APP_URL"))
+		errs = append(
+			errs,
+			fmt.Errorf(
+				"vukem: HSTS_FORCE requires an https APP_URL (APP_URL is %q); use an https APP_URL or unset HSTS_FORCE",
+				cfg.URL,
+			),
+		)
 	}
 
 	if cfg.MaxHeaderBytes < minMaxHeaderBytes || cfg.MaxHeaderBytes > http.DefaultMaxHeaderBytes {
@@ -122,7 +133,10 @@ func checkConfig(cfg *Config, envSet, warmup bool) (config.Key, error) {
 	}
 
 	if cfg.Port < 0 || cfg.Port > 65535 {
-		errs = append(errs, fmt.Errorf("vukem: PORT %d is out of range", cfg.Port))
+		errs = append(
+			errs,
+			fmt.Errorf("vukem: PORT %d is out of range; set PORT to a value between 0 and 65535", cfg.Port),
+		)
 	}
 
 	return key, errors.Join(errs...)

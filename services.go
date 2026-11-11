@@ -407,7 +407,7 @@ func mailConfigError(cfg MailConfig) error {
 			return errors.New("vukem: MAILTRAP_INBOX_ID must be a positive sandbox inbox id")
 		}
 	default:
-		return fmt.Errorf("vukem: unknown MAIL_MAILER %q", cfg.Mailer)
+		return fmt.Errorf("vukem: unknown MAIL_MAILER %q (log, array, smtp, resend or mailtrap)", cfg.Mailer)
 	}
 
 	return nil
@@ -463,7 +463,7 @@ func (a *App) mailTransport(cfg MailConfig) (mail.Transport, error) {
 
 		return mail.NewMailtrap(mail.MailtrapConfig{APIToken: cfg.MailtrapAPIToken, InboxID: cfg.MailtrapInboxID}), nil
 	default:
-		return nil, fmt.Errorf("vukem: unknown MAIL_MAILER %q", cfg.Mailer)
+		return nil, fmt.Errorf("vukem: unknown MAIL_MAILER %q (log, array, smtp, resend or mailtrap)", cfg.Mailer)
 	}
 }
 
