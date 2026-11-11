@@ -125,7 +125,7 @@ func (s *Server) session(next http.Handler) http.Handler {
 				return
 			}
 
-			setSessionCookie(w, s.newSession())
+			setSessionCookie(w, r, s.newSession())
 
 			q.Del("token")
 
@@ -147,16 +147,18 @@ func (s *Server) session(next http.Handler) http.Handler {
 			return
 		}
 
-		setSessionCookie(w, c.Value)
+		setSessionCookie(w, r, c.Value)
 
 		next.ServeHTTP(w, r)
 	})
 }
 
-func setSessionCookie(w http.ResponseWriter, id string) {
-	//nolint:gosec // G124: the dashboard is plain HTTP on loopback; a Secure cookie would never be sent
+// setSessionCookie marks the cookie Secure when the request came over TLS. The dashboard itself serves plain HTTP on
+// loopback, where a Secure cookie would never be sent back; proxy headers are refused before this runs.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, id string) {
+	//nolint:gosec // G124: Secure follows the transport; on the plain HTTP loopback dashboard it must stay false
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		Name: cookieName, Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil,
 		MaxAge: int(sessionLifetime / time.Second),
 	})
 }
