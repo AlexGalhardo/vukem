@@ -36,26 +36,17 @@ The tool generates the section from `.config/cliff.toml` (every entry links its 
 
 ## 4. Tag nested modules
 
+On an up-to-date `main`:
+
 ```sh
-for m in $(git ls-files '*/go.mod' | grep -E '^(drivers|contrib)/' | xargs -n1 dirname); do
-  t=$(git tag -l "$m/v*" --sort=-v:refname | head -1)
-  echo "$m last=${t##*/} changes=$(git log --oneline ${t:+$t..}HEAD -- $m | wc -l)"
-done
+go run ./internal/tools/release -modules -dry-run   # the plan: LAST, NEXT and REASON per module
+go run ./internal/tools/release -modules -push      # test with GOWORK=off, tag, push one tag at a time
 ```
 
-- Look at `git diff --stat <last tag>..HEAD -- <module>`: test-only changes need no tag.
-- `cd <module> && GOWORK=off go test ./...` must pass against the published core before tagging.
-- Breaking change (`!` commit) → minor bump while below v1. Annotated tag `<dir>/vX.Y.Z`.
-- Push the tags **one at a time** — never `git push origin --tags`. GitHub creates no push event when more than three tags go up in a single push, so `on: push: tags` workflows do not fire and nothing is published, silently (eight tags → zero runs). After each push, confirm the run started:
-
-  ```sh
-  for t in drivers/redis/v0.4.0 contrib/stripe/v0.4.0; do
-    git push origin "$t"
-    gh run list --limit 3 # the release run for $t must appear before the next push
-  done
-  ```
-
-- After tagging `contrib/stripe`, bump `stripeVersion` in `internal/cli/billing.go` (pinned by `install:billing`; `TestStripeVersionIsLatestTag` fails until it matches the newest tag) and commit it for the next core release.
+- Check the table first. Test-only changes, a core requirement bump and a repo-wide `go` directive bump need no tag. Force a number the rules cannot see (a `feat` that should be a minor, a `!` buried in a squash body) with `-only dir=vX.Y.Z`.
+- The tool tests every module to tag with `GOWORK=off`, creates no tag when one fails, and pushes **one tag per `git push`**. Never `git push origin --tags`: GitHub creates no push event when more than three tags go up in a single push.
+- Module tags (`<dir>/vX.Y.Z`) do not trigger `release.yml`, so there is no run to wait for after a push.
+- When `contrib/stripe` is tagged the tool rewrites `stripeVersion` in `internal/cli/billing.go`; commit it through a PR (`TestStripeVersionIsLatestTag` fails until then).
 
 ## 5. Recover a tag that published nothing
 
