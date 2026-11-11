@@ -26,6 +26,52 @@ type View interface {
 - **Fragments:** `c.Render("posts/index", data, web.Block("post-list"))` renders the whole page for normal requests and only the `post-list` block for htmx partial requests; `c.Fragment(name, block, data)` always renders the block.
 - Funcs: `route`, `asset`, `csrfField`, `csrfToken`, `cspNonce`, `old`, `error`, `errors`, `flash`, `json` (safe in `<script>`), `dict` (data for partials), `htmxScript`, `can` (authorization), `vite`, `viteReactRefresh` (see [Vite](#vite)), `analytics` (Umami, GA4 and Search Console head tags from `UMAMI_*`, `GA_*` and `GOOGLE_SITE_VERIFICATION*`, nonce'd; empty when unset), `t` and `locale` (see [i18n](subsystems.md#i18n)). Request-scoped funcs read the session, CSP nonce and locale from the request context.
 
+### Typed views and `view:check`
+
+`c.Render(name, data any)` takes any value, so a misspelt field (`{{.Titel}}`), a renamed route (`{{route "posts.sho"}}`) or an `hx-target="#post-lst"` with no such element only fails at runtime. `view.Of[T]` declares the data type of a view, and `view:check` compares the template with it before the server starts and in CI:
+
+```go
+// app/views/views.go
+type PostsIndexData struct {
+	Posts  []models.Post
+	Search string
+}
+
+var PostsIndex = view.Of[PostsIndexData]("posts/index", "post-list") // name, fragment blocks
+
+func All() []view.Decl { return []view.Decl{PostsIndex.Decl() /* , ... */} }
+```
+
+```go
+return views.PostsIndex.Render(c, views.PostsIndexData{Posts: posts, Search: c.Query("q")}, web.Block("post-list"))
+```
+
+Register the declarations with `vukem.WithViewPages(views.All()...)` (it needs `WithViews`). Rendering is unchanged: `Page.Render` and `Page.Fragment` call `c.Render` and `c.Fragment`, and an undeclared block passed to `Fragment` is an error. The templates do not change, and untyped `c.Render` calls keep working (use `struct{}` for a view without data).
+
+`./app view:check [-strict] [-json]` (also `vukem view:check`) runs in warmup mode, without a database, and prints `file:line:col: code: message`. It exits 1 on problems; warnings never change the exit code. It reads the parsed templates, so run it in a process of its own that renders nothing (the command does). The blocks listed in `view.Of` are checked with the page data too, because a fragment is rendered on its own. `vukem serve` runs it after every rebuild and only warns. A layout and the partials a page includes are checked with the type of that page, so a problem there names the page (`... (rendering posts/index)`).
+
+| Code | Meaning |
+| --- | --- |
+| `V001` | a declared view does not exist |
+| `V002` | field or method not found in the data type |
+| `V003` | `{{route "name"}}` names a route that is not registered |
+| `V004` | wrong or missing route parameter |
+| `V005` | `hx-target`, `hx-select`, `hx-indicator` or `hx-include` points to a `#id` that no element of the view has: a warning by default (the id may come from script, from `template.HTML` or from a partial reused elsewhere), an error with `-strict` |
+| `V006` | a block declared in `view.Of` is not defined |
+| `V007` | `-strict` only, a warning: a view has no typed declaration |
+| `V008` | `-strict` only, a warning: an expression whose type is not known statically |
+| `V009` | `{{template "x"}}` names a template that is not defined |
+
+The check never runs a template or calls a method, and when in doubt it says nothing. It does **not** check:
+
+- untyped `c.Render` calls and their `web.Block` options;
+- `any` and `map[string]any` data, and values of `dict`, `flash`, `json`, `old` and `errors` used as structures;
+- functions from `WithViewFuncs` that return an interface, and `call`, `and`, `or`, `slice`, or `range` over a function or an integer;
+- ids and attributes built by an action (`id="row-{{.ID}}"`); when a page has one, a missing `#id` stays a warning even with `-strict`;
+- selectors other than a plain `#id` (`closest li`, `this`, classes);
+- route names or parameter names passed in a variable, and `{{template "x"}}` without data;
+- templ views.
+
 ### templ (optional)
 
 ```go
