@@ -32,6 +32,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"text/template/parse"
 
 	"github.com/AlexGalhardo/vukem/analytics"
 	"github.com/AlexGalhardo/vukem/i18n"
@@ -231,6 +232,38 @@ func (e *Engine) lookup(name string) (*template.Template, error) {
 
 	return t, nil
 }
+
+// Trees returns the parse trees of the page name and of every template it
+// can reach (layout, partials, components, its own defines), keyed by
+// template name, and the name execution starts at: the layout the page uses
+// (layouts/app by default), or the page itself when it uses layout none.
+// The trees are the stored ones: callers must not change them, and they are
+// only meaningful before any Render. Rendering clones the page, but the
+// html/template escaper rewrites trees in place when a template first runs,
+// so a tool that reads them (view:check) belongs in a process of its own
+// that never renders.
+func (e *Engine) Trees(name string) (root string, trees map[string]*parse.Tree, err error) {
+	e.mu.RLock()
+	t, ok := e.pages[name]
+	e.mu.RUnlock()
+
+	if !ok {
+		return "", nil, fmt.Errorf("view: %q not found", name)
+	}
+
+	trees = map[string]*parse.Tree{}
+
+	for _, x := range t.Templates() {
+		if x.Tree != nil {
+			trees[x.Name()] = x.Tree
+		}
+	}
+
+	return t.Name(), trees, nil
+}
+
+// Ext is the file extension of the views (".html" by default).
+func (e *Engine) Ext() string { return e.cfg.Ext }
 
 // Has implements web.Renderer.
 func (e *Engine) Has(name string) bool {

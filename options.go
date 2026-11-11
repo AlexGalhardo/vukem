@@ -15,6 +15,7 @@ import (
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/view"
 )
 
 // WithRoutes registers routes (and router middleware) after providers
@@ -222,6 +223,16 @@ func WithHealthCheck(name string, check HealthCheck) Option {
 // or an embed.FS). Views reload on every request outside production.
 func WithViews(fsys fs.FS) Option {
 	return func(o *options) error { o.views = fsys; return nil }
+}
+
+// WithViewPages lists the typed views (view.Page.Decl) that view:check
+// verifies against their data types. It does not change rendering, and it
+// needs WithViews.
+func WithViewPages(decls ...view.Decl) Option {
+	return func(o *options) error {
+		o.viewPages = append(o.viewPages, decls...)
+		return nil
+	}
 }
 
 // WithReactEmails renders mail.React contents from fsys: the directory

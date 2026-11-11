@@ -107,7 +107,13 @@ func watch(ctx context.Context, env *Env, interval time.Duration, args []string)
 	}
 	defer stop()
 
+	var check viewCheckRun
+
+	defer check.stop()
+
 	start := func() {
+		check.stop()
+
 		if hasTempl(env) {
 			if err := templGenerate(ctx, env); err != nil {
 				if ctx.Err() == nil {
@@ -143,6 +149,8 @@ func watch(ctx context.Context, env *Env, interval time.Duration, args []string)
 		}
 
 		proc = cmd
+
+		check.start(ctx, env, bin)
 	}
 
 	last, err := takeSnapshot(dir)

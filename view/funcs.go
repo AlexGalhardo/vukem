@@ -24,6 +24,10 @@ func (e *Engine) funcs(ctx context.Context) template.FuncMap {
 	return fm
 }
 
+// FuncTypes returns the template functions with a background context, for
+// tools that only read their signatures (view:check). Do not call them.
+func (e *Engine) FuncTypes() template.FuncMap { return e.funcs(context.Background()) }
+
 // builtinFuncs are the functions every view gets; Config.Funcs may not
 // reuse their names (New refuses it).
 func (e *Engine) builtinFuncs(ctx context.Context) template.FuncMap {

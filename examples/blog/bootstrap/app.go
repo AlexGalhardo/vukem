@@ -6,6 +6,7 @@ import (
 	vukem "github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/drivers/postgres"
 	"github.com/AlexGalhardo/vukem/examples/blog/app/listeners"
+	"github.com/AlexGalhardo/vukem/examples/blog/app/views"
 	"github.com/AlexGalhardo/vukem/examples/blog/database/migrations"
 	"github.com/AlexGalhardo/vukem/examples/blog/database/seeders"
 	"github.com/AlexGalhardo/vukem/examples/blog/resources"
@@ -21,6 +22,7 @@ func New(opts ...vukem.Option) (*vukem.App, error) {
 		vukem.WithSeeders(seeders.All()...),
 		vukem.WithListeners(listeners.All()...),
 		vukem.WithViews(resources.Views()),
+		vukem.WithViewPages(views.All()...),
 	}
 
 	for _, fn := range routes.All() {

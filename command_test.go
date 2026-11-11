@@ -3,6 +3,7 @@ package vukem
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,11 +14,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/ssg"
+	"github.com/AlexGalhardo/vukem/view"
+	"github.com/AlexGalhardo/vukem/view/viewcheck"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -464,5 +468,116 @@ func TestRunCommandSuggestsClosest(t *testing.T) {
 				t.Errorf("command list printed = %v, want %v:\n%s", listed, tt.wantList, got)
 			}
 		})
+	}
+}
+
+type viewCheckData struct{ Title string }
+
+func runViewCheck(t *testing.T, page string, decls []view.Decl, args ...string) (string, error) {
+	t.Helper()
+
+	var out bytes.Buffer
+
+	fsys := fstest.MapFS{
+		"layouts/app.html": {Data: []byte(`{{block "content" .}}{{end}}`)},
+		"home.html":        {Data: []byte(page)},
+	}
+
+	build := func(opts ...Option) (*App, error) {
+		opts = append(opts, WithLogger(discardLogger()), WithStdout(&out), WithViews(fsys))
+		if decls != nil {
+			opts = append(opts, WithViewPages(decls...))
+		}
+
+		return New(opts...)
+	}
+
+	err := RunMain(t.Context(), append([]string{"app", "view:check"}, args...), testSource(nil).Lookup, build)
+
+	return out.String(), err
+}
+
+func TestViewCheckOK(t *testing.T) {
+	t.Parallel()
+
+	out, err := runViewCheck(t, `{{define "content"}}{{.Title}}{{end}}`,
+		[]view.Decl{view.Of[viewCheckData]("home").Decl()})
+	if err != nil || out != "" {
+		t.Fatalf("view:check = %q, %v, want no output and no error", out, err)
+	}
+}
+
+func TestViewCheckProblems(t *testing.T) {
+	t.Parallel()
+
+	out, err := runViewCheck(t, `{{define "content"}}{{.Titel}}{{end}}`,
+		[]view.Decl{view.Of[viewCheckData]("home").Decl()})
+	if err == nil || !strings.Contains(err.Error(), "1 problem(s) in 1 view(s)") {
+		t.Fatalf("view:check error = %v, want 1 problem(s) in 1 view(s)", err)
+	}
+
+	want := `home.html:1:23: V002: field or method "Titel" not found in vukem.viewCheckData` + "\n"
+	if out != want {
+		t.Errorf("view:check output = %q, want %q", out, want)
+	}
+}
+
+func TestViewCheckJSON(t *testing.T) {
+	t.Parallel()
+
+	out, err := runViewCheck(t, `{{define "content"}}{{.Titel}}{{end}}`,
+		[]view.Decl{view.Of[viewCheckData]("home").Decl()}, "-json")
+	if err == nil {
+		t.Fatal("view:check -json = nil error, want the failure")
+	}
+
+	var problems []viewcheck.Problem
+	if err := json.Unmarshal([]byte(out), &problems); err != nil {
+		t.Fatalf("output %q is not JSON: %v", out, err)
+	}
+
+	if len(problems) != 1 || problems[0].Code != "V002" || problems[0].File != "home.html" {
+		t.Errorf("problems = %+v", problems)
+	}
+}
+
+func TestViewCheckNoTypedViews(t *testing.T) {
+	t.Parallel()
+
+	_, err := runViewCheck(t, `{{define "content"}}x{{end}}`, nil)
+	if err == nil || !strings.Contains(err.Error(), "no typed views") {
+		t.Fatalf("view:check without declarations = %v, want no typed views", err)
+	}
+}
+
+func TestViewPagesNeedViews(t *testing.T) {
+	t.Parallel()
+
+	_, err := New(
+		WithSource(testSource(nil)),
+		WithLogger(discardLogger()),
+		WithViewPages(view.Of[viewCheckData]("home").Decl()),
+	)
+	if err == nil || !strings.Contains(err.Error(), "WithViewPages needs WithViews") {
+		t.Fatalf("New(WithViewPages without WithViews) = %v", err)
+	}
+}
+
+func TestViewCheckMissingTargetIsAWarning(t *testing.T) {
+	t.Parallel()
+
+	out, err := runViewCheck(t, `{{define "content"}}<a hx-target="#nope">{{.Title}}</a>{{end}}`,
+		[]view.Decl{view.Of[viewCheckData]("home").Decl()})
+	if err != nil {
+		t.Fatalf("view:check = %v, want a warning that does not fail", err)
+	}
+
+	if !strings.Contains(out, `V005: hx-target "#nope"`) || !strings.Contains(out, "warning: V005") {
+		t.Errorf("output = %q, want the V005 warning", out)
+	}
+
+	if _, err := runViewCheck(t, `{{define "content"}}<a hx-target="#nope">{{.Title}}</a>{{end}}`,
+		[]view.Decl{view.Of[viewCheckData]("home").Decl()}, "-strict"); err == nil {
+		t.Error("view:check -strict = nil error, want the missing target to fail")
 	}
 }
