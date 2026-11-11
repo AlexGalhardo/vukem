@@ -58,6 +58,9 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem boost:install` | Agent setup (Laravel Boost-style): guidelines block in `AGENTS.md` (re-runnable, text outside the markers is kept), `@AGENTS.md` in `CLAUDE.md`, skills in `.claude/skills/vukem-*`, and the `vukem-boost` MCP server in `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` |
 | `vukem version` | Print the CLI version |
 | `vukem doctor` | Report project checks (CLI version, Go runtime, lockfile, `APP_KEY` set or not, SQLite directory, port, proxy, Vite manifest) and optional tools. `--json` prints one report. `--strict` exits 1 when a project check fails. A missing optional tool still exits 0 |
+| `vukem stub:publish [name...] [--force]` | Copy the embedded `make:*` stubs (all, or the named ones: `controller`, `controller.go`, `controller.go.tmpl`) into `stubs/`; refuses an existing file without `--force` and checks every target before writing. A name that matches no stub or several is a usage error |
+| `vukem upgrade [--check] [--json]` | Report the `go.mod` framework version against the CLI and the starter files that differ (no network). `--check` writes nothing and exits 1 only when the project is behind; without it the current starter goes to `.vukem/upgrade/starter/` and a behind project gets `go get` and `go mod tidy`. Never overwrites a project file |
+| app: `db [-force] [-print]` | Open `sqlite3` or `psql` for `DATABASE_URL`; the password goes in `PGPASSWORD`, never in argv; `-force` in production. `mysql://` and `mariadb://` are refused until their password handling is verified |
 | `vukem build` | `go tool templ generate` (when `.templ` files exist), `vite build` (if present), then `go build -trimpath -ldflags "-s -w"` with embedded assets. `-ldflags "..."` appends to `-s -w` (e.g. `-X main.version=v1.2.3`, then `vukem.WithVersion(version)`); `-ssr` also runs `vite build --ssr` (error without a Vite config). Every build (`build`, `serve`, delegated app commands) adds `-tags` from the project's `.buildtags` file (one tag per line or comma-separated, `#` comments) |
 | app: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status` | Migrations |
 | app: `route:list [--json]` | Route table |
@@ -75,7 +78,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 
 ### ALPHA
 
-Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seeder [--app]` (`--app`: an `AppSeeder` that receives the booted app, registered in `AllApp()`; pass it with `vukem.WithAppSeeders(seeders.AllApp()...)`), `make:policy`, `make:mail`, `make:event`, `make:listener [--event Name] [--async|--queued]`, `make:job`, `install:auth [--social github,google] [--2fa] [--passkeys] [--locales en,es,pt-BR]` (`--2fa`: TOTP two-factor authentication, `--passkeys`: passkey sign-in, both also on a project that already ran `install:auth`; see [authentication.md](authentication.md#two-factor-authentication-installauth---2fa) and [passkeys](authentication.md#installauth---passkeys)), app: `db:seed [Name...] [--class Name] [seeder flags]` (runs every seeder, or the named ones in order; flags after the names go to the seeders that implement `vukem.FlagSeeder`), `db:wipe` (both need `--force` in production). Planned: `stub:publish` (until then copy a stub from `internal/cli/stubs/` by hand, see below), `upgrade`, app: `db` (opens `sqlite3`/`psql` with the configured URL). `storage:link` was replaced by `storage.Handler` (see subsystems.md).
+Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seeder [--app]` (`--app`: an `AppSeeder` that receives the booted app, registered in `AllApp()`; pass it with `vukem.WithAppSeeders(seeders.AllApp()...)`), `make:policy`, `make:mail`, `make:event`, `make:listener [--event Name] [--async|--queued]`, `make:job`, `install:auth [--social github,google] [--2fa] [--passkeys] [--locales en,es,pt-BR]` (`--2fa`: TOTP two-factor authentication, `--passkeys`: passkey sign-in, both also on a project that already ran `install:auth`; see [authentication.md](authentication.md#two-factor-authentication-installauth---2fa) and [passkeys](authentication.md#installauth---passkeys)), app: `db:seed [Name...] [--class Name] [seeder flags]` (runs every seeder, or the named ones in order; flags after the names go to the seeders that implement `vukem.FlagSeeder`), `db:wipe` (both need `--force` in production). `storage:link` was replaced by `storage.Handler` (see subsystems.md).
 
 ### BETA
 
@@ -86,7 +89,7 @@ Also shipped: `install:inertia`, `ssr:start`, `ssr:check`, `down`/`up` (maintena
 ## Generators and stubs
 
 - Stubs are `text/template` files embedded in `internal/cli/stubs/` (`embed.FS`).
-- A file in the project's `stubs/` with the same name (`stubs/controller.go.tmpl`) takes precedence over the embedded stub. There is no `stub:publish` command yet: copy the stub from `internal/cli/stubs/` by hand.
+- A file in the project's `stubs/` with the same name (`stubs/controller.go.tmpl`) takes precedence over the embedded stub. Run `vukem stub:publish [name...]` to copy the embedded stubs there.
 - Stub data: `.Name` (Pascal), `.Snake`, `.Kebab`, `.Camel`, `.Plural`, `.Module`, plus `.Table`, `.Timestamp`, `.ID`, `.Func` for migrations and `.Resource`/`.API` for controllers. Unknown keys are errors.
 - Flags may follow the name: `vukem make:model Post -m -c`.
 - Generated Go files are passed through `go/format` before writing.
