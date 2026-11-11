@@ -9,7 +9,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -1006,19 +1008,42 @@ func openSQLiteBackup(app *App) (*database.DB, string, error) {
 	return db, live, nil
 }
 
-func sqliteFilePath(raw string) (string, error) {
-	if raw == ":memory:" || strings.Contains(raw, "mode=memory") {
-		return "", errors.New("db:backup: an in-memory database has no file to snapshot")
+func isMemorySQLite(raw string) bool {
+	return raw == ":memory:" || strings.Contains(raw, "mode=memory")
+}
+
+// sqlitePathOf returns the file path inside a file: or sqlite: URL, and whether
+// the URL names an in-memory database instead.
+func sqlitePathOf(raw string) (path string, memory bool) {
+	if isMemorySQLite(raw) {
+		return "", true
 	}
 
-	if !strings.HasPrefix(raw, "file:") && !strings.HasPrefix(raw, "sqlite:") {
-		return "", errors.New("db:backup: only SQLite has a file snapshot")
-	}
-
-	path := strings.TrimPrefix(strings.TrimPrefix(raw, "sqlite:"), "file:")
+	path = strings.TrimPrefix(strings.TrimPrefix(raw, "sqlite:"), "file:")
 	path, _, _ = strings.Cut(path, "?")
 
 	if path == "" || path == ":memory:" {
+		return "", true
+	}
+
+	return path, false
+}
+
+func isSQLiteURL(raw string) bool {
+	return strings.HasPrefix(raw, "file:") || strings.HasPrefix(raw, "sqlite:")
+}
+
+func sqliteFilePath(raw string) (string, error) {
+	if isMemorySQLite(raw) {
+		return "", errors.New("db:backup: an in-memory database has no file to snapshot")
+	}
+
+	if !isSQLiteURL(raw) {
+		return "", errors.New("db:backup: only SQLite has a file snapshot")
+	}
+
+	path, memory := sqlitePathOf(raw)
+	if memory {
 		return "", errors.New("db:backup: an in-memory database has no file to snapshot")
 	}
 
@@ -1100,6 +1125,147 @@ func sqliteStringLiteral(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", "''") + "'"
 }
 
+// dbConsole describes the client to start for a DATABASE_URL. Env carries
+// the password, so it is never printed or logged.
+type dbConsole struct {
+	Bin  string
+	Args []string
+	Env  []string
+}
+
+// consoleFor picks the console client for rawURL. lookPath reports whether the
+// client is installed. The password goes only in Env, never in Args, and no
+// error text repeats the URL.
+func consoleFor(rawURL string, lookPath func(string) (string, error)) (dbConsole, error) {
+	if isMemorySQLite(rawURL) {
+		return dbConsole{}, errors.New("db: an in-memory database has no file to open")
+	}
+
+	if isSQLiteURL(rawURL) {
+		return sqliteConsole(rawURL, lookPath)
+	}
+
+	// Without "://" the text is no URL we know; naming it could print a password.
+	scheme, _, ok := strings.Cut(rawURL, "://")
+	if !ok {
+		return dbConsole{}, errors.New("db: DATABASE_URL has no URL scheme")
+	}
+
+	if scheme != "postgres" && scheme != "postgresql" {
+		return dbConsole{}, fmt.Errorf("db: no console client for %q URLs", scheme)
+	}
+
+	return postgresConsole(rawURL, lookPath)
+}
+
+func sqliteConsole(rawURL string, lookPath func(string) (string, error)) (dbConsole, error) {
+	path, memory := sqlitePathOf(rawURL)
+	if memory {
+		return dbConsole{}, errors.New("db: an in-memory database has no file to open")
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return dbConsole{}, fmt.Errorf("db: %w", err)
+	}
+
+	if _, err := lookPath("sqlite3"); err != nil {
+		return dbConsole{}, fmt.Errorf("db: sqlite3 is not installed (it opens %s)", abs)
+	}
+
+	return dbConsole{Bin: "sqlite3", Args: []string{abs}}, nil
+}
+
+func postgresConsole(rawURL string, lookPath func(string) (string, error)) (dbConsole, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		// url.Parse errors quote the URL, which holds the password.
+		return dbConsole{}, errors.New("db: DATABASE_URL is not a valid URL")
+	}
+
+	name := strings.TrimPrefix(u.Path, "/")
+
+	// psql reads a -d value that holds "=" or a scheme as a connection string, whose
+	// parameters override the other options: refuse it instead of letting a name redirect the connection.
+	if strings.ContainsAny(name, "= \t\r\n") || strings.Contains(name, "://") {
+		return dbConsole{}, errors.New("db: the database name cannot be passed to psql")
+	}
+
+	if _, err := lookPath("psql"); err != nil {
+		return dbConsole{}, errors.New("db: psql is not installed (it opens a postgres database)")
+	}
+
+	c := dbConsole{Bin: "psql"}
+
+	for _, o := range [][2]string{{"-h", u.Hostname()}, {"-p", u.Port()}, {"-U", u.User.Username()}, {"-d", name}} {
+		if o[1] != "" {
+			c.Args = append(c.Args, o[0], o[1])
+		}
+	}
+
+	if pw, ok := u.User.Password(); ok && pw != "" {
+		c.Env = append(c.Env, "PGPASSWORD="+pw)
+	}
+
+	if mode := u.Query().Get("sslmode"); mode != "" {
+		c.Env = append(c.Env, "PGSSLMODE="+mode)
+	}
+
+	return c, nil
+}
+
+func dbConsoleCommand() Command {
+	var (
+		force  *bool
+		dryRun *bool
+	)
+
+	return CommandFunc{
+		CommandName: "db",
+		Desc:        "Open the database console (sqlite3, psql) for DATABASE_URL",
+		DefineFlags: func(fs *flag.FlagSet) {
+			force = fs.Bool("force", false, "allow in production")
+			dryRun = fs.Bool("print", false, "print the client command (without the password) instead of running it")
+		},
+		Fn: func(ctx context.Context, app *App, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("db: unexpected argument %q: %w", args[0], errUsage)
+			}
+
+			if app.Config.IsProduction() && !*force {
+				return errForceRequired
+			}
+
+			cfg, err := configLoad[DatabaseConfig](app)
+			if err != nil {
+				return err
+			}
+
+			lookPath := exec.LookPath
+			if *dryRun {
+				lookPath = func(name string) (string, error) { return name, nil }
+			}
+
+			c, err := consoleFor(cfg.URL, lookPath)
+			if err != nil {
+				return err
+			}
+
+			if *dryRun {
+				_, err := fmt.Fprintln(app.Stdout(), strings.Join(append([]string{c.Bin}, c.Args...), " "))
+
+				return err
+			}
+
+			cmd := exec.CommandContext(ctx, c.Bin, c.Args...) //nolint:gosec // G204: fixed client binaries
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = app.Stdin(), app.Stdout(), app.Stderr()
+			cmd.Env = append(os.Environ(), c.Env...)
+
+			return cmd.Run()
+		},
+	}
+}
+
 func seedCommands() []Command {
 	var wipeForce *bool
 
@@ -1107,6 +1273,7 @@ func seedCommands() []Command {
 		seedCommand{},
 		dbRunCommand(),
 		dbBackupCommand(),
+		dbConsoleCommand(),
 		CommandFunc{
 			CommandName: "db:wipe",
 			Desc:        "Drop every table",
