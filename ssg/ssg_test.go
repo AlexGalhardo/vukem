@@ -110,7 +110,12 @@ func TestGenerateFailClosed(t *testing.T) {
 		t.Fatalf("404 = %v, want ErrStatus", err)
 	}
 
-	report, err := ssg.Generate(t.Context(), h, []ssg.Page{{Path: "/ok"}, {Path: "/boom"}}, ssg.Options{OutDir: dir})
+	report, err := ssg.Generate(
+		t.Context(),
+		h,
+		[]ssg.Page{{Path: "/ok"}, {Path: "/boom"}},
+		ssg.Options{OutDir: dir, NoClean: true},
+	)
 	if !errors.Is(err, ssg.ErrStatus) {
 		t.Fatalf("second page = %v", err)
 	}
@@ -326,6 +331,7 @@ func TestBodyAtLimitIsWritten(t *testing.T) {
 	}
 }
 
+// NoClean keeps this test on the in-place write path, which is where a pre-planted link could be followed.
 func TestSecurity_A01_SSGDoesNotCreateDirectoriesThroughLinks(t *testing.T) {
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "dist")
@@ -343,7 +349,12 @@ func TestSecurity_A01_SSGDoesNotCreateDirectoriesThroughLinks(t *testing.T) {
 		_, _ = w.Write([]byte("nope"))
 	})
 
-	_, err := ssg.Generate(t.Context(), h, []ssg.Page{{Path: "/linked/deep/page"}}, ssg.Options{OutDir: dir})
+	_, err := ssg.Generate(
+		t.Context(),
+		h,
+		[]ssg.Page{{Path: "/linked/deep/page"}},
+		ssg.Options{OutDir: dir, NoClean: true},
+	)
 	if !errors.Is(err, ssg.ErrEscape) {
 		t.Fatalf("Generate through linked dir = %v, want ErrEscape", err)
 	}
@@ -464,5 +475,208 @@ func TestSSGDecodesPathOnce(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(dir, "a b", "index.html")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func staticHandler(body *string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/boom" {
+			http.Error(w, "boom", http.StatusInternalServerError)
+
+			return
+		}
+
+		_, _ = w.Write([]byte(*body + r.URL.Path))
+	})
+}
+
+func exists(t *testing.T, p string) bool {
+	t.Helper()
+
+	_, err := os.Lstat(p)
+	if err == nil {
+		return true
+	}
+
+	if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+
+	return false
+}
+
+func TestGenerateRemovesStalePages(t *testing.T) {
+	t.Parallel()
+
+	body := "v1"
+	dist := filepath.Join(t.TempDir(), "dist")
+	opt := ssg.Options{OutDir: dist}
+
+	if _, err := ssg.Generate(
+		t.Context(),
+		staticHandler(&body),
+		[]ssg.Page{{Path: "/a"}, {Path: "/b"}},
+		opt,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ssg.Generate(t.Context(), staticHandler(&body), []ssg.Page{{Path: "/a"}}, opt); err != nil {
+		t.Fatal(err)
+	}
+
+	if exists(t, filepath.Join(dist, "b", "index.html")) {
+		t.Error("stale page b survived")
+	}
+
+	if !exists(t, filepath.Join(dist, "a", "index.html")) || !exists(t, filepath.Join(dist, ".vukem-ssg")) {
+		t.Error("page a or the marker is missing")
+	}
+}
+
+func TestGenerateFailureLeavesOutDirUntouched(t *testing.T) {
+	t.Parallel()
+
+	body := "v1"
+	parent := t.TempDir()
+	dist := filepath.Join(parent, "dist")
+	opt := ssg.Options{OutDir: dist}
+
+	if _, err := ssg.Generate(t.Context(), staticHandler(&body), []ssg.Page{{Path: "/ok"}}, opt); err != nil {
+		t.Fatal(err)
+	}
+
+	body = "v2"
+
+	report, err := ssg.Generate(t.Context(), staticHandler(&body), []ssg.Page{{Path: "/ok"}, {Path: "/boom"}}, opt)
+	if !errors.Is(err, ssg.ErrStatus) {
+		t.Fatalf("err = %v, want ErrStatus", err)
+	}
+
+	if len(report.Files) != 0 {
+		t.Fatalf("report = %+v, want empty", report.Files)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dist, "ok", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(got) != "v1/ok" {
+		t.Fatalf("ok = %q, want v1/ok", got)
+	}
+
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".ssg-tmp-") || strings.Contains(e.Name(), ".ssg-old-") {
+			t.Errorf("leftover %s", e.Name())
+		}
+	}
+}
+
+func TestSecurity_A01_SSGRefusesToReplaceForeignDirectory(t *testing.T) {
+	t.Parallel()
+
+	body := "x"
+	dist := filepath.Join(t.TempDir(), "dist")
+
+	if err := os.MkdirAll(dist, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dist, "keep.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ssg.Generate(t.Context(), staticHandler(&body), []ssg.Page{{Path: "/a"}}, ssg.Options{OutDir: dist})
+	if !errors.Is(err, ssg.ErrNotGenerated) {
+		t.Fatalf("err = %v, want ErrNotGenerated", err)
+	}
+
+	if !exists(t, filepath.Join(dist, "keep.txt")) || exists(t, filepath.Join(dist, "a", "index.html")) {
+		t.Fatal("foreign directory was modified")
+	}
+}
+
+func TestGenerateReplacesEmptyDirectory(t *testing.T) {
+	t.Parallel()
+
+	body := "x"
+	dist := filepath.Join(t.TempDir(), "dist")
+
+	if err := os.MkdirAll(dist, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ssg.Generate(
+		t.Context(),
+		staticHandler(&body),
+		[]ssg.Page{{Path: "/a"}},
+		ssg.Options{OutDir: dist},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if !exists(t, filepath.Join(dist, "a", "index.html")) {
+		t.Fatal("page missing")
+	}
+}
+
+func TestSecurity_A01_SSGRefusesSymlinkOutDir(t *testing.T) {
+	t.Parallel()
+
+	body := "x"
+	parent := t.TempDir()
+	target := filepath.Join(parent, "target")
+
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dist := filepath.Join(parent, "dist")
+	if err := os.Symlink(target, dist); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, err := ssg.Generate(t.Context(), staticHandler(&body), []ssg.Page{{Path: "/a"}}, ssg.Options{OutDir: dist})
+	if !errors.Is(err, ssg.ErrEscape) {
+		t.Fatalf("err = %v, want ErrEscape", err)
+	}
+
+	if exists(t, filepath.Join(target, "a")) {
+		t.Fatal("wrote through the link")
+	}
+}
+
+func TestGenerateNoCleanKeepsEarlierBehaviour(t *testing.T) {
+	t.Parallel()
+
+	body := "x"
+	dist := filepath.Join(t.TempDir(), "dist")
+	opt := ssg.Options{OutDir: dist, NoClean: true}
+
+	if _, err := ssg.Generate(
+		t.Context(),
+		staticHandler(&body),
+		[]ssg.Page{{Path: "/a"}, {Path: "/b"}},
+		opt,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ssg.Generate(t.Context(), staticHandler(&body), []ssg.Page{{Path: "/a"}}, opt); err != nil {
+		t.Fatal(err)
+	}
+
+	if !exists(t, filepath.Join(dist, "b", "index.html")) {
+		t.Error("NoClean removed page b")
+	}
+
+	if exists(t, filepath.Join(dist, ".vukem-ssg")) {
+		t.Error("NoClean wrote a marker")
 	}
 }
