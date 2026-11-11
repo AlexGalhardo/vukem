@@ -37,6 +37,7 @@ Every method takes a [`context.Context`](https://pkg.go.dev/context) first. The 
 | SQLite (pure Go, no cgo) | core | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) |
 | PostgreSQL | `drivers/postgres` | [`jackc/pgx/v5`](https://pkg.go.dev/github.com/jackc/pgx/v5) |
 | MySQL 8 / MariaDB 11 | `drivers/mysql` | [`go-sql-driver/mysql`](https://pkg.go.dev/github.com/go-sql-driver/mysql) |
+| Turso (experimental) | `drivers/turso` | [`tursogo`](https://pkg.go.dev/turso.tech/database/tursogo) |
 | [Redis](/docs/database/redis) (cache, sessions, queues) | `drivers/redis` | `redis/go-redis/v9` |
 | [MongoDB](/docs/database/mongodb) (documents) | `drivers/mongo` | the official driver v2 |
 
@@ -217,6 +218,45 @@ The MySQL driver does not take URLs, so `mysql.DSN` translates yours into a go-s
 | `tls` | `false` for `localhost` and loopback IPs, otherwise `true` (verified certificate) | Secure by default; set `tls=preferred`, `skip-verify` or a registered config name yourself |
 
 A malformed URL fails with an error wrapping `mysql.ErrInvalidURL`. The URL itself never appears in the message, because it may hold a password.
+
+### Turso (experimental)
+
+[Turso](https://turso.tech) is a SQLite-compatible engine. `drivers/turso` keeps a local database file and, when you give it a Turso Cloud database, syncs that file with it. It depends on a pre-1.0 SDK and may change in any release.
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/turso
+```
+
+```go title="bootstrap/app.go"
+tursoOpts, err := turso.OptionsFromEnv()
+if err != nil {
+	return nil, err
+}
+
+db := turso.New(tursoOpts)
+
+base := []vukem.Option{
+	vukem.WithDatabaseDrivers(db.Driver()), // turso:// URLs
+	vukem.WithRunner("turso-sync", db),     // background sync
+}
+```
+
+| Variable | Example | Meaning |
+| --- | --- | --- |
+| `DATABASE_URL` | `turso://storage/database.db` | The local file |
+| `TURSO_DATABASE_URL` | `libsql://myapp-org.turso.io` | The Turso Cloud database; empty means a plain local file |
+| `TURSO_AUTH_TOKEN` | (secret) | The database token, required with `TURSO_DATABASE_URL` |
+| `TURSO_SYNC_INTERVAL` | `5s` | Pause between background syncs; `-1s` turns them off |
+
+With a remote database the app pulls on open, syncs every interval and pushes when it closes. Create the database and the token with the Turso CLI:
+
+```bash
+turso db create myapp
+turso db show myapp --url
+turso db tokens create myapp
+```
+
+It does not support `db:backup` and `db:restore`, a reader/writer split or a migration lock (run `migrate` in one place), and conflicts are "last push wins". `Schema.Dialect()` returns `"turso"`, so test the dialect family, not the name `"sqlite"`. The SDK ships its native library for linux and darwin (amd64, arm64) and windows/amd64 only.
 
 ### Differences between dialects
 

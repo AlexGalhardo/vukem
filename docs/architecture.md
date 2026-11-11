@@ -102,6 +102,7 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 | `go.mongodb.org/mongo-driver/v2` | `drivers/mongo` | MongoDB |
 | `go.opentelemetry.io/otel` (+ `sdk`, `exporters/otlp/otlptrace/otlptracehttp`) | `drivers/otel` | Tracing |
 | `github.com/coder/websocket` | `drivers/websocket` | WebSockets |
+| `turso.tech/database/tursogo` `v0.8.3` | `drivers/turso` | Turso (experimental, pre-1.0, exact pin: the one exception to the stable-only rule, approved 2026-11-11). Pure Go: the native library is embedded in `github.com/tursodatabase/turso-go-platform-libs` and loaded with `purego`, for linux and darwin (amd64, arm64) and windows/amd64. Its module also lists `go-sqlite3` (cgo) and `testify`, used only by its own tests: they appear in the module graph, never in a build |
 | none (stdlib + core `auth/jwt`) | `contrib/cloudflare` | Cloudflare client IP, origin lock, visitor headers, edge cache and purge, Access JWT |
 | none (stdlib only) | `contrib/graphql` | GraphQL server; gqlgen/graphql-go are not used |
 | `connectrpc.com/connect` (+ `grpchealth`, `grpcreflect`), `google.golang.org/protobuf`, `google.golang.org/genproto/googleapis/rpc` | `contrib/grpc` | gRPC, gRPC-Web and Connect on `net/http`; health, reflection, `google.rpc.BadRequest` details |
