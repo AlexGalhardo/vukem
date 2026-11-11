@@ -43,3 +43,6 @@ vukem-feedback.md
 # Local advisor plans and the worker prompt for the execution session
 /plans/
 PROMPT-TO-WORKERS.md
+
+# Per-worktree tool caches (task sets GOLANGCI_LINT_CACHE here)
+/.cache/
