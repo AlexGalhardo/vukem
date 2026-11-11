@@ -11,18 +11,15 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 )
 
-// maxParams is the bound-parameter limit of one statement: SQLite 3.32+
-// allows 32766, PostgreSQL's wire protocol and MySQL's prepared statements
-// 65535.
+// maxParams is the bound-parameter limit of one statement (see
+// database.Capabilities.MaxParams); a dialect without capabilities gets the
+// historical SQLite limit, safe everywhere, and fails in checkDialect.
 func maxParams(d database.Dialect) int {
-	switch d.Name() {
-	case "sqlite":
-		return 32766
-	case "postgres", "mysql":
-		return 65535
-	default:
-		return 999 // the historical SQLite limit, safe everywhere
+	if n := database.MustCapabilities(d).MaxParams; n > 0 {
+		return n
 	}
+
+	return 999
 }
 
 // CreateMany inserts models with multi-row INSERT statements, split into
@@ -55,6 +52,10 @@ func CreateMany[T any](ctx context.Context, ex database.Executor, models []T) er
 func createMany[T any](ctx context.Context, ex database.Executor, models []T, limit int) error {
 	if len(models) == 0 {
 		return nil
+	}
+
+	if err := checkDialect(ex); err != nil {
+		return err
 	}
 
 	m := metaOf[T]()
@@ -118,11 +119,11 @@ func insertFields(m *meta, genID bool) []field {
 }
 
 // insertAll writes models in batches under limit bound parameters, or one
-// row per INSERT on MySQL when the ids are generated.
+// row per INSERT when the dialect has no RETURNING and the ids are generated.
 func insertAll[T any](
 	ctx context.Context, ex database.Executor, m *meta, fields []field, models []T, genID bool, limit int,
 ) error {
-	if genID && ex.Dialect().Name() == "mysql" {
+	if genID && !capsOf(ex).Returning {
 		for i := range models {
 			if err := insertOne(ctx, ex, m, reflect.ValueOf(&models[i]).Elem()); err != nil {
 				return err
@@ -200,7 +201,7 @@ func insertBatch[T any](
 		cols[i] = d.Quote(f.column)
 	}
 
-	row := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(fields)), ", ") + ")"
+	row := "(" + marks(len(fields)) + ")"
 	args := make([]any, 0, len(batch)*len(fields))
 
 	for i := range batch {
@@ -221,7 +222,7 @@ func insertBatch[T any](
 
 	if !genID {
 		if _, err := ex.ExecContext(ctx, rebind(q, d), args...); err != nil {
-			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
+			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(ex, err))
 		}
 
 		return nil
@@ -229,7 +230,7 @@ func insertBatch[T any](
 
 	ids, err := returnIDs(ctx, ex, rebind(q+" RETURNING "+d.Quote(m.pk), d), args)
 	if err != nil {
-		return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
+		return fmt.Errorf("orm: insert %s: %w", m.table, mapError(ex, err))
 	}
 
 	if len(ids) != len(batch) {
@@ -267,7 +268,7 @@ func checkIncreasing(ids []int64) error {
 }
 
 func returnIDs(ctx context.Context, ex database.Executor, q string, args []any) (ids []int64, err error) {
-	rows, err := ex.QueryContext(ctx, q, args...)
+	rows, err := queryWrite(ctx, ex, q, args...)
 	if err != nil {
 		return nil, err
 	}

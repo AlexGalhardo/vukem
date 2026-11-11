@@ -1016,3 +1016,62 @@ func TestBulkWriteRefusesRowLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestSQLiteILike(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	if err := Create(ctx, db, &User{Name: "Alice", Email: "alice@x.io"}); err != nil {
+		t.Fatal(err)
+	}
+
+	users, err := QueryOf[User](db).Where("name", "ILIKE", "%LIC%").Get(ctx)
+	if err != nil || len(users) != 1 {
+		t.Fatalf("ILIKE on SQLite = %v, %v; want the Alice row", users, err)
+	}
+}
+
+// bareDialect is a SQLite-like dialect that does not implement database.Capable.
+type bareDialect struct{}
+
+func (bareDialect) Name() string              { return "bare" }
+func (bareDialect) Placeholder(int) string    { return "?" }
+func (bareDialect) Quote(ident string) string { return `"` + ident + `"` }
+
+func TestUnknownDialectFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	bare := database.FromSQL(db.SQL(), bareDialect{})
+
+	if err := Create(ctx, bare, &User{Name: "A", Email: "a@x.io"}); err == nil ||
+		!strings.Contains(err.Error(), "unknown dialect") {
+		t.Fatalf("Create on a dialect without capabilities = %v, want the unknown dialect error", err)
+	}
+
+	if _, err := QueryOf[User](bare).Get(ctx); err == nil || !strings.Contains(err.Error(), "unknown dialect") {
+		t.Fatalf("Get on a dialect without capabilities = %v, want the unknown dialect error", err)
+	}
+
+	if _, err := QueryOf[User](bare).Where("id", 1).Update(ctx, Set{"name": "x"}); err == nil ||
+		!strings.Contains(err.Error(), "unknown dialect") {
+		t.Fatalf("Query.Update on a dialect without capabilities = %v, want the unknown dialect error", err)
+	}
+
+	if _, err := QueryOf[User](
+		bare,
+	).Where("id", 1).
+		Delete(ctx); err == nil ||
+		!strings.Contains(err.Error(), "unknown dialect") {
+		t.Fatalf("Query.Delete on a dialect without capabilities = %v, want the unknown dialect error", err)
+	}
+
+	if err := Delete(
+		ctx,
+		bare,
+		&User{ID: 1},
+	); err == nil ||
+		!strings.Contains(err.Error(), "unknown dialect") {
+		t.Fatalf("Delete on a dialect without capabilities = %v, want the unknown dialect error", err)
+	}
+}

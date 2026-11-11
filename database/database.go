@@ -97,6 +97,10 @@ type Driver struct {
 	// source name (MySQL's driver does not take URLs). Its errors must not
 	// echo the URL, which may hold a password.
 	DSN func(rawURL string) (string, error)
+	// IsUniqueViolation reports whether err is the driver's unique or
+	// primary key violation. Optional: without it the error is matched by
+	// its SQLSTATE method, then by the text the built-in drivers produce.
+	IsUniqueViolation func(err error) bool
 }
 
 // Config tunes connection pools.
@@ -118,6 +122,7 @@ type DB struct {
 	log     *slog.Logger
 	enc     Encrypter
 	obs     QueryObserver
+	uniq    func(error) bool
 }
 
 // Encrypter seals and opens column values for orm.Encrypted;
@@ -294,6 +299,20 @@ func openSQLite(ctx context.Context, rawURL string, cfg Config) (*DB, error) {
 }
 
 func openGeneric(ctx context.Context, d Driver, rawURL string, cfg Config) (*DB, error) {
+	caps, ok := CapabilitiesOf(d.Dialect)
+	if !ok {
+		return nil, fmt.Errorf(
+			"database: dialect %q does not describe its capabilities (implement database.Capable)", d.Dialect.Name())
+	}
+
+	if !slices.Contains([]string{"sqlite", "postgres", "mysql"}, caps.Family) {
+		return nil, fmt.Errorf(
+			"database: dialect %q reports Family %q; it must be sqlite, postgres or mysql",
+			d.Dialect.Name(),
+			caps.Family,
+		)
+	}
+
 	dsn := rawURL
 
 	if d.DSN != nil {
@@ -318,7 +337,7 @@ func openGeneric(ctx context.Context, d Driver, rawURL string, cfg Config) (*DB,
 		return nil, fmt.Errorf("database: connect %s: %w", d.Dialect.Name(), err)
 	}
 
-	return &DB{dialect: d.Dialect, writer: conn, reader: conn, log: cfg.Log}, nil
+	return &DB{dialect: d.Dialect, writer: conn, reader: conn, log: cfg.Log, uniq: d.IsUniqueViolation}, nil
 }
 
 // FromSQL wraps an existing *sql.DB (tests, sqlc interop).
@@ -328,6 +347,42 @@ func FromSQL(conn *sql.DB, dialect Dialect) *DB {
 
 // Dialect implements Executor.
 func (db *DB) Dialect() Dialect { return db.dialect }
+
+// UniqueViolation reports whether err is a unique or primary key violation
+// on this connection's driver.
+func (db *DB) UniqueViolation(err error) bool { return uniqueViolation(db.uniq, err) }
+
+// uniqueViolation decides by the driver's own hook, then by the SQLSTATE of
+// the error (PostgreSQL: 23505), then by the extended result code of the
+// built-in SQLite driver, then by the leading "Error 1062 (" that
+// go-sql-driver/mysql gives ER_DUP_ENTRY. Text inside a message (a column
+// value that happens to say "duplicate key") never counts.
+func uniqueViolation(hook func(error) bool, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if hook != nil {
+		return hook(err)
+	}
+
+	if s, ok := errors.AsType[interface {
+		error
+		SQLState() string
+	}](err); ok {
+		return s.SQLState() == "23505"
+	}
+
+	if c, ok := errors.AsType[interface {
+		error
+		Code() int
+	}](err); ok {
+		// SQLITE_CONSTRAINT_UNIQUE and SQLITE_CONSTRAINT_PRIMARYKEY.
+		return c.Code() == 2067 || c.Code() == 1555
+	}
+
+	return strings.HasPrefix(err.Error(), "Error 1062 (")
+}
 
 // Encrypter returns the encrypter set with WithEncrypter, or nil.
 func (db *DB) Encrypter() Encrypter { return db.enc }
@@ -357,11 +412,35 @@ func (db *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql
 // statements with RETURNING, which write and go to the writer pool.
 func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	pool := db.reader
-	if strings.Contains(strings.ToUpper(query), "RETURNING") {
+	if containsFold(query, "RETURNING") {
 		pool = db.writer
 	}
 
 	return observeRow(ctx, db.log, db.obs, pool.QueryRowContext, query, args)
+}
+
+// QueryWriteContext runs a multi-row statement that writes
+// (INSERT ... RETURNING) on the writer pool.
+func (db *DB) QueryWriteContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return observeRows(ctx, db.log, db.obs, db.writer.QueryContext, query, args)
+}
+
+// QueryRowWriteContext runs a single-row statement that writes
+// (INSERT ... RETURNING) on the writer pool, whatever its text.
+func (db *DB) QueryRowWriteContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return observeRow(ctx, db.log, db.obs, db.writer.QueryRowContext, query, args)
+}
+
+// containsFold reports whether s contains word, ignoring ASCII case, without
+// copying s.
+func containsFold(s, word string) bool {
+	for i := 0; i+len(word) <= len(s); i++ {
+		if strings.EqualFold(s[i:i+len(word)], word) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Ping checks connectivity (used by health checks).
@@ -396,12 +475,17 @@ type Tx struct {
 	// A pointer keeps Tx comparable, as it was before AfterCommit.
 	hooks *txHooks
 	log   *slog.Logger
+	uniq  func(error) bool
 }
 
 type txHooks struct {
 	mu  sync.Mutex
 	fns []func(ctx context.Context)
 }
+
+// UniqueViolation reports whether err is a unique or primary key violation
+// on this transaction's driver.
+func (tx *Tx) UniqueViolation(err error) bool { return uniqueViolation(tx.uniq, err) }
 
 // AfterCommit runs fn once the transaction commits, after DB.Tx's fn
 // returned (hooks run in registration order, with DB.Tx's context). A
@@ -463,7 +547,7 @@ func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) (err error) {
 		return fmt.Errorf("database: begin: %w", err)
 	}
 
-	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc, obs: db.obs, hooks: &txHooks{}, log: db.log}
+	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc, obs: db.obs, hooks: &txHooks{}, log: db.log, uniq: db.uniq}
 
 	defer func() {
 		if p := recover(); p != nil {
@@ -524,7 +608,7 @@ func (tx *Tx) LockKey(ctx context.Context, key string) error {
 		return errors.New("database: LockKey needs a key of 1 to 255 bytes")
 	}
 
-	switch tx.dialect.Name() {
+	switch MustCapabilities(tx.dialect).AdvisoryLock {
 	case "postgres":
 		_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key)
 		return err

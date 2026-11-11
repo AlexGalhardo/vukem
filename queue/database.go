@@ -171,7 +171,7 @@ func (d *Database) nextSeq() int64 {
 // runs them at boot and the migration from Migrations runs the same list,
 // so the two paths cannot drift (TestMigrationMatchesCreateTablesDDL).
 func tableDDL(dl database.Dialect, jobs, failed string) []string {
-	if dl.Name() == "mysql" {
+	if database.MustCapabilities(dl).Family == "mysql" {
 		return mysqlTableDDL(dl, jobs, failed)
 	}
 
@@ -306,7 +306,7 @@ func (d *Database) PushTx(ctx context.Context, ex database.Executor, m *Message)
 	// caller. Only the id clash is ignored: MySQL's INSERT IGNORE would also turn a truncated queue name or a NOT NULL
 	// violation into a warning and lose the job, so it uses a no-op ON DUPLICATE KEY UPDATE (0 rows affected).
 	if unique {
-		if ex.Dialect().Name() == "mysql" {
+		if database.MustCapabilities(ex.Dialect()).Family == "mysql" {
 			stmt += ` ON DUPLICATE KEY UPDATE id = id`
 		} else {
 			stmt += ` ON CONFLICT (id) DO NOTHING`
@@ -342,13 +342,13 @@ func (d *Database) PushTx(ctx context.Context, ex database.Executor, m *Message)
 // Pop implements Driver.
 func (d *Database) Pop(ctx context.Context, queues []string) (*Message, error) {
 	dl := d.db.Dialect()
-	if dl.Name() == "mysql" {
+	if database.MustCapabilities(dl).Family == "mysql" {
 		return d.popMySQL(ctx, dl, queues)
 	}
 
 	lock := ""
 
-	if dl.Name() == "postgres" {
+	if database.MustCapabilities(dl).Family == "postgres" {
 		lock = " FOR UPDATE SKIP LOCKED"
 	}
 

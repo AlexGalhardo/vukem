@@ -11,7 +11,7 @@ import (
 // isSQLite reports whether ex is SQLite, whose driver returns a timestamp
 // as text when the column has no DATETIME-like declared type (TEXT, none,
 // or an expression), so time fields are scanned through database.ScanTime.
-func isSQLite(ex database.Executor) bool { return ex.Dialect().Name() == "sqlite" }
+func isSQLite(ex database.Executor) bool { return capsOf(ex).Family == "sqlite" }
 
 func isTimeType(t reflect.Type) bool {
 	switch t {

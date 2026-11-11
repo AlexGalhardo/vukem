@@ -38,7 +38,7 @@ func Rebind(d Dialect, query string) string {
 		return query
 	}
 
-	return sqlscan.Scan(d.Name(), query, d.Placeholder).SQL
+	return sqlscan.Scan(MustCapabilities(d).Family, query, d.Placeholder).SQL
 }
 
 // RebindChecked is Rebind that fails closed: it returns ErrUnterminatedSQL
@@ -60,7 +60,7 @@ func RebindChecked(d Dialect, query string) (string, error) {
 		ph = d.Placeholder
 	}
 
-	r := sqlscan.Scan(d.Name(), query, ph)
+	r := sqlscan.Scan(MustCapabilities(d).Family, query, ph)
 	if !r.Terminated {
 		return "", fmt.Errorf("%w: %q", ErrUnterminatedSQL, queryPrefix(query))
 	}

@@ -88,9 +88,13 @@ func Create[T any](ctx context.Context, ex database.Executor, model *T) error {
 
 // insertOne inserts the row in rv and fills a generated primary key.
 func insertOne(ctx context.Context, ex database.Executor, m *meta, rv reflect.Value) error {
+	if err := checkDialect(ex); err != nil {
+		return err
+	}
+
 	var (
-		cols, marks []string
-		args        []any
+		cols []string
+		args []any
 	)
 
 	for _, f := range m.fields {
@@ -105,29 +109,28 @@ func insertOne(ctx context.Context, ex database.Executor, m *meta, rv reflect.Va
 		}
 
 		cols = append(cols, ex.Dialect().Quote(f.column))
-		marks = append(marks, "?")
 		args = append(args, v)
 	}
 
 	q := "INSERT INTO " + ex.Dialect().Quote(m.table) + " (" + strings.Join(cols, ", ") + ") VALUES (" +
-		strings.Join(marks, ", ") + ")"
+		marks(len(cols)) + ")"
 
 	pk := rv.FieldByIndex(m.byColumn[m.pk].index)
 
 	switch {
-	case m.autoID && pk.IsZero() && ex.Dialect().Name() == "mysql":
-		// MySQL 8 has no RETURNING; the generated id comes back with the result.
+	case m.autoID && pk.IsZero() && !capsOf(ex).Returning:
+		// Without RETURNING (MySQL 8) the generated id comes back with the result.
 		if err := insertLastID(ctx, ex, q, args, pk); err != nil {
 			return fmt.Errorf("orm: insert %s: %w", m.table, err)
 		}
 	case m.autoID && pk.IsZero():
 		q += " RETURNING " + ex.Dialect().Quote(m.pk)
-		if err := ex.QueryRowContext(ctx, rebind(q, ex.Dialect()), args...).Scan(pk.Addr().Interface()); err != nil {
-			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
+		if err := queryRowWrite(ctx, ex, rebind(q, ex.Dialect()), args...).Scan(pk.Addr().Interface()); err != nil {
+			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(ex, err))
 		}
 	default:
 		if _, err := ex.ExecContext(ctx, rebind(q, ex.Dialect()), args...); err != nil {
-			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
+			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(ex, err))
 		}
 	}
 
@@ -137,7 +140,7 @@ func insertOne(ctx context.Context, ex database.Executor, m *meta, rv reflect.Va
 func insertLastID(ctx context.Context, ex database.Executor, q string, args []any, pk reflect.Value) error {
 	res, err := ex.ExecContext(ctx, q, args...)
 	if err != nil {
-		return mapError(err)
+		return mapError(ex, err)
 	}
 
 	id, err := res.LastInsertId()
@@ -162,9 +165,69 @@ func setID(pk reflect.Value, id int64) error {
 }
 
 // Update writes every column of model (except the primary key,
-// created_at and orm:"readonly" columns) and refreshes updated_at.
+// created_at and orm:"readonly" columns) and refreshes updated_at. A model
+// with SoftDeletes whose row is in the trash is not written: Update returns
+// ErrNotFound (use Query.OnlyTrashed().Update to change a trashed row). It
+// overwrites columns another writer changed since model was read; UpdateOnly
+// writes just the columns it is given.
 func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
+	return updateColumns(ctx, ex, model, nil)
+}
+
+// UpdateOnly writes only cols of model (validated against the model) and
+// refreshes updated_at; the BeforeUpdate and AfterUpdate hooks run as in
+// Update. It never writes the key, created_at or orm:"readonly" columns, and
+// like Update it skips a trashed row (ErrNotFound).
+func UpdateOnly[T any](ctx context.Context, ex database.Executor, model *T, cols ...string) error {
+	if len(cols) == 0 {
+		return errors.New("orm: UpdateOnly needs at least one column")
+	}
+
 	m := metaOf[T]()
+
+	var fields []field
+
+	for _, c := range cols {
+		name, err := m.column(c)
+		if err != nil {
+			return err
+		}
+
+		col := name[strings.LastIndex(name, ".")+1:]
+
+		f, ok := m.byColumn[col]
+		if !ok || !writableOnUpdate(m, f) { // "*" is not a column
+
+			return fmt.Errorf("orm: UpdateOnly cannot write %q on %s", c, m.table)
+		}
+
+		if !slices.ContainsFunc(fields, func(g field) bool { return g.column == f.column }) {
+			fields = append(fields, f)
+		}
+	}
+
+	// updated_at is refreshed on every write; Update has it among its columns.
+	if f, ok := m.byColumn["updated_at"]; ok &&
+		!slices.ContainsFunc(fields, func(g field) bool { return g.column == f.column }) {
+		fields = append(fields, f)
+	}
+
+	return updateColumns(ctx, ex, model, fields)
+}
+
+// writableOnUpdate reports whether Update may write f.
+func writableOnUpdate(m *meta, f field) bool {
+	return !f.readonly && !slices.Contains(m.keys, f.column) && f.column != "created_at"
+}
+
+// updateColumns runs the UPDATE of one model by key: every writable column
+// when only is nil, else the columns in only.
+func updateColumns[T any](ctx context.Context, ex database.Executor, model *T, only []field) error {
+	m := metaOf[T]()
+
+	if err := checkDialect(ex); err != nil {
+		return err
+	}
 
 	if err := hook(ctx, model, BeforeUpdater.BeforeUpdate); err != nil {
 		return err
@@ -173,16 +236,21 @@ func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
 	rv := reflect.ValueOf(model).Elem()
 	setTime(rv, m, "updated_at", clockFrom(ctx), false)
 
+	fields := only
+	if fields == nil {
+		for _, f := range m.fields {
+			if writableOnUpdate(m, f) {
+				fields = append(fields, f)
+			}
+		}
+	}
+
 	var (
 		sets []string
 		args []any
 	)
 
-	for _, f := range m.fields {
-		if f.readonly || slices.Contains(m.keys, f.column) || f.column == "created_at" {
-			continue
-		}
-
+	for _, f := range fields {
 		v, err := bindValue(ex, m.table, f.column, rv.FieldByIndex(f.index).Interface())
 		if err != nil {
 			return err
@@ -200,10 +268,13 @@ func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
 
 	q := "UPDATE " + ex.Dialect().Quote(m.table) + " SET " + strings.Join(sets, ", ") +
 		" WHERE " + strings.Join(where, " AND ")
+	if m.soft {
+		q += " AND " + ex.Dialect().Quote("deleted_at") + " IS NULL"
+	}
 
 	res, err := ex.ExecContext(ctx, rebind(q, ex.Dialect()), args...)
 	if err != nil {
-		return fmt.Errorf("orm: update %s: %w", m.table, mapError(err))
+		return fmt.Errorf("orm: update %s: %w", m.table, mapError(ex, err))
 	}
 
 	n, _ := res.RowsAffected()
@@ -218,6 +289,10 @@ func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
 // SoftDeletes.
 func Delete[T any](ctx context.Context, ex database.Executor, model *T) error {
 	m := metaOf[T]()
+
+	if err := checkDialect(ex); err != nil {
+		return err
+	}
 
 	if err := hook(ctx, model, BeforeDeleter.BeforeDelete); err != nil {
 		return err
@@ -300,6 +375,10 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 		return 0, q.err
 	}
 
+	if err := checkDialect(q.ex); err != nil {
+		return 0, err
+	}
+
 	if err := q.limited("Update"); err != nil {
 		return 0, err
 	}
@@ -354,7 +433,7 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 
 	res, err := q.ex.ExecContext(ctx, query, append(args, wargs...)...)
 	if err != nil {
-		return 0, fmt.Errorf("orm: update %s: %w", q.m.table, mapError(err))
+		return 0, fmt.Errorf("orm: update %s: %w", q.m.table, mapError(q.ex, err))
 	}
 
 	return res.RowsAffected()
@@ -377,6 +456,10 @@ func (q Query[T]) Delete(ctx context.Context) (int64, error) {
 		return 0, q.err
 	}
 
+	if err := checkDialect(q.ex); err != nil {
+		return 0, err
+	}
+
 	if err := q.limited("Delete"); err != nil {
 		return 0, err
 	}
@@ -394,7 +477,7 @@ func (q Query[T]) Delete(ctx context.Context) (int64, error) {
 
 	res, err := q.ex.ExecContext(ctx, query, args...)
 	if err != nil {
-		return 0, fmt.Errorf("orm: delete %s: %w", q.m.table, mapError(err))
+		return 0, fmt.Errorf("orm: delete %s: %w", q.m.table, mapError(q.ex, err))
 	}
 
 	return res.RowsAffected()
@@ -442,8 +525,24 @@ func (*conflictError) HTTPStatus() int { return 409 }
 
 func (*conflictError) Is(target error) bool { _, ok := target.(*conflictError); return ok }
 
-// mapError converts driver-specific unique violations into ErrConflict.
-func mapError(err error) error {
+// mapError converts a unique violation into ErrConflict. An executor that
+// knows its driver (*database.DB, *database.Tx) decides by the driver's error
+// code, never by the error text, which can carry a column value; a wrapped
+// executor (a test double, a query counter) does not, so its errors are
+// matched by the text the built-in drivers produce.
+func mapError(ex database.Executor, err error) error {
+	if u, ok := ex.(interface{ UniqueViolation(error) bool }); ok {
+		if u.UniqueViolation(err) {
+			return &conflictError{cause: err}
+		}
+
+		return err
+	}
+
+	return mapErrorText(err)
+}
+
+func mapErrorText(err error) error {
 	msg := strings.ToLower(err.Error())
 	if strings.Contains(msg, "unique constraint") || strings.Contains(msg, "duplicate key") ||
 		strings.Contains(msg, "constraint failed: unique") || strings.Contains(msg, "duplicate entry") {
@@ -500,6 +599,8 @@ var ErrKeyNotUnique = errors.New("orm: the primary key matched more than one row
 
 // byKey filters q on every primary key column of the model in rv.
 func byKey[T any](q Query[T], rv reflect.Value) Query[T] {
+	q = q.grouped()
+
 	for _, k := range q.m.keys {
 		q = q.Where(k, rv.FieldByIndex(q.m.byColumn[k].index).Interface())
 	}

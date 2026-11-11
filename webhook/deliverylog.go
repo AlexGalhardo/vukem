@@ -125,7 +125,7 @@ func tableDDL(dl database.Dialect, table string) []string {
 
 	var stmts []string
 
-	switch dl.Name() {
+	switch database.MustCapabilities(dl).Family {
 	case "mysql":
 		// No CREATE INDEX IF NOT EXISTS on MySQL, and TEXT cannot be indexed.
 		stmts = []string{`CREATE TABLE IF NOT EXISTS {t} (id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -138,7 +138,7 @@ func tableDDL(dl database.Dialect, table string) []string {
 		stmts = []string{`CREATE TABLE IF NOT EXISTS {t} (id INTEGER PRIMARY KEY AUTOINCREMENT, ` + cols + `)`}
 	}
 
-	if dl.Name() != "mysql" {
+	if database.MustCapabilities(dl).Family != "mysql" {
 		stmts = append(stmts, `CREATE INDEX IF NOT EXISTS `+index+` ON {t} (endpoint, attempted_at)`)
 	}
 

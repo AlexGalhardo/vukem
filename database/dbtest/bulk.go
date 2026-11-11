@@ -56,7 +56,7 @@ func testBulkLocksChecks(ctx context.Context, t *testing.T, db *database.DB) {
 	}
 
 	rows := bulkRows
-	if db.Dialect().Name() == "mysql" {
+	if database.MustCapabilities(db.Dialect()).Family == "mysql" {
 		rows = mysqlBulkRows
 	}
 
@@ -94,7 +94,7 @@ func testAlterCheck(ctx context.Context, t *testing.T, db *database.DB, s *schem
 
 	addStatus := func(t *schema.Table) { t.Check("dbt_numbers_status_check", "status IN ('free', 'held')") }
 
-	if db.Dialect().Name() == "sqlite" {
+	if database.MustCapabilities(db.Dialect()).Family == "sqlite" {
 		if err := s.Table("dbt_numbers", addStatus); err == nil {
 			t.Fatal("sqlite added a CHECK to an existing table")
 		}
@@ -143,7 +143,7 @@ func testLocks(ctx context.Context, t *testing.T, db *database.DB) {
 
 		// SQLite has one writer connection: a second transaction would wait
 		// for this one, and its locks are no-ops anyway.
-		if db.Dialect().Name() == "sqlite" {
+		if database.MustCapabilities(db.Dialect()).Family == "sqlite" {
 			return nil
 		}
 
@@ -163,7 +163,7 @@ func testLocks(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatal(err)
 	}
 
-	if db.Dialect().Name() == "sqlite" {
+	if database.MustCapabilities(db.Dialect()).Family == "sqlite" {
 		return
 	}
 
@@ -200,7 +200,7 @@ func testLocks(ctx context.Context, t *testing.T, db *database.DB) {
 func testDescendingIDs(ctx context.Context, t *testing.T, db *database.DB, s *schema.Schema) {
 	t.Helper()
 
-	if db.Dialect().Name() != "postgres" {
+	if database.MustCapabilities(db.Dialect()).Family != "postgres" {
 		t.Skip("descending identity sequences are PostgreSQL only")
 	}
 

@@ -125,7 +125,7 @@ func (q Query[T]) after(keys []orderKey, last []any) Query[T] {
 		groups = append(groups, "("+strings.Join(parts, " AND ")+")")
 	}
 
-	return q.addCond(false, "("+strings.Join(groups, " OR ")+")", args...)
+	return q.grouped().addCond(false, "("+strings.Join(groups, " OR ")+")", args...)
 }
 
 // Cursors are opaque to clients but not secret: they only carry the last

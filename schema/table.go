@@ -236,7 +236,7 @@ func (i *Index) Using(method string) *Index {
 	m := strings.ToLower(method)
 
 	switch {
-	case i.t.s.d.Name() != "postgres":
+	case !i.t.s.caps().IndexMethods:
 		i.t.fail(fmt.Errorf("schema: only postgres supports index methods (index on %s using %q)", i.t.name, method))
 	case !slices.Contains(methods, m):
 		i.t.fail(fmt.Errorf("schema: unknown index method %q on %s; use one of %s",
@@ -326,7 +326,7 @@ func (t *Table) Check(name, expr string) {
 		return
 	}
 
-	if t.alter && t.s.d.Name() == "sqlite" {
+	if t.alter && !t.s.caps().AlterConstraints {
 		t.fail(fmt.Errorf("schema: sqlite cannot add a check to existing table %s; add it in Create", t.name))
 		return
 	}
@@ -346,7 +346,7 @@ func (t *Table) DropCheck(name string) {
 	switch {
 	case !t.alter:
 		t.fail(fmt.Errorf("schema: DropCheck(%s) is alter only", name))
-	case t.s.d.Name() == "sqlite":
+	case !t.s.caps().AlterConstraints:
 		t.fail(fmt.Errorf("schema: sqlite cannot drop a check from existing table %s", t.name))
 	default:
 		t.dropChk = append(t.dropChk, name)
@@ -416,7 +416,7 @@ func (c *Column) StoredAs(expr string) *Column {
 		c.t.fail(fmt.Errorf("schema: generated column %s needs an expression", c.name))
 	case c.hasDefault:
 		c.t.fail(fmt.Errorf("schema: generated column %s cannot have a default", c.name))
-	case c.t.alter && c.t.s.d.Name() == "sqlite":
+	case c.t.alter && c.t.s.caps().Family == "sqlite":
 		c.t.fail(fmt.Errorf("schema: sqlite cannot add a stored generated column to existing table %s", c.t.name))
 	default:
 		c.generated = expr

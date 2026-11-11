@@ -21,6 +21,7 @@ import (
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/csrf"
+	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/devtools"
 	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/middleware"
@@ -1077,7 +1078,7 @@ func (a *App) databaseSessionStore() (session.Store, error) {
 
 	var opts []session.SQLOption
 
-	switch db.Dialect().Name() {
+	switch database.MustCapabilities(db.Dialect()).Family {
 	case "postgres":
 		opts = append(opts, session.WithDollarPlaceholders())
 	case "mysql":

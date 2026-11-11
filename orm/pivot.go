@@ -52,7 +52,7 @@ func Attach[T any](ctx context.Context, ex database.Executor, model *T, relation
 		}
 
 		if _, err := ex.ExecContext(ctx, q, key, id); err != nil {
-			return fmt.Errorf("orm: attach %s: %w", rel.pivot, mapError(err))
+			return fmt.Errorf("orm: attach %s: %w", rel.pivot, mapError(ex, err))
 		}
 
 		existing = append(existing, normKey(id))
@@ -78,7 +78,7 @@ func Detach[T any](ctx context.Context, ex database.Executor, model *T, relation
 	}
 
 	if _, err := ex.ExecContext(ctx, rebind(q, d), args...); err != nil {
-		return fmt.Errorf("orm: detach %s: %w", rel.pivot, err)
+		return fmt.Errorf("orm: detach %s: %w", rel.pivot, mapError(ex, err))
 	}
 
 	return nil
@@ -136,7 +136,7 @@ func pivotIDs(ctx context.Context, ex database.Executor, rel relation, key any) 
 	for rows.Next() {
 		var id any
 		if err := rows.Scan(&id); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("orm: read %s: %w", rel.pivot, err)
 		}
 
 		ids = append(ids, normKey(id))

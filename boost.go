@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/router"
 )
 
@@ -372,7 +373,7 @@ func (s *boostServer) databaseSchema(ctx context.Context, raw json.RawMessage) (
 	q := `SELECT table_name, column_name, data_type, is_nullable = 'YES', false
 		FROM information_schema.columns WHERE table_schema = current_schema()
 		ORDER BY table_name, ordinal_position`
-	switch db.Dialect().Name() {
+	switch database.MustCapabilities(db.Dialect()).Family {
 	case "sqlite":
 		q = `SELECT m.name, p.name, p.type, p."notnull" = 0, p.pk > 0
 			FROM sqlite_master m JOIN pragma_table_info(m.name) p
@@ -458,7 +459,7 @@ func (s *boostServer) databaseQuery(ctx context.Context, raw json.RawMessage) (a
 	}
 	defer conn.Close()
 
-	if db.Dialect().Name() == "sqlite" {
+	if database.MustCapabilities(db.Dialect()).Family == "sqlite" {
 		if _, err := conn.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
 			return nil, err
 		}
@@ -470,7 +471,7 @@ func (s *boostServer) databaseQuery(ctx context.Context, raw json.RawMessage) (a
 
 	// SQLite: the DSN may open IMMEDIATE (write) transactions, which
 	// query_only refuses, so query the connection directly.
-	if db.Dialect().Name() != "sqlite" {
+	if database.MustCapabilities(db.Dialect()).Family != "sqlite" {
 		tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 		if err != nil {
 			return nil, err

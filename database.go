@@ -771,7 +771,7 @@ func dbRunCommand() Command {
 				return err
 			}
 
-			mysql := db.Dialect().Name() == "mysql"
+			mysql := database.MustCapabilities(db.Dialect()).Family == "mysql"
 			if mysql && implicitCommit.MatchString(script) {
 				return errors.New("db:run: MySQL commits implicitly on ALTER, CREATE, DROP, TRUNCATE and RENAME, " +
 					"so a dry run of this script would apply it; run schema changes as migrations")
@@ -1004,7 +1004,8 @@ func openSQLiteBackup(app *App) (*database.DB, string, error) {
 		return nil, "", err
 	}
 
-	if db.Dialect().Name() != "sqlite" {
+	// Identity, not family: the backup copies the embedded SQLite driver's file.
+	if db.Dialect() != database.SQLite {
 		return nil, "", errors.New("db:backup: only SQLite has a file snapshot")
 	}
 

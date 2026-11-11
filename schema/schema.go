@@ -93,7 +93,9 @@ func (s *Schema) exec(stmt string, args ...any) error {
 
 func (s *Schema) q(ident string) string { return s.d.Quote(ident) }
 
-func (s *Schema) mysql() bool { return s.d.Name() == "mysql" }
+func (s *Schema) caps() database.Capabilities { return database.MustCapabilities(s.d) }
+
+func (s *Schema) mysql() bool { return s.caps().Family == "mysql" }
 
 // Create creates table with the columns and indexes defined by fn.
 func (s *Schema) Create(table string, fn func(t *Table)) error {
@@ -272,7 +274,7 @@ func (s *Schema) DropIfExists(table string) error {
 }
 
 func (s *Schema) cascade() string {
-	if s.d.Name() == "postgres" {
+	if s.caps().Family == "postgres" {
 		return " CASCADE"
 	}
 
@@ -323,7 +325,7 @@ func (s *Schema) HasTable(table string) (bool, error) {
 func hasTable(ctx context.Context, ex database.Executor, table string) (bool, error) {
 	var q string
 
-	switch ex.Dialect().Name() {
+	switch database.MustCapabilities(ex.Dialect()).Family {
 	case "postgres":
 		q = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1"
 	case "mysql":
@@ -358,7 +360,7 @@ func (s *Schema) HasColumn(table, column string) (bool, error) {
 
 	var q string
 
-	switch s.d.Name() {
+	switch s.caps().Family {
 	case "postgres":
 		q = "SELECT COUNT(*) FROM information_schema.columns " +
 			"WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2"
@@ -460,7 +462,7 @@ func (s *Schema) sqlType(c *Column) string {
 		return mysqlType(c)
 	}
 
-	pg := s.d.Name() == "postgres"
+	pg := s.caps().Family == "postgres"
 
 	switch c.kind {
 	case kindID:

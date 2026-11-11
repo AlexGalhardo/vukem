@@ -342,7 +342,7 @@ func loadPivot(ctx context.Context, ex database.Executor, m *meta, items reflect
 
 	d := ex.Dialect()
 
-	for chunk := range slices.Chunk(keys, 500) {
+	for chunk := range slices.Chunk(keys, eagerChunk) {
 		q := rebind("SELECT "+d.Quote(rel.fk)+", "+d.Quote(rel.rk)+" FROM "+d.Quote(rel.pivot)+
 			" WHERE "+d.Quote(rel.fk)+" IN ("+marks(len(chunk))+")", d)
 
@@ -411,7 +411,7 @@ func selectIn(
 		cols[i] = d.Quote(fd.column)
 	}
 
-	for chunk := range slices.Chunk(keys, 500) {
+	for chunk := range slices.Chunk(keys, eagerChunk) {
 		q := "SELECT " + strings.Join(cols, ", ") + " FROM " + d.Quote(rm.table) + " WHERE " + d.Quote(col) +
 			" IN (" + marks(len(chunk)) + ")"
 		if rm.soft {
@@ -517,6 +517,10 @@ func uniq(keys []any) []any {
 
 	return out
 }
+
+// eagerChunk is how many keys one eager-loading query binds: below every
+// known parameter limit.
+const eagerChunk = 500
 
 func marks(n int) string { return strings.TrimSuffix(strings.Repeat("?, ", n), ", ") }
 
