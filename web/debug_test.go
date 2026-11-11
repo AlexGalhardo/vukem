@@ -85,6 +85,32 @@ func TestDebugPageGolden(t *testing.T) {
 	golden(t, "debug.golden.html", strings.ReplaceAll(rec.Body.String(), runtime.Version(), "GOVERSION"))
 }
 
+func TestDebugPageShowsProductionResponse(t *testing.T) {
+	t.Parallel()
+
+	c, rec := newCtx(t, debugRequest(t), &Services{Log: slog.New(slog.DiscardHandler), Debug: true})
+	c.HandleError(errors.New("boom"))
+
+	body := rec.Body.String()
+
+	_, block, ok := strings.Cut(body, "What clients see in production")
+	if !ok {
+		t.Fatalf("debug page has no production panel:\n%s", body)
+	}
+
+	block, _, _ = strings.Cut(block, "</section>")
+
+	for _, want := range []string{`&#34;status&#34;: 500`, `&#34;title&#34;: &#34;Internal Server Error&#34;`} {
+		if !strings.Contains(block, want) {
+			t.Errorf("production panel = %q, want %q", block, want)
+		}
+	}
+
+	if strings.Contains(block, "boom") {
+		t.Errorf("production panel leaks the error message: %q", block)
+	}
+}
+
 func TestDebugReportANSI(t *testing.T) {
 	t.Parallel()
 
