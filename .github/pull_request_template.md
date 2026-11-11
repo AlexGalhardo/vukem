@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What does this change and why? End with the plan task or finding, e.g. "Refs: P.3.2". -->
+<!-- What does this change and why? End with the plan task or finding ("Refs: P.3.2") or the issue it closes ("Fixes #123"). -->
 
 ## Checklist
 

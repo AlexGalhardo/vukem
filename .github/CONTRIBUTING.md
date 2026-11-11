@@ -17,7 +17,7 @@ Thanks for helping. This guide covers setup, workflow and the rules every change
 
 ## Workflow
 
-1. Pick a task from [PLAN.md](../docs/PLAN.md) (or open an issue first for anything not in the plan).
+1. Pick a task from [PLAN.md](../docs/PLAN.md) (or open an issue first for anything not in the plan; the forms and labels are described in [maintenance](../docs/maintenance.md#issues)).
 2. Branch from `main`: `feat/<short-name>`, `fix/<short-name>`, `docs/<short-name>`.
 3. Write the test first, then the code. Keep changes small and focused.
 4. Run `task ci` before pushing (the `pre-push` hook runs vet and govulncheck; tests run in CI).
