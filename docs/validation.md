@@ -70,14 +70,16 @@ if errors.As(err, &issues) {
 | --- | --- | --- |
 | `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `HasLower`, `HasUpper`, `HasDigit`, `HasSymbol`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)` |
 | `z.Int()`, `z.Int64()`, `z.Uint()`… | integer types | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf` (integer arithmetic, exact above 2^53; floats compare by quotient with a relative tolerance of 1e-9, so `MultipleOf(0.01)` accepts `0.07`) |
-| `z.Float()` | `float64` | `Min`, `Max`, `Positive`, `Finite`, `MultipleOf` |
+| `z.Float()` | `float64` | `Min`, `Max`, `Positive`, `MultipleOf` (NaN and infinities are always rejected) |
 | `z.Bool()` | `bool` | — |
-| `z.Time()` | `time.Time` | `After`, `Before`, `Layout(...)` (default RFC 3339) |
+| `z.Time()` | `time.Time` | `After`, `Before`, `Layouts(...)` (default RFC 3339) |
 | `z.Enum(vals...)` | `string` (or any `~string` via `z.EnumOf[T]`) | membership |
-| `z.Slice(elem)` | `[]E` (E = element schema type) | `Min`, `Max`, `Len`, `NonEmpty`, `Unique` |
-| `z.Map(value)` | `map[string]V` | `Min`, `Max` (entry count) |
+| `z.Slice(elem)` | `[]E` (E = element schema type; a `z.Schema[[]E]`) | `Min`, `Max`, `Len`, `NonEmpty`, `Unique`; `Default([]E)`, `Refine`, `Transform`, `Message`, `Describe` |
+| `z.Map(value)` | `map[string]V` (a `z.Schema[map[string]V]`) | `Min`, `Max` (entry count); `Default(map[string]V)`, `Refine`, `Transform`, `Message`, `Describe` |
 | `z.Struct[T](z.Shape{...})` | `T` | field schemas mapped by `json`/`form`/`query` tag or field name; `Strict()` rejects unknown keys |
 | `z.Custom[T](fn)` | `T` | user parser |
+
+Every schema has the same modifiers: `Optional`, `Nullable`, `Default`, `Refine`, `Transform`, `Message` and `Describe`, plus `Parse` and `Check`. `z.File()` is the exception: it has no `Nullable`, `Default` or `Transform`.
 | `z.File()` | `*multipart.FileHeader` | `MaxSize(bytes)`, `Types(mime...)` (detected from the first 512 bytes of the content), `Extensions(...)` |
 
 Modifiers on every schema:
@@ -242,9 +244,7 @@ The table above is checked against the implementation by `TestTagRules_Documente
 | Route params | `web.ParseParams(c, schema, "id")` (invalid params → 404) |
 | Config / env | `config.Load[T]` + `z.For[T]().Check(cfg)` at boot |
 | A typed value that must also be cleaned | `schema.Normalize(v)` returns it with `Trim`, defaults and `Transform` applied (`Check` only validates) |
-| Queue payloads | job schemas checked on dispatch and on execution (BETA) |
 | Outgoing JSON | `web.JSONWith(c, status, schema, v)`; outside production a contract violation is logged and answered with 500 instead of sending bad data |
-| Inertia props | `inertia.Render` checks props against the page schema when registered (BETA) |
 | External HTTP | `z.ParseJSON(resp.Body, schema)` |
 
 ## Exports

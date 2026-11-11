@@ -334,7 +334,7 @@ apidocs.Serve(app, r, "/api/docs", apidocs.Config{SpecURL: "/api/v1/openapi.json
 
 ### Client generation
 
-`vukem codegen:client` turns the OpenAPI document of the typed routes (`api.Register`, described from their `z` types) into a typed client. It runs in warmup mode, so no connection is opened.
+`vukem codegen:client` turns the OpenAPI document of the typed routes (`api.Register`, described from their Go types and `validate` tags) into a typed client. It runs in warmup mode, so no connection is opened.
 
 ```sh
 vukem codegen:client                                  # TypeScript → resources/js/api.ts
