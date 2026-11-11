@@ -68,9 +68,9 @@ blog/
 
 | # | Topic | Decision | Alternatives | Rationale |
 | --- | --- | --- | --- | --- |
-| D1 | ORM | **Own generic query builder over `database/sql`** with Postgres/SQLite dialects: `orm.Query[User](db).Where(...).Get(ctx)`, `Each()` → `iter.Seq2`; explicit relations (`With`) from ALPHA; sqlc interoperable (same `*sql.DB`) | wrap bun; wrap GORM; sqlc-only | stdlib-first; avoids GORM baggage; generics give typed results |
+| D1 | ORM | **Own generic query builder over `database/sql`** with Postgres/SQLite dialects: `orm.QueryOf[User](db).Where(...).Get(ctx)`, `Each()` → `iter.Seq2`; explicit relations (`With`) from ALPHA; sqlc interoperable (same `*sql.DB`) | wrap bun; wrap GORM; sqlc-only | stdlib-first; avoids GORM baggage; generics give typed results |
 | D2 | Migrations | **Fluent schema builder in Go** (`s.Create("users", func(t *schema.Table){ t.ID(); t.String("email").Unique(); t.Timestamps() })`) + `s.Raw(sql)`; own runner with batches table | goose SQL files; both | Laravel DX; no goose dependency |
-| D3 | SQLite | **`modernc.org/sqlite`** (pure Go, no cgo) default; WAL, `busy_timeout`, `foreign_keys` on; single-connection write pool; mattn swappable by driver name | mattn (cgo); ncruces (wasm) | Windows + static binaries; PocketBase precedent |
+| D3 | SQLite | **`modernc.org/sqlite`** (pure Go, no cgo) default; WAL, `busy_timeout`, `foreign_keys` on; single-connection write pool; driver name fixed to `sqlite`; other SQLite-compatible engines plug in as a `database.Driver` whose dialect reports `Family: "sqlite"` | mattn (cgo); ncruces (wasm) | Windows + static binaries; PocketBase precedent |
 | D4 | Postgres | `jackc/pgx/v5` via `stdlib` in `drivers/postgres` module | lib/pq | De-facto standard |
 | D5 | Mongo / Redis | Separate modules; Mongo gets its own `Collection[T]` API (not the SQL builder); Redis backs cache/session/queue/locks | force Mongo into ORM | Different data models |
 

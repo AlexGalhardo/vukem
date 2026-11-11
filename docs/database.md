@@ -2,6 +2,32 @@
 
 Connections, the generic query builder, models, relations, migrations, factories and seeders. Decisions `D1`–`D5` in [brainstorming.md](brainstorming.md).
 
+Where to look:
+
+| Topic | Section |
+| --- | --- |
+| Why the ORM is shaped this way | [Design principles](#design-principles) |
+| Drivers and connection settings | [Support matrix](#support-matrix), [Connections](#connections) |
+| Reading and writing rows | [Query builder](#query-builder), [Models](#models), [Relations](#relations) |
+| Schema changes | [Migrations](#migrations), [Tables the framework owns](#tables-the-framework-owns) |
+| Test and demo data | [Factories and seeders](#factories-and-seeders) |
+| Rules that need the database | [Database validation rules](#database-validation-rules) |
+| Non-SQL stores | [MongoDB](#mongodb), [Redis](#redis) |
+| What is missing and what other ORMs taught us | [Not supported yet](#not-supported-yet), [Lessons from other ORMs](#lessons-from-other-orms) |
+
+## Design principles
+
+The ORM is SQL-first and typed. These principles decide what gets added and what is refused; a feature that breaks one needs a decision in [brainstorming.md](brainstorming.md) first.
+
+- **You can predict the SQL.** One builder call chain produces one statement, and `Query.SQL()` shows it. Eager loading is the documented exception: one extra `IN` query per relation, never one per row.
+- **The builder covers SQL instead of hiding it.** Methods are named after the SQL they emit (`Where`, `OrderBy`, `LockForUpdate`). Raw SQL (`WhereRaw`, `db.QueryContext`, `s.Raw`) is a supported path, not a failure of the builder.
+- **Typed results, validated names.** Results are `T`, `[]T` or a generic `V`; a column name is checked against the model before the statement reaches the database, so input never chooses a column.
+- **Nothing implicit.** No Active Record (a model never holds a connection), no lazy loading (`orm.ErrNotLoaded`), no automatic transaction around a write, no query run by a getter.
+- **Writes say what they write.** A filtered `Update` or `Delete` with `Limit`, `Offset` or `OrderBy` is an error rather than a wider write than the code reads as.
+- **Destructive changes need consent.** `migrate:reset`, `migrate:fresh`, `db:seed` and `db:wipe` need `--force` in production; nothing drops data as a side effect of another command.
+- **One model, every dialect.** The same models, queries and migrations run on SQLite, PostgreSQL and MySQL, and [`database/dbtest`](#postgresql) is the conformance suite a dialect must pass. Where a dialect cannot do something, the call fails with an error instead of doing something weaker.
+- **Stdlib underneath.** Everything runs on `database/sql`; `db.SQL()` hands the same pool to sqlc or any other library.
+
 ## Support matrix
 
 | Database | Driver | Module | Phase |
@@ -27,6 +53,7 @@ There is no `DB_CONNECTION` (the URL scheme decides) and no lifetime variable; p
 - Each connection is a `*database.DB` wrapping `*sql.DB` plus its `Dialect`; `db.SQL()` exposes the raw `*sql.DB` (the writer pool on SQLite) for sqlc or other libraries.
 - More connections: open them with `database.Open` and keep them where your code can reach them; `database.NewManager(db)` with `Add(name, db)`, `Conn(name)`, `Default()` and `Names()` is a small registry for that. The app itself only manages `app.DB()`.
 - Query observers (`database.QueryObserver`) see every statement run through a `DB` or its transactions (SQL, args, duration, error). `database.WithQueryObserver` can be passed several times and `db.AddQueryObserver` appends: all of them are notified in order. `db.SetQueryObserver` replaces them all. `vukem.WithQueryObservers(obs...)` adds observers to `app.DB()` next to devtools. Nil observers, typed nil pointers included, are ignored. A panicking observer is logged (observer type and panic value, never SQL or args) and skipped: the statement still returns its result or rows, and the observers after it still run.
+- A `database.Dialect` says how SQL is spelled; `database.Capabilities` (from `database.CapabilitiesOf(d)`, implemented by a dialect through `database.Capable`) says what it supports, and the core branches on that instead of on `Dialect.Name()`: `Family` (`sqlite`, `postgres` or `mysql`, the SQL grammar), `Returning`, `MaxParams`, `RowLocks`, `ILike`, `LimitForOffset`, `TransactionalDDL`, `AdvisoryLock`, `PartialIndexes`, `IndexMethods` and `AlterConstraints`. `database.Open` rejects a driver whose dialect does not implement `Capable`, and the ORM fails closed on one. A SQLite-compatible engine plugs in as a `database.Driver` whose dialect reports `Family: "sqlite"`. `Driver.IsUniqueViolation` lets a driver say which of its errors are unique violations. Add a field to `Capabilities` and this list changes together.
 - Postgres and MySQL are available once the app passes `postgres.Driver()` / `mysql.Driver()` to `vukem.WithDatabaseDrivers` (or `database.WithDriver` to `database.Open`) — explicit, no `init()`.
 
 ### PostgreSQL
@@ -135,7 +162,8 @@ for u, err := range orm.QueryOf[models.User](db).Each(ctx) {
 
 // Writes
 err = orm.Create(ctx, db, &user)            // fills ID, timestamps
-err = orm.Update(ctx, db, &user)            // all columns (explicit)
+err = orm.Update(ctx, db, &user)            // all columns (explicit); a trashed row is ErrNotFound
+err = orm.UpdateOnly(ctx, db, &user, "name") // only these columns (and updated_at)
 _, err = orm.QueryOf[models.User](db).Where("id", id).Update(ctx, orm.Set{"name": "x"})
 err = orm.Delete(ctx, db, &user)            // soft delete if model opts in
 err = orm.CreateMany(ctx, db, users)        // multi-row INSERT, batched; atomic on db and tx only
@@ -154,7 +182,7 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 
 | Group | Methods |
 | --- | --- |
-| Where | `Where(col, val)`, `Where(col, op, val)`, `OrWhere`, `WhereIn`, `WhereNotIn`, `WhereNull`, `WhereNotNull`, `WhereBetween`, `WhereRaw(sql, args...)`, grouped `WhereGroup(func(q))` |
+| Where | `Where(col, val)`, `Where(col, op, val)`, `WhereIn`, `WhereNotIn`, `WhereNull`, `WhereNotNull`, `WhereBetween`, `WhereRaw(sql, args...)`, grouped `WhereGroup(func(q))`; each has an `OrWhere*` twin (`OrWhere`, `OrWhereIn`, `OrWhereNotIn`, `OrWhereNull`, `OrWhereNotNull`, `OrWhereBetween`, `OrWhereRaw`, `OrWhereGroup`) |
 | Shape | `Select(cols...)`, `OrderBy`, `Latest()`, `Limit`, `Offset`, `WithTrashed()`, `OnlyTrashed()` |
 | Read | `Get`, `First`, `Find`, `Count`, `Exists`, `Pluck[V]`, `Each`, `Chunk(ctx, n, fn)` |
 | Write | `Update(ctx, orm.Set{...})`, `Delete(ctx)` on the filtered rows; both return an error when the query has `Limit`, `Offset` or `OrderBy` (they used to ignore them and write every match): `Pluck` the keys and `WhereIn` them to write a bounded set |
@@ -162,6 +190,12 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 | Paginate | `Paginate(ctx, page, perPage)` → `Page[T]{Items, Total, Page, PerPage, LastPage}`; `CursorPaginate(ctx, cursor, perPage, dir)` → `CursorPage[T]` (keyset = the query's `OrderBy` columns plus the primary key in `dir`, or the primary key alone; cursor values decoded into the columns' Go types; keys must be NOT NULL); `MaxPerPage(n)` |
 | Scopes | `Scope(fns ...func(Query[T]) Query[T])` |
 | Raw | `WhereRaw(sql, args...)` for conditions; `db.QueryContext` for anything else |
+
+`OrWhere*` conditions join with `OR` and `AND` binds tighter, as in Laravel: `Where(a).OrWhere(b).Where(c)` is `a OR (b AND c)`; use `WhereGroup` / `OrWhereGroup` to group. The ORM's own conditions (soft delete, the key of `Find`, `Chunk` and cursor pagination) wrap your `OR` filter in parentheses first, so they always apply to all of it. `ILIKE` is native on PostgreSQL; on MySQL and SQLite it is sent as `LIKE`, which is case-insensitive there only for ASCII letters (and, on MySQL, by the column collation).
+
+The ORM needs MySQL to report matched rows for `UPDATE` (`clientFoundRows=true`, the default of `drivers/mysql`): with `false`, an update that changes nothing looks like a missing row (`ErrNotFound`). That includes connections wrapped with `database.FromSQL`, whose DSN the framework does not see.
+
+`orm.Update` writes every column of the struct, so it overwrites what another writer changed since the struct was read; `orm.UpdateOnly(ctx, ex, &m, cols...)` writes only the named columns plus `updated_at` (unknown, key, `created_at` and `orm:"readonly"` columns are errors) and runs the same hooks. Both skip a row in the trash (a model with `orm.SoftDeletes` whose `deleted_at` is set): they return `orm.ErrNotFound`; change a trashed row with `QueryOf[T](ex).OnlyTrashed().Where(...).Update(ctx, orm.Set{...})`. A unique violation is `orm.ErrConflict`, detected by the driver error code (PostgreSQL SQLSTATE `23505`, SQLite result codes, MySQL error 1062), never by searching the message text; executors that wrap a `*database.DB` fall back to the text the built-in drivers produce.
 
 `orm.Restore` returns `orm.ErrNotFound` when no trashed row matches the key (the record is live or missing). `Chunk(ctx, n, fn)` reads batches by keyset (`WHERE pk > last ORDER BY pk LIMIT n`), so `fn` may delete or update the rows it receives without making the next batch skip rows, as OFFSET paging would. The query must not have its own `OrderBy`, `Limit` or `Offset`, and a `Select` must keep the primary key; `Chunk` returns an error otherwise. To walk rows in another order, use `Each` with `OrderBy`.
 
@@ -444,3 +478,61 @@ Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `Del
 ## Redis
 
 `drivers/redis` provides cache, session and queue stores, a shared rate limiter, locks and pub/sub; it works with Redis 7+ and Valkey 8+. See [subsystems.md](subsystems.md#redis).
+
+## Not supported yet
+
+Checked against the code at v0.40.0. Until one of these lands, the workaround is raw SQL (`WhereRaw`, `db.QueryContext`, `s.Raw`).
+
+| Area | Missing today | Workaround |
+| --- | --- | --- |
+| Query shape | Joins, `DISTINCT`, `GROUP BY`/`HAVING` beyond `GroupCount`, `SUM`/`AVG`/`MIN`/`MAX`, subqueries (`EXISTS`, `IN (SELECT …)`) | `db.QueryContext` with `database.Rebind` |
+| Relations | Filtering by a relation, counting a relation, nested eager loading (`"Comments.User"`), constraints on an eager load, polymorphic and has-many-through relations | Load the second level with its own query |
+| Writes | Upsert (`ON CONFLICT` / `ON DUPLICATE KEY`), find-or-create, a version column for optimistic locking | `db.ExecContext` inside `db.Tx` |
+| Results | Typed raw queries and scanning into a struct that is not the model | `Pluck[V]` for one column, `database/sql` for the rest |
+| Transactions | Savepoints, isolation levels and read-only transactions (`db.Tx` starts every transaction with the driver default) | `db.SQL().BeginTx` with `sql.TxOptions` |
+| Columns | Compile-time column references (names are strings checked at run time) | The runtime check fails before the query runs |
+| Migrations | Table rebuild on SQLite, changing a column's type, reading an existing schema, generating a migration from a diff, detecting migrations that conflict across branches | `s.Raw`; write the migration by hand |
+| Databases | Turso / libSQL | A SQLite file |
+
+Two behaviours to know until they change:
+
+- `orm.Update(ctx, ex, &model)` writes every column and does not filter on `deleted_at`, so it can overwrite another writer's change and it updates a row that is in the trash. Use `Query.Update(ctx, orm.Set{…})` to write only the columns that changed.
+- A unique-constraint violation is recognised from the driver's error text (`orm.ErrConflict`), not from a typed driver error.
+
+## Lessons from other ORMs
+
+What was read while auditing this package, and what the ORM takes from each. The links are the pages the statement comes from; pre-release documentation is marked, because it can change before a stable release.
+
+### Drizzle ORM (1.0 release candidate)
+
+- "If you know SQL, you know Drizzle" and "Drizzle always outputs exactly 1 SQL query" ([overview](https://orm.drizzle.team/docs/overview)). Adopted as the first two [design principles](#design-principles).
+- It keeps two query APIs: a SQL-shaped one (joins, subqueries, CTEs) and a relational one that loads nested relations and filters by them ([select](https://orm.drizzle.team/docs/select), [relational queries](https://orm.drizzle.team/docs/rqb-v2)). The gap table above is mostly the SQL-shaped half.
+- Relations are declared once, in one place, with explicit `from` and `to` columns ([relations](https://orm.drizzle.team/docs/relations-v2)). The `orm:"fk:…"` tag is the same idea; nested loading is the part still missing.
+- Migrations: `generate` writes SQL from a schema diff, `pull` introspects a database, `check` finds migrations that conflict across branches, and a data-loss statement needs `--force` ([kit overview](https://orm.drizzle.team/docs/kit-overview), [push](https://orm.drizzle.team/docs/drizzle-kit-push)). Each migration lives in its own folder with its snapshot ([upgrade to v1](https://orm.drizzle.team/docs/upgrade-v1)).
+- Transactions nest through savepoints and take an isolation level ([transactions](https://orm.drizzle.team/docs/transactions)).
+- Drizzle Studio is a local data browser with filtering, inline editing, a SQL console with explain and import/export ([studio](https://orm.drizzle.team/drizzle-studio/overview)); it listens on `127.0.0.1:4983` by default ([drizzle-kit studio](https://orm.drizzle.team/docs/drizzle-kit-studio)).
+
+### Prisma ORM (8 release candidate)
+
+- One description of the data is the source for types, queries and migrations ([ORM overview](https://www.prisma.io/docs/orm)). Here the Go struct plays that part for queries and the migration builder for the schema; a diff between the two is the missing link.
+- Destructive migration steps need consent per item: the planner asks about each dropped model or field, and a non-interactive run fails instead of guessing ([changelog 2026-10-09](https://prisma.io/changelog/2026-10-09)).
+- There is no reset command and no down-migration file; a mistake is undone with a new migration ([rollbacks and recovery](https://www.prisma.io/docs/orm/migrations/rollbacks-and-recovery), [coming from Prisma ORM 7](https://www.prisma.io/docs/orm/coming-from-prisma-orm-7)). Vukem keeps `Down` and `migrate:reset`, both behind `--force` in production.
+- Prisma 8 removes soft delete, model lifecycle hooks and client extensions from the core ([coming from Prisma ORM 7](https://www.prisma.io/docs/orm/coming-from-prisma-orm-7)). The lesson taken is restraint: the five hooks here stay five, and nothing is added that runs code the call site does not show.
+- Relation filters (`some`, `every`, `none`) are part of the query API ([relations and joins](https://www.prisma.io/docs/orm/fundamentals/relations-and-joins)).
+- Prisma Studio browses and edits data with filters, relation navigation and tabs ([studio](https://www.prisma.io/studio)).
+
+### GORM
+
+GORM is the Go ORM most readers arrive from, so its documented pitfalls are the things this package avoids.
+
+- Updating with a struct skips zero values, so `false`, `0` and `""` are silently not written ([update](https://gorm.io/docs/update.html)). `orm.Update` writes every column and `orm.Set` writes exactly the keys given.
+- An update or delete without a condition is blocked with `ErrMissingWhereClause` ([update](https://gorm.io/docs/update.html), [delete](https://gorm.io/docs/delete.html)). Worth copying: an unfiltered `Query.Update` or `Query.Delete` should have to say so.
+- `Order`, `Select`, `Group`, `Having`, `Table` and `Joins` take strings that are not escaped ([security](https://gorm.io/docs/security.html)). Here every column name is validated against the model, and raw fragments go through a lexer.
+- Auto-migration never drops a column and the documentation points to versioned migrations for production ([migration](https://gorm.io/docs/migration.html)). Vukem has only versioned migrations.
+- Worth copying: nested and conditional preloading ([preload](https://gorm.io/docs/preload.html)), savepoints ([transactions](https://gorm.io/docs/transactions.html)), upsert ([create](https://gorm.io/docs/create.html)) and the generics API with generated, typed column helpers ([the generics way](https://gorm.io/docs/the_generics_way.html), [GORM CLI](https://gorm.io/cli/index.html)).
+
+### Turso
+
+- Turso recommends its Rust rewrite, Turso Database, for new projects; libSQL is the maintained fork of SQLite it replaces ([libSQL](https://docs.turso.tech/libsql.md), [turso repository](https://github.com/tursodatabase/turso)). The rewrite has not reached 1.0.
+- The Go driver without cgo is `turso.tech/database/tursogo` ([package](https://pkg.go.dev/turso.tech/database/tursogo)); `go-libsql` needs cgo ([repository](https://github.com/tursodatabase/go-libsql)) and `libsql-client-go` is deprecated ([repository](https://github.com/tursodatabase/libsql-client-go)). Vukem builds without cgo, so only the first one fits.
+- It works local-first: a local file that pushes to and pulls from Turso Cloud ([sync usage](https://docs.turso.tech/sync/usage.md)).
