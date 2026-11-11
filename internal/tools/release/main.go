@@ -10,6 +10,13 @@
 // also refreshes the PLAN.md status rows; after the push, nested modules
 // (contrib, drivers, examples) get their vukem requirement raised in a
 // follow-up commit.
+//
+//	go run ./internal/tools/release -modules [-dry-run] [-push] [-only dir[=vX.Y.Z],...]
+//
+// The -modules mode tags the changed drivers/* and contrib/* modules instead:
+// it plans each module's next <dir>/vX.Y.Z tag from git, tests the changed
+// modules with GOWORK=off, creates annotated tags and, with -push, pushes one
+// tag per git push. It never touches the core release flow.
 package main
 
 import (
@@ -23,6 +30,8 @@ import (
 	"strings"
 	"time"
 )
+
+var errUsageModules = errors.New("usage: release -modules [-dry-run] [-push] [-only dir[=vX.Y.Z],...]")
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
@@ -38,8 +47,22 @@ func run(args []string, out io.Writer) error {
 	noCommit := fs.Bool("no-commit", false, "only update CHANGELOG.md (batch retroactive releases)")
 	publishOnly := fs.Bool("publish-only", false, "only create the GitHub release for an existing pushed tag")
 
+	modules := fs.Bool("modules", false, "tag changed drivers/* and contrib/* modules")
+	dryRun := fs.Bool("dry-run", false, "with -modules: print the plan and exit")
+	only := fs.String("only", "", "with -modules: limit to dir[=vX.Y.Z],... (forces the version)")
+
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if !*modules && (*dryRun || *only != "") {
+		return errUsageModules
+	}
+
+	if *modules {
+		plain := fs.NArg() == 0 && *ref == "HEAD" && !*noCommit && !*publishOnly
+
+		return runModulesMode(plain, out, *dryRun, *push, *only)
 	}
 
 	if fs.NArg() != 1 || !validVersion(fs.Arg(0)) {
@@ -49,17 +72,7 @@ func run(args []string, out io.Writer) error {
 	version := fs.Arg(0)
 
 	if *publishOnly {
-		current, err := os.ReadFile("CHANGELOG.md")
-		if err != nil {
-			return err
-		}
-
-		notes := releaseNotes(string(current), version)
-		if notes == "" {
-			return fmt.Errorf("CHANGELOG.md has no section for %s", version)
-		}
-
-		return publish(version, notes)
+		return publishExisting(version)
 	}
 
 	if branch := git("rev-parse", "--abbrev-ref", "HEAD"); branch != "main" {
@@ -267,6 +280,44 @@ func output(name string, args ...string) (string, error) {
 
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	return stdout.String(), nil
+}
+
+func publishExisting(version string) error {
+	current, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		return err
+	}
+
+	notes := releaseNotes(string(current), version)
+	if notes == "" {
+		return fmt.Errorf("CHANGELOG.md has no section for %s", version)
+	}
+
+	return publish(version, notes)
+}
+
+func runModulesMode(validFlags bool, out io.Writer, dryRun, push bool, only string) error {
+	if !validFlags {
+		return errUsageModules
+	}
+
+	return runModules(".", out, dryRun, push, only)
+}
+
+// gitIn runs git in dir.
+func gitIn(dir string, args ...string) (string, error) {
+	var stdout, stderr bytes.Buffer
+
+	cmd := exec.Command("git", args...) //nolint:noctx // maintainer tool: fixed binaries, no request context
+	cmd.Dir = dir
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 
 	return stdout.String(), nil

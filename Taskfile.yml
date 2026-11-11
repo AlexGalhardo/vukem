@@ -164,6 +164,11 @@ tasks:
       - task: ci:full
       - go run ./internal/tools/release -push {{.CLI_ARGS}}
 
+  release:modules:
+    desc: "Tag changed drivers/* and contrib/* modules: task release:modules -- -dry-run (or -push)"
+    cmds:
+      - go run ./internal/tools/release -modules {{.CLI_ARGS}}
+
   release:binaries:
     desc: "Build vukem binaries with GoReleaser in Docker; SNAPSHOT=1 builds without publishing (otherwise uploads to the release of the current tag; unsigned, release.yml signs)"
     cmds:
