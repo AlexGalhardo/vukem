@@ -26,7 +26,7 @@ A job renamed in `ci.yml` must be renamed in that file in the same PR, or every 
 2. Move that commit to a branch: `git tag -d vX.Y.Z`, `git switch -c release/vX.Y.Z`, `git branch -f main origin/main`, `git push -u origin release/vX.Y.Z`. Open the PR, wait for CI, squash-merge.
 3. `git switch main && git pull`, then `git tag -a vX.Y.Z -m vX.Y.Z` on the merged commit and `git push origin vX.Y.Z` (one tag per push, [Tag pushes](tooling.md#tag-pushes)).
 4. `go run ./internal/tools/release -publish-only vX.Y.Z` publishes the GitHub release notes.
-5. Raise the nested modules' core requirement in a second PR (`chore(deps): require vukem vX.Y.Z in nested modules`), then tag changed nested modules as described in [tooling.md](tooling.md#release-process).
+5. Raise the nested modules' core requirement in a second PR (`chore(deps): require vukem vX.Y.Z in nested modules`), then run `go run ./internal/tools/release -modules -push` on the merged `main` ([tooling.md](tooling.md#release-process)).
 
 ### Code review
 
