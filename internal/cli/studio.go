@@ -27,6 +27,13 @@ var studioFlags = []string{
 	"allow-production",
 	"database-url",
 	"version",
+	"write",
+	"refresh",
+	"mongo-url",
+	"mongo-database",
+	"redis-url",
+	"mongo-watch",
+	"redis-notify",
 } //nolint:gochecknoglobals // read-only
 
 // studioCmd installs a pinned vukem-studio under .vukem/bin and runs it. The
@@ -39,6 +46,13 @@ func studioCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	set.Bool("allow-production", false, "allow APP_ENV=production")
 	set.String("database-url", "", "override DATABASE_URL")
 	set.Bool("version", false, "print the vukem-studio version and exit")
+	set.Bool("write", false, "enable editing (default: read-only)")
+	set.Duration("refresh", 0, "live refresh interval (default 2s; negative turns it off; minimum 500ms)")
+	set.String("mongo-url", "", "override MONGO_URL")
+	set.String("mongo-database", "", "override MONGO_DATABASE")
+	set.String("redis-url", "", "override REDIS_URL")
+	set.Bool("mongo-watch", false, "use change streams instead of polling (not implemented yet)")
+	set.Bool("redis-notify", false, "use keyspace notifications instead of polling (not implemented yet)")
 
 	return func(ctx context.Context, env *Env, _ []string) error {
 		path := *bin
