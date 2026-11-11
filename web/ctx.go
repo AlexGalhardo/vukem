@@ -270,14 +270,34 @@ func (c *Ctx) IsHTMX() bool { return c.r.Header.Get("HX-Request") == "true" }
 // Services on the context no proxy is trusted: it is the peer address.
 func ClientIP(r *http.Request) string { return NewCtx(nil, r, ServicesFrom(r.Context())).IP() }
 
+// peerHost is the host part of r.RemoteAddr, or RemoteAddr itself when it
+// has no port.
+func peerHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+
+	return host
+}
+
+// PeerIP is the IP of the direct peer of r (the host part of r.RemoteAddr,
+// IPv4-mapped addresses unmapped); the zero Addr when it is not an IP or
+// carries a zone.
+func PeerIP(r *http.Request) netip.Addr {
+	ip, err := netip.ParseAddr(peerHost(r))
+	if err != nil || ip.Zone() != "" {
+		return netip.Addr{}
+	}
+
+	return ip.Unmap()
+}
+
 // IP returns the client IP. X-Forwarded-For (or ClientIPHeader when set)
 // is honoured only when the direct peer is a trusted proxy
 // (docs/security.md, A01/A02).
 func (c *Ctx) IP() string {
-	host, _, err := net.SplitHostPort(c.r.RemoteAddr)
-	if err != nil {
-		host = c.r.RemoteAddr
-	}
+	host := peerHost(c.r)
 
 	if !c.trusted(host) {
 		return host
@@ -349,14 +369,9 @@ func (c *Ctx) IsHTTPS() bool {
 		return false
 	}
 
-	host, _, err := net.SplitHostPort(c.r.RemoteAddr)
-	if err != nil {
-		host = c.r.RemoteAddr
-	}
-
 	vals := c.r.Header.Values("X-Forwarded-Proto")
 
-	return len(vals) == 1 && strings.TrimSpace(vals[0]) == "https" && c.trusted(host)
+	return len(vals) == 1 && strings.TrimSpace(vals[0]) == "https" && c.trusted(peerHost(c.r))
 }
 
 func (c *Ctx) trusted(host string) bool {

@@ -829,8 +829,12 @@ func TestSecurity_A02_SecureHeaders(t *testing.T) {
 		t.Errorf("HSTS over TLS = %q", got)
 	}
 
+	_, testNet, _ := net.ParseCIDR("192.0.2.0/24")
 	proxied := SecureHeaders(
-		SecureHeadersConfig{TrustForwardedProto: true, CSP: "-", FrameOptions: "-", HSTSMaxAge: time.Hour},
+		SecureHeadersConfig{
+			TrustForwardedProto: true, TrustedProxies: []*net.IPNet{testNet},
+			CSP: "-", FrameOptions: "-", HSTSMaxAge: time.Hour,
+		},
 	)(
 		http.HandlerFunc(ok),
 	)
@@ -1199,5 +1203,23 @@ func TestCacheControl(t *testing.T) {
 		if _, err := CacheControl(bad); err == nil {
 			t.Errorf("CacheControl(%q) = nil error", bad)
 		}
+	}
+}
+
+func TestSecurity_A02_ForwardedProtoNeedsTrustedProxies(t *testing.T) {
+	t.Parallel()
+
+	r := get(t, "/")
+	r.RemoteAddr = "198.51.100.7:1234"
+
+	if fromTrustedPeer(r, nil) {
+		t.Error("fromTrustedPeer(r, nil) = true, want false: an empty list trusts nobody")
+	}
+
+	h := SecureHeaders(SecureHeadersConfig{TrustForwardedProto: true})(http.HandlerFunc(ok))
+	r.Header.Set("X-Forwarded-Proto", "https")
+
+	if got := do(t, h, r).Header().Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("HSTS claimed by any client without TrustedProxies = %q, want none", got)
 	}
 }

@@ -460,23 +460,17 @@ func forwardedHTTPS(r *http.Request) bool {
 }
 
 // fromTrustedPeer reports whether the direct peer is in proxies; an empty
-// list keeps the pre-TrustedProxies behaviour (any peer).
+// list trusts nobody (SecureHeadersConfig.Validate rejects TrustForwardedProto
+// without TrustedProxies, so only a config that skipped it gets here).
 func fromTrustedPeer(r *http.Request, proxies []*net.IPNet) bool {
-	if len(proxies) == 0 {
-		return true
-	}
-
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-
-	ip := net.ParseIP(host)
-	if ip == nil {
+	ip := web.PeerIP(r)
+	if !ip.IsValid() {
 		return false
 	}
 
-	return slices.ContainsFunc(proxies, func(n *net.IPNet) bool { return n.Contains(ip) })
+	peer := net.IP(ip.AsSlice())
+
+	return slices.ContainsFunc(proxies, func(n *net.IPNet) bool { return n.Contains(peer) })
 }
 
 // devOrigin matches a bare http(s) origin, so a dev server URL can never
