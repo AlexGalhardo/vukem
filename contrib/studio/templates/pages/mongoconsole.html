@@ -1,0 +1,20 @@
+{{define "title"}}Console - vukem-studio{{end}}
+{{define "content"}}
+<h1 class="mb-4 text-2xl font-semibold">{{.Source}} / console</h1>
+<form method="post" data-console class="card mb-4">
+	<div class="flex flex-wrap gap-3">
+		<label class="flex flex-col gap-1 text-sm font-medium">Collection <input class="input" name="collection" value="{{.Collection}}"></label>
+		<label class="flex flex-col gap-1 text-sm font-medium">Kind
+			<select class="input" name="kind">
+				<option value="find"{{if eq .Kind "find"}} selected{{end}}>find (a filter object)</option>
+				<option value="aggregate"{{if eq .Kind "aggregate"}} selected{{end}}>aggregate (an array of stages)</option>
+			</select>
+		</label>
+	</div>
+	<textarea class="input h-40" name="text" aria-label="Extended JSON">{{.Text}}</textarea>
+	<button class="btn btn-default self-start">Run (Ctrl+Enter)</button>
+</form>
+{{if .Error}}<div class="card mb-4" role="alert"><p class="text-sm break-words">{{.Error}}</p></div>{{end}}
+{{range .Page.Docs}}<pre class="card mb-3 overflow-x-auto text-sm">{{.JSON}}</pre>{{end}}
+{{if .Page.HasMore}}<p class="text-sm text-muted-foreground">The result is cut at 1000 documents.</p>{{end}}
+{{end}}

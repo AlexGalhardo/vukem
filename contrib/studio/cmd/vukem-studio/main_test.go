@@ -232,3 +232,88 @@ func TestRunServesAndStops(t *testing.T) {
 		t.Fatal("run did not stop after the context was cancelled")
 	}
 }
+
+// firstLine runs vukem-studio until it prints its header, then stops it.
+func firstLines(t *testing.T, args ...string) (string, int) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	var stdout syncBuffer
+
+	done := make(chan int, 1)
+
+	go func() { done <- run(ctx, args, &stdout, io.Discard, noEnv) }()
+
+	for range 100 {
+		if strings.Contains(stdout.String(), "Press Ctrl+C") {
+			break
+		}
+
+		time.Sleep(50 * time.Millisecond) //nolint:forbidigo // waits on the server goroutine
+	}
+
+	out := stdout.String()
+
+	cancel()
+
+	return out, <-done
+}
+
+func TestRunPrintsMode(t *testing.T) {
+	t.Parallel()
+
+	dir := project(t, "development")
+
+	out, code := firstLines(t, "--dir", dir, "--port", "0", "--no-open")
+	if code != 0 || !strings.HasPrefix(out, "vukem-studio v") ||
+		!strings.Contains(strings.SplitN(out, "\n", 2)[0], "(read-only)") {
+		t.Errorf("default run = %d %q, want a first line ending in (read-only)", code, out)
+	}
+
+	out, code = firstLines(t, "--dir", dir, "--port", "0", "--no-open", "--write")
+	if code != 0 || !strings.Contains(strings.SplitN(out, "\n", 2)[0], "(WRITE ENABLED)") {
+		t.Errorf("--write run = %d %q, want a first line with (WRITE ENABLED)", code, out)
+	}
+}
+
+func TestSecurity_A05_StudioWriteInProductionNeedsAllowProduction(t *testing.T) {
+	t.Parallel()
+
+	dir := project(t, "production")
+
+	var stderr bytes.Buffer
+
+	if code := run(
+		t.Context(),
+		[]string{"--dir", dir, "--no-open", "--write"},
+		io.Discard,
+		&stderr,
+		noEnv,
+	); code != 2 ||
+		!strings.Contains(stderr.String(), "refusing to start with APP_ENV=production") {
+		t.Errorf("--write in production without --allow-production = %d %q, want a refusal (2)", code, stderr.String())
+	}
+
+	out, code := firstLines(t, "--dir", dir, "--port", "0", "--no-open", "--write", "--allow-production")
+	if code != 0 || !strings.Contains(out, "(WRITE ENABLED)") {
+		t.Errorf("--write --allow-production = %d %q", code, out)
+	}
+}
+
+func TestRunWithoutAnySourceIsARefusal(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir() // no database file, no MONGO_URL, no REDIS_URL
+
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APP_ENV=development\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The default SQLite file is missing and nothing else is configured:
+	// that is an error about the database, not a silent empty Studio.
+	if code := run(t.Context(), []string{"--dir", dir, "--no-open"}, io.Discard, io.Discard, noEnv); code == 0 {
+		t.Error("exit 0 with no data source")
+	}
+}

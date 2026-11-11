@@ -1,0 +1,22 @@
+{{define "title"}}{{.Source}} - vukem-studio{{end}}
+{{define "content"}}
+<div class="mb-4 flex flex-wrap items-center gap-3">
+	<h1 class="text-2xl font-semibold">{{.Source}}</h1>
+	<span class="text-sm text-muted-foreground">{{.Label}}</span>
+	<a class="btn btn-secondary ml-auto" data-nav="console" href="/s/{{path .Source}}/redis-console">Console</a>
+</div>
+<form method="get" class="mb-4 flex items-end gap-2">
+	<label class="flex flex-col gap-1 text-sm font-medium">Match
+		<input class="input" name="match" data-filter value="{{.Match}}" placeholder="session:*" autocomplete="off">
+	</label>
+	<button class="btn btn-default">Scan</button>
+</form>
+<div class="overflow-x-auto rounded-xl border">
+<table class="table">
+	<thead><tr><th scope="col">key</th><th scope="col">type</th><th scope="col">ttl</th></tr></thead>
+	<tbody>{{range .Page.Keys}}<tr><td><a class="underline" href="/s/{{path $.Source}}/k/{{keypath .Key}}">{{.Key}}</a></td><td>{{.Type}}</td><td>{{if gt .TTL 0}}{{.TTL}}{{else}}none{{end}}</td></tr>
+	{{else}}<tr><td colspan="3">No keys in this step of the scan.</td></tr>{{end}}</tbody>
+</table>
+</div>
+{{template "partials/pager" (dict "Next" .Next)}}
+{{end}}

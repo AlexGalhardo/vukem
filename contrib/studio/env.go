@@ -21,6 +21,11 @@ type Env struct {
 	Production bool
 	// DatabaseURL is DATABASE_URL, or the SQLite default.
 	DatabaseURL string
+	// DatabaseSet reports whether DATABASE_URL was set (not the default).
+	DatabaseSet bool
+	// MongoURL and MongoDatabase are MONGO_URL and MONGO_DATABASE; RedisURL is
+	// REDIS_URL. A source whose URL is empty is not shown.
+	MongoURL, MongoDatabase, RedisURL string
 }
 
 // LoadEnv reads the .env files of the project in dir, merged with the
@@ -31,8 +36,13 @@ func LoadEnv(dir string, getenv func(string) (string, bool)) (Env, error) {
 		return Env{}, err
 	}
 
-	e := Env{Production: src.Env() == config.Production, DatabaseURL: src.Get("DATABASE_URL")}
-	if e.DatabaseURL == "" {
+	e := Env{
+		Production: src.Env() == config.Production, DatabaseURL: src.Get("DATABASE_URL"),
+		MongoURL: src.Get("MONGO_URL"), MongoDatabase: src.Get("MONGO_DATABASE"), RedisURL: src.Get("REDIS_URL"),
+	}
+
+	e.DatabaseSet = e.DatabaseURL != ""
+	if !e.DatabaseSet {
 		e.DatabaseURL = DefaultDatabaseURL
 	}
 

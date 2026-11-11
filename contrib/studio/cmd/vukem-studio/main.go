@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -50,6 +51,13 @@ type options struct {
 	allowProduction bool
 	databaseURL     string
 	showVersion     bool
+	write           bool
+	refresh         time.Duration
+	mongoURL        string
+	mongoDatabase   string
+	redisURL        string
+	mongoWatch      bool
+	redisNotify     bool
 }
 
 func parseFlags(args []string, stderr io.Writer) (options, error) {
@@ -63,6 +71,18 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&o.allowProduction, "allow-production", false, "allow APP_ENV=production")
 	fs.StringVar(&o.databaseURL, "database-url", "", "override DATABASE_URL")
 	fs.BoolVar(&o.showVersion, "version", false, "print the version and exit")
+	fs.BoolVar(&o.write, "write", false, "enable editing (default: read-only)")
+	fs.DurationVar(&o.refresh, "refresh", 0, "live refresh interval (default 2s; negative turns it off; minimum 500ms)")
+	fs.StringVar(&o.mongoURL, "mongo-url", "", "override MONGO_URL")
+	fs.StringVar(&o.mongoDatabase, "mongo-database", "", "override MONGO_DATABASE")
+	fs.StringVar(&o.redisURL, "redis-url", "", "override REDIS_URL")
+	fs.BoolVar(&o.mongoWatch, "mongo-watch", false, "use change streams instead of polling (not implemented yet)")
+	fs.BoolVar(
+		&o.redisNotify,
+		"redis-notify",
+		false,
+		"use keyspace notifications instead of polling (not implemented yet)",
+	)
 
 	if err := fs.Parse(args); err != nil {
 		return o, err
@@ -112,18 +132,33 @@ func run(
 	}
 
 	if o.databaseURL != "" {
-		env.DatabaseURL = o.databaseURL
+		env.DatabaseURL, env.DatabaseSet = o.databaseURL, true
 	}
 
-	src, err := studio.OpenSQL(ctx, "db", o.dir, env.DatabaseURL)
+	env.MongoURL, env.MongoDatabase = override(env.MongoURL, o.mongoURL), override(env.MongoDatabase, o.mongoDatabase)
+	env.RedisURL = override(env.RedisURL, o.redisURL)
+
+	if o.mongoWatch || o.redisNotify {
+		fmt.Fprintln(stderr, "vukem-studio: --mongo-watch and --redis-notify are not implemented yet: using polling")
+	}
+
+	sources, err := openSources(ctx, o, env)
 	if err != nil {
 		fmt.Fprintln(stderr, "vukem-studio:", err)
 		return exitError
 	}
 
-	s, err := studio.New(studio.Config{Sources: []studio.Source{src}, Version: version})
+	if len(sources) == 0 {
+		fmt.Fprintln(stderr, "vukem-studio: no data source is configured (set DATABASE_URL, MONGO_URL or REDIS_URL)")
+		return exitRefusal
+	}
+
+	s, err := studio.New(studio.Config{
+		Sources: sources, Version: version, Write: o.write, Refresh: o.refresh,
+		Log: slog.New(slog.NewTextHandler(stderr, nil)),
+	})
 	if err != nil {
-		_ = src.Close()
+		closeAll(sources)
 		fmt.Fprintln(stderr, "vukem-studio:", err)
 
 		return exitError
@@ -131,10 +166,67 @@ func run(
 
 	defer s.Close()
 
-	return serve(ctx, s, src, o, stdout, stderr)
+	return serve(ctx, s, sources, o, stdout, stderr)
 }
 
-func serve(ctx context.Context, s *studio.Studio, src studio.Source, o options, stdout, stderr io.Writer) int {
+func override(current, fromFlag string) string {
+	if fromFlag != "" {
+		return fromFlag
+	}
+
+	return current
+}
+
+func closeAll(sources []studio.Source) {
+	for _, src := range sources {
+		_ = src.Close()
+	}
+}
+
+// openSources opens what is configured. The SQL source is skipped, quietly,
+// when DATABASE_URL was never set, its default SQLite file does not exist and
+// another source is configured (an app that only uses MongoDB or Redis).
+func openSources(ctx context.Context, o options, env studio.Env) ([]studio.Source, error) {
+	var sources []studio.Source
+
+	fail := func(err error) ([]studio.Source, error) {
+		closeAll(sources)
+		return nil, err
+	}
+
+	otherSource := env.MongoURL != "" || env.RedisURL != ""
+
+	sql, err := studio.OpenSQL(ctx, "db", o.dir, env.DatabaseURL)
+
+	switch {
+	case err == nil:
+		sources = append(sources, sql)
+	case env.DatabaseSet || !otherSource:
+		return fail(err)
+	}
+
+	if env.MongoURL != "" {
+		m, err := studio.OpenMongo(ctx, "mongo", env.MongoURL, env.MongoDatabase, o.write)
+		if err != nil {
+			return fail(err)
+		}
+
+		sources = append(sources, m)
+	}
+
+	if env.RedisURL != "" {
+		r, err := studio.OpenRedis(ctx, "redis", env.RedisURL)
+		if err != nil {
+			return fail(err)
+		}
+
+		sources = append(sources, r)
+	}
+
+	return sources, nil
+}
+
+func serve(ctx context.Context, s *studio.Studio, sources []studio.Source, o options, stdout, stderr io.Writer) int {
 	var lc net.ListenConfig
 
 	ln, err := lc.Listen(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(o.port)))
@@ -145,8 +237,18 @@ func serve(ctx context.Context, s *studio.Studio, src studio.Source, o options, 
 
 	startURL := fmt.Sprintf("http://%s/?token=%s", ln.Addr(), s.Token())
 
-	fmt.Fprintf(stdout, "vukem-studio %s (read-only)\n  %-4s  %s\n  open  %s\nPress Ctrl+C to stop.\n",
-		version, src.Kind(), src.Label(), startURL)
+	mode := "(read-only)"
+	if o.write {
+		mode = "(WRITE ENABLED)"
+	}
+
+	fmt.Fprintf(stdout, "vukem-studio %s %s\n", version, mode)
+
+	for _, src := range sources {
+		fmt.Fprintf(stdout, "  %-5s %s\n", src.Kind(), src.Label())
+	}
+
+	fmt.Fprintf(stdout, "  open  %s\nPress Ctrl+C to stop.\n", startURL)
 
 	if !o.noOpen {
 		openBrowser(ctx, startURL)

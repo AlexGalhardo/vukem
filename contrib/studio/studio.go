@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,6 +21,12 @@ type Config struct {
 	Log *slog.Logger
 	// Now is the clock (tests); nil means time.Now.
 	Now func() time.Time
+	// Write enables editing. Without it no write route is registered and the
+	// pages carry no edit forms.
+	Write bool
+	// Refresh is the polling interval of the live views: 0 means 2s, a
+	// negative value turns them off, and anything under 500ms is raised.
+	Refresh time.Duration
 }
 
 // Studio is the read-only data browser: an http.Handler guarded by the
@@ -30,6 +37,11 @@ type Studio struct {
 	sessionID string // the cookie value
 	mux       *http.ServeMux
 	pages     map[string]*template.Template
+
+	livePatterns map[string]bool // read routes /events may poll
+	liveConns    atomic.Int32
+	newTicker    ticker
+	exportMax    int // rows per export; 0 means 100000 (tests lower it)
 }
 
 // New validates cfg and returns a Studio with a fresh session token.
@@ -61,7 +73,10 @@ func New(cfg Config) (*Studio, error) {
 		return nil, err
 	}
 
-	s := &Studio{cfg: cfg, token: token, sessionID: sessionID, mux: http.NewServeMux(), pages: pages}
+	s := &Studio{
+		cfg: cfg, token: token, sessionID: sessionID, mux: http.NewServeMux(), pages: pages,
+		livePatterns: map[string]bool{}, newTicker: realTicker,
+	}
 	s.routes()
 
 	return s, nil
@@ -92,13 +107,4 @@ func (s *Studio) Close() error {
 	}
 
 	return errors.Join(errs...)
-}
-
-func (s *Studio) routes() {
-	s.mux.HandleFunc("GET /{$}", s.overview)
-	s.mux.Handle("GET /assets/{file...}", s.assets())
-}
-
-func (s *Studio) overview(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, http.StatusOK, "overview", nil)
 }

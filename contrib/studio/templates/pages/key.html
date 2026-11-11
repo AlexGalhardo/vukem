@@ -1,0 +1,36 @@
+{{define "title"}}{{.Detail.Key}} - vukem-studio{{end}}
+{{define "content"}}
+<h1 class="mb-1 text-2xl font-semibold break-all">{{.Detail.Key}}</h1>
+<p class="mb-4 text-sm text-muted-foreground">{{.Detail.Type}}, {{.Detail.Size}} elements, ttl {{if .TTL}}{{.TTL}}{{else}}none{{end}}</p>
+<div class="overflow-x-auto rounded-xl border">
+<table class="table"><tbody>{{range .Detail.Fields}}<tr><td class="font-medium">{{index . 0}}</td><td><pre class="text-sm">{{index . 1}}</pre></td></tr>{{end}}</tbody></table>
+</div>
+{{if .Detail.More}}<p class="mt-2 text-sm text-muted-foreground">More elements exist: use the console to read them.</p>{{end}}
+{{if .Write}}
+{{if eq .Detail.Type "string"}}<form method="post" action="/s/{{path .Source}}/k/{{keypath .Detail.Key}}" class="card mt-4">
+	<input type="hidden" name="action" value="set">
+	<h2 class="text-lg font-semibold">Set the value</h2>
+	<textarea class="input h-28" name="value" aria-label="New value"></textarea>
+	<button class="btn btn-default self-start">Set (keeps the ttl)</button>
+</form>{{end}}
+{{if eq .Detail.Type "hash"}}<form method="post" action="/s/{{path .Source}}/k/{{keypath .Detail.Key}}" class="card mt-4">
+	<input type="hidden" name="action" value="hset">
+	<h2 class="text-lg font-semibold">Set a field</h2>
+	<div class="flex gap-2"><input class="input" name="field" placeholder="field" aria-label="Field"><input class="input" name="value" placeholder="value" aria-label="Value"></div>
+	<button class="btn btn-default self-start">HSET</button>
+</form>{{end}}
+<form method="post" action="/s/{{path .Source}}/k/{{keypath .Detail.Key}}" class="card mt-4">
+	<input type="hidden" name="action" value="ttl">
+	<h2 class="text-lg font-semibold">Expiry</h2>
+	<input class="input" name="seconds" placeholder="seconds, 0 removes the expiry" aria-label="Seconds">
+	<button class="btn btn-secondary self-start">Set the ttl</button>
+</form>
+<form method="post" action="/s/{{path .Source}}/k/{{keypath .Detail.Key}}" class="card mt-4">
+	<input type="hidden" name="action" value="delete">
+	<h2 class="text-lg font-semibold">Delete this key</h2>
+	<p class="text-sm">Type <code>{{.Confirm}}</code> to confirm.</p>
+	<input class="input" name="confirm" autocomplete="off" aria-label="Confirmation">
+	<button class="btn btn-destructive self-start">Delete</button>
+</form>
+{{end}}
+{{end}}
