@@ -20,7 +20,7 @@ report, err := ssg.Generate(ctx, handler, []ssg.Page{
 | `/about` or `/about/` | `dist/about/index.html` |
 | `/docs/cli` | `dist/docs/cli/index.html` |
 
-`OutDir` is created when every path is valid. `Report.Files` lists the relative paths (forward slashes) and byte counts of the pages that were written.
+By default `Generate` renders into a sibling temporary directory (`<OutDir>.ssg-tmp-...`) and swaps it with `OutDir` by rename once every page returned 200. Stale pages from earlier runs disappear, a failed run leaves `OutDir` exactly as it was, and the swap writes a `.vukem-ssg` marker file. `Generate` replaces `OutDir` only when it is missing, empty or holds that marker; any other non-empty directory is `ErrNotGenerated` and nothing is touched. A symbolic link as `OutDir` is `ErrEscape`. The swap is two renames (`OutDir` aside, then the new directory in), so for a moment `OutDir` does not exist. If the process dies in between, `OutDir.ssg-old-...` holds the previous output and must be removed by hand. Concurrent runs on one `OutDir` are not supported: the last swap wins. Set `Options.NoClean` to write in place and never remove anything. `Report.Files` lists the relative paths (forward slashes) and byte counts of the pages that were written.
 
 ## What is refused
 
@@ -28,7 +28,7 @@ report, err := ssg.Generate(ctx, handler, []ssg.Page{
 
 `OutDir` is opened once with `os.Root`, and every directory and file is created through it. A link or junction inside `OutDir` that points elsewhere cannot redirect a write: the page is `ErrEscape` and nothing is created outside `OutDir`. Each page is written to a temporary file beside its target and renamed over it, so an existing hard link is replaced, not truncated.
 
-Only status 200 is stored. Any other status, including a redirect, is `ErrStatus` and writes nothing for that page. A body over 8 MiB (`ssg.MaxBody`) is `ErrTooLarge` and writes nothing for that page. An exact 8 MiB body is kept. `Generate` stops at the first error. Pages written earlier stay on disk and are still listed in the report. A cancelled context before the loop creates no files.
+Only status 200 is stored. Any other status, including a redirect, is `ErrStatus` and writes nothing for that page. A body over 8 MiB (`ssg.MaxBody`) is `ErrTooLarge` and writes nothing for that page. An exact 8 MiB body is kept. `Generate` stops at the first error. By default a failure leaves `OutDir` unchanged and the report is empty. With `Options.NoClean`, pages written earlier stay on disk and are still listed in the report. A cancelled context before the loop creates no files.
 
 There is no socket and no redirect-following client. The call is `http.NewRequestWithContext` plus `ServeHTTP`.
 
@@ -44,5 +44,6 @@ vukem ssg:generate -out dist -path / -path /about
 | --- | --- | --- |
 | `-out` | `dist` | Output directory |
 | `-path` | required, repeatable | One absolute URL path |
+| `-no-clean` | `false` | Write in place and keep files from earlier runs |
 
 A missing `-path` or an extra argument is a usage error (exit 2). A rejected path or a non-200 response is exit 1. Each written file is printed as `wrote <rel> (<n> bytes)`.

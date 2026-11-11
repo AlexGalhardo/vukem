@@ -67,7 +67,7 @@ func Home(c *web.Ctx) error {
 
 ## What is written
 
-Only status 200 is stored. A redirect, a 404 or a 500 is an error, and that page is not written. A body larger than 8 MiB is not written either. `Generate` stops at the first failure. Files from earlier pages stay on disk.
+Only status 200 is stored. A redirect, a 404 or a 500 is an error, and that page is not written. A body larger than 8 MiB is not written either. `Generate` stops at the first failure. By default pages are rendered into a temporary directory beside `OutDir` that replaces it only when every page succeeded, so a failed run leaves `OutDir` unchanged and pages that are no longer listed disappear. An existing `OutDir` with other files and no `.vukem-ssg` marker is refused with `ssg.ErrNotGenerated`; `NoClean: true` (`-no-clean`) writes in place and keeps files from earlier runs.
 
 A path must be an absolute URL path such as `/` or `/about`. A scheme, a host, a query, a fragment, a NUL, a backslash or a `..` segment is rejected with `ssg.ErrInvalidPath`, including `%2e%2e`. The path is decoded once, the way the request decodes it, and a `%` left after that (such as `%2541`) is rejected too, so the file name and the page the handler renders always agree.
 
@@ -88,6 +88,6 @@ These paths are refused before `OutDir` is created, so a bad list writes nothing
 vukem ssg:generate -out dist -path / -path /about
 ```
 
-`-out` defaults to `dist`. Repeat `-path` once per page. At least one `-path` is required. A missing `-path` or an extra argument exits 2. Each file is printed as `wrote about/index.html (123 bytes)`.
+`-out` defaults to `dist`. `-no-clean` writes in place. Repeat `-path` once per page. At least one `-path` is required. A missing `-path` or an extra argument exits 2. Each file is printed as `wrote about/index.html (123 bytes)`.
 
 See the [CLI reference](/docs/cli/reference-runtime#vukem-ssggenerate).
