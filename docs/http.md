@@ -182,6 +182,19 @@ type ValidationError struct { Fields map[string][]string }
 - Panics are recovered by `middleware.Recover` and converted to 500.
 - A 5xx that wraps a `ValidationError` answers as a plain server error: its field errors are never sent, and a form post is not redirected back with them (`TestSecurity_A10_ServerErrorHidesWrappedValidation`).
 
+### Errors that carry a status
+
+`errs.Status(err)` reads the status of an `*errs.HTTPError`, a `*errs.ValidationError` (422) or any error implementing `errs.StatusCoder` (`HTTPStatus() int`), for packages that should not import `errs`. Implementations in the framework: `orm` conflicts (409, `orm.ErrConflict`), `z.Issues` and `z` field errors (422), `export` when the client went away (499), and in `drivers/mongo` `mongo.ErrNotFound` (404) and `mongo.ErrDuplicate` (409). Your own type gets a status the same way:
+
+```go
+type quotaError struct{ plan string }
+
+func (e quotaError) Error() string   { return "quota exceeded on plan " + e.plan }
+func (quotaError) HTTPStatus() int    { return http.StatusPaymentRequired }
+```
+
+The status only picks the response code and template: a 5xx is still rendered without its message (`docs/security.md`, A10).
+
 ### Debug error page
 
 With `APP_DEBUG=true` outside production (`Services.Debug`), 5xx errors in a browser render a youch-style page (decision F7): the error message and root type, the `Unwrap` chain, the stack with source snippets (app frames open, framework and standard library frames collapsed), the request (method, URL, route, request id, headers with `Authorization`, `Cookie` and token headers redacted) and the Go version. The page carries the CSP nonce. JSON clients keep getting problem+json (with the error text as `detail`), htmx gets the fragment. In `vukem serve` the same report is printed in color on stderr (`Services.DebugOut`).

@@ -235,6 +235,15 @@ There is no baseline file: the latest stable `v1` tag of each module is the base
 - The gate fails when the file is malformed (unknown fields, trailing data, bad JSON), when an entry misses a field, names an unknown module or a symbol outside it, has a non-`https` advisory, a non-stable version or a version of another major than the module (`v0`/`v1` for a path without `/vN`), is duplicated, matches no change (unused, including for a module without a `v1` tag) or has expired: once the module's base tag is at or past `version`, the break is in the baseline and the entry must be removed right after that release.
 - The file is validated in report mode too; a missing file means no exceptions. Ship the break as `fix(scope)!:` with a `BREAKING CHANGE:` footer naming the advisory, so it lands under **Security** in the changelog.
 
+## Error messages
+
+Errors that a developer reads at boot or from the CLI follow one shape: `<pkg>: <what is wrong> (<value or place>); <how to fix it>`, lowercase, no trailing period (the `revive` `error-strings` rule enforces the casing and punctuation). Two models:
+
+- `vukem: PORT 70000 is out of range; set PORT to a value between 0 and 65535`
+- `router: no route named "post.show" (did you mean "posts.show"?); run route:list to see the names`
+
+Never quote a secret, a token or a full connection URL in the value part; name the variable instead. Messages shown to end users are translatable (`errs.NewKey`) and do not follow this rule.
+
 ## Task runner
 
 `Taskfile.yml` is the single entry point (same commands locally and in CI):

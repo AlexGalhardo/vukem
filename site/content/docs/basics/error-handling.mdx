@@ -198,7 +198,7 @@ if !verr.Empty() {
 
 1. the `Status` of an `*HTTPError`;
 2. 422 for a `*ValidationError`;
-3. `HTTPStatus()` of an error that implements `errs.StatusCoder` (`z.Issues`, `z.FieldError` and `orm.ErrConflict` do);
+3. `HTTPStatus()` of an error that implements `errs.StatusCoder` (`z.Issues`, `z.FieldError`, `orm.ErrConflict` (409), the `export` "client went away" error (499) and, in `drivers/mongo`, `mongo.ErrNotFound` (404) and `mongo.ErrDuplicate` (409) do);
 4. 500 for anything else.
 
 `errs.StatusCoder` lets your own packages carry a status without importing `errs`:
@@ -470,6 +470,7 @@ With `APP_DEBUG=true` and `APP_ENV` other than `production`, a 5xx in a browser 
 - the chain of wrapped errors (`Unwrap`), outermost first;
 - the stack trace with source code around each line: your app's frames open, framework and standard library frames collapsed;
 - the request: method, URL, route name, request id, headers (with `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`, `X-Csrf-Token` and `X-Xsrf-Token` redacted) and the Go version.
+- what clients see in production: the problem JSON (`type`, `title`, `status`) a client would receive with debug off, without the error text.
 
 Stacks come from recovered panics and from errors created with `errs.New`, `errs.NewKey` or `errs.Wrap`. For an error from another package, call `errs.WithStack(err)` where you receive it; `errs.Stack(err)` returns the stack closest to the origin. Sentinels declared as package variables carry no stack.
 
