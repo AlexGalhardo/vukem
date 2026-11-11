@@ -25,6 +25,7 @@ jobs:
           - drivers/postgres
           - drivers/redis
           - drivers/s3
+          - drivers/turso
           - drivers/websocket
           - contrib/cloudflare
           - contrib/engine
