@@ -474,6 +474,7 @@ The table above is checked against the implementation by `TestTagRules_Documente
 ## Exports
 
 - `z.JSONSchema(schema)` → JSON Schema 2020-12 (types, required keys, lengths, ranges, formats, patterns, enums, defaults, descriptions; `Refine`/`Custom` logic cannot be expressed).
+- The OpenAPI document reads its constraint keywords from `z` too: `z.Keywords(type, z.SplitRules(tag))` gives the keywords a `validate` tag enforces and `z.Properties(schema)` the keys of a struct schema, so `openapi` owns only the document structure (components, `$ref`, formats of Go types) and a `RegisterWith` schema reaches the document.
 - `vukem codegen:types [-zod] [-o file]` → TypeScript types (and optional Zod schemas) for every schema and operation of the app's OpenAPI document, so frontend and backend share one contract ([api.md](api.md#types-for-clients)).
 
 ## Design notes

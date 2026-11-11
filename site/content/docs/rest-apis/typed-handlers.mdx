@@ -204,7 +204,7 @@ api.RegisterWith(g, "POST /tasks", api.Op{Name: "tasks.store"},
 ```
 
 - A `nil` schema panics at boot: `api: RegisterWith "POST /tasks" needs a schema; Register derives one from In's tags`.
-- The OpenAPI document is still generated from the `json`, `validate` and `doc` tags of `In` and `Out`; the schema never reaches it. Keep the static rules in the tags too, or the document describes less than the route enforces.
+- The OpenAPI document describes the schema: its rules replace the tag-derived ones on the top-level inputs (path and query parameters, body properties) and `required` follows it. Nested structs keep the component built from their tags, and a `z.Refine` or `z.Transform` cannot be expressed in the document.
 
 ## The output
 
