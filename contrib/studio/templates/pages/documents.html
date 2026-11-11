@@ -1,0 +1,22 @@
+{{define "title"}}{{.Collection}} - vukem-studio{{end}}
+{{define "content"}}
+<div class="mb-4 flex flex-wrap items-center gap-3">
+	<h1 class="text-2xl font-semibold">{{.Source}} / {{.Collection}}</h1>
+	<a class="btn btn-ghost" data-nav="tables" href="/s/{{path .Source}}">Collections</a>
+	<a class="btn btn-secondary ml-auto" href="/s/{{path .Source}}/c/{{path .Collection}}/export?format=json&{{.Query}}">Export JSON</a>
+</div>
+<form method="get" class="mb-4 flex items-end gap-2">
+	<label class="flex flex-col gap-1 text-sm font-medium">Filter
+		<input class="input" name="f" data-filter placeholder="field:op:value" autocomplete="off">
+	</label>
+	<button class="btn btn-default">Apply</button>
+</form>
+{{range .Page.Docs}}<article class="card mb-3"><a class="text-sm underline" href="/s/{{path $.Source}}/c/{{path $.Collection}}/d/{{path .ID}}">{{.ID}}</a><pre class="overflow-x-auto text-sm">{{.JSON}}</pre></article>
+{{else}}{{template "partials/empty" (dict "Title" "No documents" "Text" "Nothing matches this view.")}}{{end}}
+{{template "partials/pager" (dict "Next" .Next)}}
+{{if .Write}}<form method="post" action="/s/{{path .Source}}/c/{{path .Collection}}" class="card mt-6">
+	<h2 class="text-lg font-semibold">Insert a document</h2>
+	<textarea class="input h-40" name="doc" aria-label="Document as Extended JSON">{}</textarea>
+	<button class="btn btn-default self-start">Insert</button>
+</form>{{end}}
+{{end}}

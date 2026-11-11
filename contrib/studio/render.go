@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 )
@@ -21,7 +22,7 @@ var assetsFS embed.FS
 // loadTemplates parses the layout and the partials once, then gives every page
 // its own copy of that set (each page defines "content" and "title").
 func loadTemplates() (map[string]*template.Template, error) {
-	funcs := template.FuncMap{"dict": dict}
+	funcs := template.FuncMap{"dict": dict, "path": url.PathEscape, "keypath": keyPath}
 
 	base, err := template.New("base").
 		Funcs(funcs).

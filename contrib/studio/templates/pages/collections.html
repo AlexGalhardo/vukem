@@ -1,0 +1,12 @@
+{{define "title"}}{{.Source}} - vukem-studio{{end}}
+{{define "content"}}
+<div class="mb-4 flex flex-wrap items-center gap-3">
+	<h1 class="text-2xl font-semibold">{{.Source}}</h1>
+	<span class="text-sm text-muted-foreground">{{.Label}}</span>
+	<a class="btn btn-secondary ml-auto" data-nav="console" href="/s/{{path .Source}}/mongo-console">Console</a>
+</div>
+{{if .Collections}}<ul class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+	{{range .Collections}}<li class="card"><a class="text-lg font-semibold underline" data-nav="tables" href="/s/{{path $.Source}}/c/{{path .Name}}">{{.Name}}</a>
+	{{if ge .Estimate 0}}<span class="text-sm text-muted-foreground">about {{.Estimate}} documents</span>{{end}}</li>{{end}}
+</ul>{{else}}{{template "partials/empty" (dict "Title" "No collections" "Text" "This database has no collection yet.")}}{{end}}
+{{end}}

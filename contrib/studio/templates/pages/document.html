@@ -1,0 +1,23 @@
+{{define "title"}}Document - vukem-studio{{end}}
+{{define "content"}}
+<div class="mb-4 flex items-center gap-3">
+	<h1 class="text-2xl font-semibold">{{.Source}} / {{.Collection}}</h1>
+	<a class="btn btn-ghost" href="/s/{{path .Source}}/c/{{path .Collection}}">Documents</a>
+</div>
+<pre class="card overflow-x-auto text-sm">{{.Doc.JSON}}</pre>
+{{if .Write}}
+<form method="post" action="/s/{{path .Source}}/c/{{path .Collection}}/d/{{path .Doc.ID}}" class="card mt-4">
+	<input type="hidden" name="action" value="replace">
+	<h2 class="text-lg font-semibold">Replace this document</h2>
+	<textarea class="input h-64" name="doc" aria-label="Document as Extended JSON">{{.Doc.JSON}}</textarea>
+	<button class="btn btn-default self-start">Save</button>
+</form>
+<form method="post" action="/s/{{path .Source}}/c/{{path .Collection}}/d/{{path .Doc.ID}}" class="card mt-4">
+	<input type="hidden" name="action" value="delete">
+	<h2 class="text-lg font-semibold">Delete this document</h2>
+	<p class="text-sm">This cannot be undone. Type <code>{{.Confirm}}</code> to confirm.</p>
+	<input class="input" name="confirm" autocomplete="off" aria-label="Confirmation">
+	<button class="btn btn-destructive self-start">Delete</button>
+</form>
+{{end}}
+{{end}}
