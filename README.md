@@ -22,21 +22,26 @@
 
 ## Summary
 
+Vukem gives Go developers the productivity of Laravel and AdonisJS without leaving `net/http`: routing, validation, an SQL-first ORM, auth, queues, real time and a CLI that writes code you own, in one framework that stays plain Go.
+
 | Area | What you get |
 | --- | --- |
-| **HTTP** | `net/http`-native router with named routes, resources, groups and host-only groups (`Group.Only`); middleware is `func(http.Handler) http.Handler`; request-log attributes (`web.AddLogAttrs`, matched route); HTTP/3 (`contrib/http3`). |
-| **Validation** | Zod-style typed schemas (`z`) for every input, including files, exportable as JSON Schema, TypeScript and Zod. |
-| **Database** | SQLite built in, PostgreSQL and MySQL/MariaDB driver modules, MongoDB, generic query builder, relations, encrypted columns, migrations, factories and seeders. |
-| **Auth** | Sessions, API tokens, JWT with JWKS and refresh tokens, TOTP two-factor (`install:auth --2fa`), WebAuthn passkeys, social login (Google, GitHub, Apple, LinkedIn, X and any OIDC), email verification, password reset, gates and policies. |
-| **APIs** | JSON resources, pagination, RFC 9457 errors (`ProblemDecorator`, `WithType`, `WithTitle`), JSON-RPC 2.0 with OpenRPC, rate limiting, idempotency keys, typed handlers, OpenAPI 3.1, a Scalar API reference and generated TypeScript and Go clients. |
-| **GraphQL and gRPC** | A stdlib GraphQL server with subscriptions (`contrib/graphql`) and gRPC, gRPC-Web and Connect on connect-go (`contrib/grpc`). |
-| **Real time** | Server-Sent Events, WebSockets and channel broadcasting with private and presence channels. |
+| **HTTP** | `net/http`-native router with named routes, resources, groups and host-only groups (`Group.Only`); middleware is `func(http.Handler) http.Handler` and its default order is fixed by a test; request-log attributes (`web.AddLogAttrs`, matched route); `route:list` with method, path and name filters; HTTP/3 (`contrib/http3`). |
+| **Validation** | Zod-style typed schemas (`z`) for every input, including files: generic `Slice`/`Map`, unions and discriminated unions, literals, tuples, recursive schemas (`Lazy`), `Pick`/`Omit`/`Partial`/`Extend`, string formats, codecs and brands, cross-field rules and issues with stable codes; exportable as JSON Schema, TypeScript and Zod. |
+| **Database** | SQLite built in, PostgreSQL and MySQL/MariaDB driver modules, MongoDB; an SQL-first ORM with a generic query builder, relations, joins, aggregates, subqueries, upsert, typed raw SQL, `UpdateOnly`, `OrWhere*`, dialect capabilities and conflict errors (409), typed column references (`codegen:models`), savepoints and optimistic locking (`orm:"version"`); encrypted columns, factories and seeders; migrations with SQLite table rebuilds, `Column.Change`, schema inspection (`schema.Inspect`), `migrate:check`, `migrate:diff` and `db:pull`. |
+| **Auth** | Sessions, API tokens, JWT with JWKS and refresh tokens, TOTP two-factor (`install:auth --2fa`), WebAuthn passkeys, social login (Google, GitHub, Apple, LinkedIn, X and any OIDC, with HTTPS-only discovery), email verification, password reset, gates and policies. |
+| **APIs** | JSON resources, pagination, RFC 9457 errors (`ProblemDecorator`, `WithType`, `WithTitle`), JSON-RPC 2.0 with OpenRPC, rate limiting, idempotency keys, typed handlers, errors mapped by type (`web.MapError`) with a default problem `type` from `APP_PROBLEM_BASE_URL`, OpenAPI 3.1 whose constraints come from the same `z` schemas that validate the input, a Scalar API reference and generated clients: Go, and TypeScript with methods that resolve to `{ data, error, status }`, the error typed by status (`-style throw` and `-tanstack` helpers are options). |
+| **GraphQL and gRPC** | A stdlib GraphQL server with subscriptions, complexity limits and masked internal errors (`contrib/graphql`) and gRPC, gRPC-Web and Connect on connect-go (`contrib/grpc`). |
+| **Real time** | Server-Sent Events, WebSockets and channel broadcasting with private and presence channels, plus conformance suites for brokers and presence stores. |
 | **Background work** | Typed queue jobs (sync, memory, database, Redis), queued mail and listeners, cron scheduler. |
-| **Frontend** | HTMX, templ or Inertia (React, Vue, Svelte) starters with Vite and Tailwind CSS v4, SSR and a youch-style error page. |
+| **Frontend** | HTMX, templ or Inertia (React, Vue, Svelte) starters with Vite and Tailwind CSS v4, SSR, typed Inertia pages (`inertia.Define`) with `codegen:pages`, typed views checked by `view:check` (fields, named routes, `hx-*` targets) and a youch-style error page that shows what production clients receive. |
+| **CLI** | `vukem new`, generators, `upgrade`, `stub:publish`, the app `db` console, `doctor`, the `codegen` command that regenerates routes, API client and page types (`vukem serve` runs it on every rebuild, `-check` fails in CI when one is stale), a generated configuration reference, "did you mean" suggestions and `vukem bench`: load tests of a URL or of Go scenarios, with thresholds, baselines and a live read-only dashboard. |
 | **Admin and devtools** | An HTMX admin panel generated from your models, with an audit log and opt-in hardening (`DenyStatus`, `TwoFactorRedirect`, `TrackIdle`), and a `/_vukem` dashboard for requests, queries (with N+1 detection), jobs, mail and logs. |
 | **Billing and uploads** | Stripe subscriptions (`install:billing`), streaming, resumable (tus) and direct-to-S3 uploads with virus scanning. |
 | **Bot protection** | Cloudflare Turnstile on form routes and a step-up challenge with a signed clearance cookie (`challenge`); Cloudflare helpers (`contrib/cloudflare`: real client IP, origin lock, Access, cache purge). |
-| **SEO and analytics** | Sitemaps, `robots.txt` (`robots`, plus a `NOINDEX` switch), `llms.txt` and `llms-full.txt` (`llmstxt`), static site generation (`ssg`), Umami and GA4 with Consent Mode v2, Search Console and Bing verification (`analytics`), the Bing Webmaster API (`bingwmt`) and IndexNow (`indexnow`). |
+| **SEO and analytics** | Sitemaps, `robots.txt` (`robots`, plus a `NOINDEX` switch), `llms.txt` and `llms-full.txt` (`llmstxt`), static site generation with an atomic output swap (`ssg`), Umami and GA4 with Consent Mode v2, Search Console and Bing verification (`analytics`), the Bing Webmaster API (`bingwmt`) and IndexNow (`indexnow`). |
+| **Docs site** | A quick start, key concepts, best practices, "Coming from" guides for Laravel and AdonisJS and a Markdown twin of every page (`/docs/<slug>.md`) for coding agents. |
+| **Security by default** | CSRF, security headers, Argon2id with bounded concurrency, safe SQL, fail-closed authorization and an unset `APP_ENV` treated as production, each default backed by a `TestSecurity_*` test and mapped to the [OWASP Top 10:2025](docs/security.md). |
 | **More** | Mail (SMTP, Resend, `MAIL_REPLY_TO`), cache with batched counters (`cache.Buffer`), feature flags, storage (local, S3), events, encryption, i18n, OpenTelemetry, Telegram logging, CSV and NDJSON export (`export.EncodeNDJSON`), image thumbnails and QR codes, SSRF-safe HTTP client with throttle, retry and circuit-breaker transports, signed URLs and tokens, and webhooks. |
 
 ## Why Vukem
@@ -192,7 +197,7 @@ Vukem 1.x keeps the Go 1 compatibility promise: no breaking API changes until v2
 
 ## Contributing
 
-Thank you for considering contributing to Vukem! Read the [contribution guide](.github/CONTRIBUTING.md) to get started.
+Thank you for considering contributing to Vukem! Read the [contribution guide](.github/CONTRIBUTING.md) to get started, and follow the [issue standard](docs/maintenance.md#issues) when you report a bug or propose a feature.
 
 ## Code of conduct
 
