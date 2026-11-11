@@ -125,7 +125,7 @@ Everything else is read by **your app**, from the process environment or the `.e
 
 | Variable | Default | Used by |
 | --- | --- | --- |
-| `APP_ENV` | `development` | Destructive commands need `-force` when it is `production` |
+| `APP_ENV` | `production` | Destructive commands need `-force` when it is `production` (also when it is unset) |
 | `APP_DEBUG` | `false` | Must be `false` when `APP_ENV=production`, or every app command fails to boot |
 | `APP_KEY` | none | Sessions and encryption. Written by `key:generate`, `new` |
 | `APP_PREVIOUS_KEYS` | none | Old keys kept by `key:rotate` |

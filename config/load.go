@@ -164,7 +164,7 @@ func (s *Source) Get(key string) string {
 
 // EnvSet reports whether APP_ENV was given explicitly (process
 // environment, .env files or the map) with a non-empty value; Env then
-// does not fall back to development.
+// does not fall back to production.
 func (s *Source) EnvSet() bool {
 	v, ok := s.Lookup("APP_ENV")
 	return ok && v != ""
@@ -357,9 +357,11 @@ func rawValue(entries []Entry, key string) string {
 	return v
 }
 
+// envOf is the environment named by APP_ENV; an unset one is production, so
+// forgetting it in a deploy never switches on development behavior.
 func envOf(s string) Env {
 	if s == "" {
-		return Development
+		return Production
 	}
 
 	return Env(strings.ToLower(s))

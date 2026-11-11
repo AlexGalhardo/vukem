@@ -41,6 +41,7 @@ func projectChecks(ctx context.Context, env *Env) []doctorCheck {
 		checkBun(env),
 		checkLockfile(env),
 		checkAppKey(vals, envErr),
+		checkAppEnv(env, vals),
 		checkDatabase(env, vals),
 		checkPort(vals),
 		checkProxy(vals),
@@ -247,6 +248,24 @@ func checkProxy(vals map[string]string) doctorCheck {
 	}
 
 	return doctorCheck{Name: "proxy", Status: "ok", Detail: "set"}
+}
+
+// checkAppEnv warns when neither the process environment nor .env sets
+// APP_ENV: an unset one means production, which a local run does not expect.
+func checkAppEnv(env *Env, vals map[string]string) doctorCheck {
+	appEnv := strings.TrimSpace(vals["APP_ENV"])
+	if v, ok := env.Getenv("APP_ENV"); ok && strings.TrimSpace(v) != "" {
+		appEnv = strings.TrimSpace(v)
+	}
+
+	if appEnv != "" {
+		return doctorCheck{Name: "app_env", Status: "ok", Detail: appEnv}
+	}
+
+	return doctorCheck{
+		Name: "app_env", Status: "warn", Detail: "APP_ENV is not set: the app runs as production",
+		Fix: "add APP_ENV=development to .env for local work",
+	}
 }
 
 func checkVite(env *Env, vals map[string]string) doctorCheck {

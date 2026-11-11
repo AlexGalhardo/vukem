@@ -186,3 +186,58 @@ func TestDoctorProject(t *testing.T) {
 		t.Fatalf("informative doctor = %d %s", code, errOut)
 	}
 }
+
+func TestDoctorAppEnvCheck(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name, dotenv, process, status string
+	}{
+		{"unset", "APP_KEY=\n", "", "warn"},
+		{"in .env", "APP_ENV=development\n", "", "ok"},
+		{"in the process environment", "APP_KEY=\n", "production", "ok"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(tt.dotenv), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			var out, errOut bytes.Buffer
+
+			code := Run(t.Context(), []string{"doctor", "--json"}, Env{
+				Dir: dir, Stdout: &out, Stderr: &errOut, Now: fixedNow, Version: "v0.0.0-test",
+				Getenv: func(k string) (string, bool) { return tt.process, k == "APP_ENV" && tt.process != "" },
+			})
+			if code != 0 {
+				t.Fatalf("doctor = %d %s", code, errOut.String())
+			}
+
+			var report struct {
+				Checks []doctorCheck `json:"checks"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatal(err)
+			}
+
+			var got *doctorCheck
+
+			for i := range report.Checks {
+				if report.Checks[i].Name == "app_env" {
+					got = &report.Checks[i]
+				}
+			}
+
+			if got == nil || got.Status != tt.status {
+				t.Fatalf("app_env check = %+v, want status %s", got, tt.status)
+			}
+
+			if tt.status == "warn" && (got.Detail != "APP_ENV is not set: the app runs as production" ||
+				got.Fix != "add APP_ENV=development to .env for local work") {
+				t.Errorf("warning text = %+v", got)
+			}
+		})
+	}
+}
