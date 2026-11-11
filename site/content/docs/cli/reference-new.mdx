@@ -173,7 +173,7 @@ Checks files every 2 seconds, which saves CPU on large trees or network drives, 
 
 ## `vukem studio`
 
-Open vukem-studio, the read-only data browser of the project's database. The browser is its own module (`contrib/studio`, experimental): the CLI installs the pinned release into `.vukem/bin` with `go install` the first time and runs it.
+Open vukem-studio, the data browser of the project's databases. It is read-only unless you pass `-write`. The browser is its own module (`contrib/studio`, experimental): the CLI installs the pinned release into `.vukem/bin` with `go install` the first time and runs it.
 
 **Usage**
 
@@ -194,7 +194,7 @@ vukem studio [flags]
 | `-allow-production` | bool | `false` | Run even with `APP_ENV=production` (an unset `APP_ENV` counts as production). |
 | `-database-url` | string | `DATABASE_URL` | Use this database instead. |
 | `-version` | bool | `false` | Print the vukem-studio version and exit. |
-| `-write` | bool | `false` | Enable editing of documents and keys (see below). Without it nothing can change data. |
+| `-write` | bool | `false` | Enable editing of SQL rows, documents and keys, and the write switch of the SQL console (see below). Without it nothing can change data. |
 | `-refresh` | duration | `2s` | Interval of the live refresh; a negative value turns it off; the minimum is `500ms`. |
 | `-mongo-url` | string | `MONGO_URL` | Use this MongoDB URL. |
 | `-mongo-database` | string | `MONGO_DATABASE` | The MongoDB database when the URL has none. |
@@ -204,9 +204,15 @@ vukem studio [flags]
 
 **Sources**: the SQL database from `DATABASE_URL`, MongoDB from `MONGO_URL` (and `MONGO_DATABASE`) and Redis from `REDIS_URL`; a source that is not configured is not shown. A page refreshes itself when its data changes (the server polls every `-refresh` and sends a server-sent event only on a change; at most 8 streams at a time).
 
-**Editing** (`-write`): documents can be inserted, replaced and deleted, and Redis strings, hash fields and TTLs edited, with a typed confirmation for every deletion (the document's `_id` or the key name). Every write is logged on stderr (source, action, target and result; never the values). With `-write` and `APP_ENV=production` you still need `-allow-production`. The MongoDB console refuses `$where`, `$function` and `$accumulator` always, and `$out` and `$merge` without `-write`. The Redis console runs only the commands on an allow-list (reads always, writes with `-write`); `KEYS`, `FLUSHALL`, `CONFIG`, `EVAL` and the rest are refused. Keys are browsed with `SCAN`, never `KEYS`.
+**SQL browser**: the table list shows the number of rows of each table (a `COUNT(*)` with a shared 2 second budget; a table that did not finish shows no number). A table opens as a grid with filters (`column:op:value`, with `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `contains`, `starts`, `null` and `notnull`), sorting and paging: by the primary key it pages with a keyset cursor, by another column with an offset capped at page 1000, 50 rows a page and at most 200. Table, column and sort names come only from the database catalog and values are bound parameters, so a name Studio cannot find is a 404 and nothing is sent to the database. A row opens on its own page with every value (up to 64 KiB) and a "Referenced by" list that links to each table pointing at it, already filtered to that row. A table without a primary key has no row page.
 
-**Security**: it listens on loopback only and answers 403 to any other peer, to a request with a proxy header, and to a `Host` that is not a loopback name. The start URL carries a random token that is traded for an `HttpOnly`, `SameSite=Strict` cookie. Every response has a strict Content Security Policy. Nothing writes to the database. Passwords and URLs never appear in the output.
+**Export**: the grid view (filters and sort included) downloads as JSON Lines (`/s/{source}/t/{table}/export`) or CSV (`?format=csv`), with full values, at most 100000 rows. When the cap is reached the trailer `X-Studio-Truncated: true` says so. A CSV cell that starts with `=`, `+`, `-` or `@` gets a leading quote so a spreadsheet shows it as text. Exporting only reads, so it works without `-write`.
+
+**SQL console**: one statement at a time (a second statement, an unterminated quote or a MySQL `/*!` comment is refused before it runs). It does not analyse the text to decide it is safe: PostgreSQL and MySQL run it in a read-only transaction that always rolls back, and SQLite on the read-only connection (an in-memory SQLite database has no such connection, so its console needs write mode). Results stop at 1000 rows and the statement at 30 seconds. "Explain" prefixes `EXPLAIN` (`EXPLAIN QUERY PLAN` on SQLite). Database errors are not shown: the page says the statement could not run, and the details go to Studio's own log.
+
+**Editing** (`-write`): SQL rows can be inserted, updated and deleted, documents inserted, replaced and deleted, and Redis strings, hash fields and TTLs edited, with a typed confirmation for every deletion (the primary key, joined by commas when it has several columns, the document's `_id`, or the key name). The SQL forms exist only for a table with a primary key, never change the primary key, send only the columns you submit, check each value against the declared column type before any SQL (whole numbers, booleans, decimals, dates and JSON, with a `NULL` box per nullable column; binary columns are read-only) and roll back unless exactly one row changed. A value that was cut for display is not offered for editing, because saving it would write the cut text back. With `-write` the SQL console gets a "Write mode" switch, off by default, that runs the statement in a transaction and commits only if it succeeded. Every write is logged on stderr (source, action, target, the key and the columns, the result; never the values; a console statement is cut at 200 bytes). With `-write` and `APP_ENV=production` you still need `-allow-production`. The MongoDB console refuses `$where`, `$function` and `$accumulator` always, and `$out` and `$merge` without `-write`. The Redis console runs only the commands on an allow-list (reads always, writes with `-write`); `KEYS`, `FLUSHALL`, `CONFIG`, `EVAL` and the rest are refused. Keys are browsed with `SCAN`, never `KEYS`. Every write rides on the session cookie and the browser's cross-origin check, like every other request.
+
+**Security**: it listens on loopback only and answers 403 to any other peer, to a request with a proxy header, and to a `Host` that is not a loopback name. The start URL carries a random token that is traded for an `HttpOnly`, `SameSite=Strict` cookie. Every response has a strict Content Security Policy. Without `-write` nothing writes to the database. Passwords and URLs never appear in the output.
 
 ```text
 vukem-studio v0.1.0 (read-only)

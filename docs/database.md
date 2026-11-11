@@ -686,7 +686,7 @@ Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `Del
 
 ## Studio
 
-`vukem studio` opens vukem-studio, a read-only browser for the project's database (experimental, its own module `contrib/studio`). It listens on `127.0.0.1` only, behind a session token printed in the start URL, and refuses a production environment unless `--allow-production` is given. See [cli.md](cli.md) for the command and its flags.
+`vukem studio` opens vukem-studio, a browser for the project's databases (experimental, its own module `contrib/studio`). It reads the table list, columns, primary keys and foreign keys from the database catalog, shows a filterable grid with row estimates and the tables that reference a row, exports a view as JSON Lines or CSV, and has a one-statement console that is read-only by construction. With `--write` it also inserts, updates and deletes rows of tables that have a primary key. It listens on `127.0.0.1` only, behind a session token printed in the start URL, and refuses a production environment unless `--allow-production` is given. See [cli.md](cli.md) for the command and its flags.
 
 ## Not supported yet
 
