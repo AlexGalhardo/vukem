@@ -171,6 +171,41 @@ vukem serve -poll 2s -no-vite
 
 Checks files every 2 seconds, which saves CPU on large trees or network drives, and leaves the frontend to a Vite you started yourself.
 
+## `vukem studio`
+
+Open vukem-studio, the read-only data browser of the project's database. The browser is its own module (`contrib/studio`, experimental): the CLI installs the pinned release into `.vukem/bin` with `go install` the first time and runs it.
+
+**Usage**
+
+```text
+vukem studio [flags]
+```
+
+**Arguments**: none.
+
+**Flags**
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-bin` | string | none | Run this vukem-studio binary and skip the install (to develop Studio itself). |
+| `-dir` | string | the project directory | Project whose `.env` and database are read. |
+| `-port` | int | `4984` | Port on `127.0.0.1`; `0` picks a free one. |
+| `-no-open` | bool | `false` | Do not open the browser. |
+| `-allow-production` | bool | `false` | Run even with `APP_ENV=production` (an unset `APP_ENV` counts as production). |
+| `-database-url` | string | `DATABASE_URL` | Use this database instead. |
+| `-version` | bool | `false` | Print the vukem-studio version and exit. |
+
+**Security**: it listens on loopback only and answers 403 to any other peer, to a request with a proxy header, and to a `Host` that is not a loopback name. The start URL carries a random token that is traded for an `HttpOnly`, `SameSite=Strict` cookie. Every response has a strict Content Security Policy. Nothing writes to the database. Passwords and URLs never appear in the output.
+
+```text
+vukem-studio v0.1.0 (read-only)
+  sql   sqlite  storage/database.sqlite
+  open  http://127.0.0.1:4984/?token=...
+Press Ctrl+C to stop.
+```
+
+**Exit codes**: `0` stopped with Ctrl+C, `1` an error, `2` bad usage or a refusal (production without `-allow-production`).
+
 ## `vukem build`
 
 Produce the production binary.
