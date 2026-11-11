@@ -1,6 +1,7 @@
 package graphql
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -225,6 +226,10 @@ func scalarLiteral(v *value, n *namedType, vars map[string]any) (any, error) {
 	return parseCustom(n, generic)
 }
 
+// parseCustom runs a custom scalar's Parse. Only the client-safe text of its
+// error reaches the client (see clientSafeMessage); anything else is reported
+// as "<Scalar>: invalid value" (CWE-209). The original error stays in the
+// returned Error's cause for logging.
 func parseCustom(n *namedType, v any) (any, error) {
 	if n.scalar == nil || n.scalar.Parse == nil {
 		return v, nil
@@ -232,7 +237,12 @@ func parseCustom(n *namedType, v any) (any, error) {
 
 	out, err := n.scalar.Parse(v)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", n.name, err)
+		msg, ok := clientSafeMessage(context.Background(), err)
+		if !ok {
+			msg = "invalid value"
+		}
+
+		return nil, &Error{Message: n.name + ": " + msg, cause: err}
 	}
 
 	return out, nil

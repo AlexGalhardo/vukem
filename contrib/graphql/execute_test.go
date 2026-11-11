@@ -340,7 +340,7 @@ func TestInputsScalarsAndErrors(t *testing.T) {
 			"custom scalar invalid literal",
 			`{ at(when: 5) }`,
 			nil,
-			`{"errors":[{"message":"Argument \"when\" has invalid value 5: DateTime: must be an RFC 3339 string.","locations":[{"line":1,"column":12}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`,
+			`{"errors":[{"message":"Argument \"when\" has invalid value 5: DateTime: invalid value.","locations":[{"line":1,"column":12}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`,
 		},
 		{
 			"int output overflow",
@@ -514,6 +514,18 @@ func TestNewErrors(t *testing.T) {
 			`graphql: Query.a.n: invalid default value: int cannot represent non-integer value: "x"`,
 		},
 		{
+			"bad directive default",
+			`directive @page(size: Int = "ten") on FIELD_DEFINITION type Query { a: Int }`,
+			[]Option{q},
+			`graphql: @page.size: invalid default value: int cannot represent non-integer value: "ten"`,
+		},
+		{
+			"output type as directive argument",
+			`type O { a: Int } directive @page(o: O) on FIELD_DEFINITION type Query { a: Int }`,
+			[]Option{q},
+			`graphql: @page.o: O is not an input type`,
+		},
+		{
 			"unbound root field",
 			`type Query { a: Int b: Int }`,
 			[]Option{q},
@@ -616,6 +628,73 @@ func TestIntrospectionGolden(t *testing.T) {
 	}
 }
 
+func TestIntrospectionDirectiveArgumentDefault(t *testing.T) {
+	t.Parallel()
+
+	s, err := New(`directive @page(size: Int = 10) on FIELD_DEFINITION type Query { a: Int }`,
+		Query("a", func(context.Context, NoArgs) (int, error) { return 1, nil }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := json.Marshal(s.Execute(t.Context(),
+		Request{Query: `{ __schema { directives { name args { name defaultValue } } } }`}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := `{"name":"page","args":[{"name":"size","defaultValue":"10"}]}`; !strings.Contains(string(b), want) {
+		t.Errorf("introspection = %s, want it to contain %s", b, want)
+	}
+}
+
+func TestIntrospectionDefaultValueIsGraphQLSyntax(t *testing.T) {
+	t.Parallel()
+
+	const original = "tab\there \x01 \U0001F600 <&>"
+
+	var got string
+
+	s, err := New(`type Query { f(greeting: String = "tab\there \u0001 😀 <&>"): String }`,
+		Query("f", func(_ context.Context, a map[string]any) (string, error) {
+			got, _ = a["greeting"].(string)
+			return got, nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := s.Execute(t.Context(), Request{Query: `{ __type(name: "Query") { fields { args { defaultValue } } } }`})
+	if len(r.Errors) > 0 {
+		t.Fatal(r.Errors)
+	}
+
+	var out struct {
+		Type struct {
+			Fields []struct {
+				Args []struct {
+					DefaultValue string `json:"defaultValue"`
+				} `json:"args"`
+			} `json:"fields"`
+		} `json:"__type"`
+	}
+	if err := json.Unmarshal(r.Data, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	dv := out.Type.Fields[0].Args[0].DefaultValue
+	if strings.Contains(dv, `\x`) || strings.Contains(dv, `\U`) {
+		t.Errorf("defaultValue = %s, want GraphQL string escapes only", dv)
+	}
+
+	r = s.Execute(t.Context(), Request{Query: `{ f(greeting: ` + dv + `) }`})
+	if len(r.Errors) > 0 || got != original {
+		t.Errorf("reparsed defaultValue %s = %q (errors %v), want %q", dv, got, r.Errors, original)
+	}
+}
+
 func TestIntrospectionTypeLookup(t *testing.T) {
 	t.Parallel()
 
@@ -667,6 +746,82 @@ func TestSecurity_A10_GraphQLClientErrorsMasked(t *testing.T) {
 	)
 	if he.Message != "Post not found." {
 		t.Errorf("fromResolverError(HTTPError) = %q, want its client message", he.Message)
+	}
+}
+
+func TestSecurity_A10_GraphQLScalarParseErrorsMasked(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		parseErr    error
+		want        string
+		wantMissing string
+	}{
+		{"plain error", errors.New("dial tcp 10.0.0.5:5432: refused"), "DateTime: invalid value", "10.0.0.5"},
+		{"graphql error", &Error{Message: "expected RFC 3339"}, "expected RFC 3339", ""},
+		{"4xx error", errs.New(http.StatusBadRequest, "bad date"), "bad date", ""},
+		{
+			"wrapped graphql error",
+			fmt.Errorf("dsn=postgres://app:pw@db: %w", &Error{Message: "expected RFC 3339"}),
+			"expected RFC 3339",
+			"postgres://",
+		},
+		{
+			"4xx wrapping a cause",
+			errs.Wrap(http.StatusBadRequest, errors.New("pq: secret-detail")),
+			"Bad Request",
+			"secret-detail",
+		},
+		{
+			"5xx wrapping issues",
+			errs.Wrap(http.StatusInternalServerError, z.Issues{{Path: "a", Code: "custom", Message: "secret-detail"}}),
+			"DateTime: invalid value",
+			"secret-detail",
+		},
+		{
+			"issues",
+			z.Issues{{Path: "a", Code: "custom", Message: "secret-detail"}},
+			"DateTime: Invalid input",
+			"secret-detail",
+		},
+		{
+			"validation error",
+			errs.NewValidation().Add("a", "secret-detail"),
+			"DateTime: Invalid input",
+			"secret-detail",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			s, err := New(`scalar DateTime type Query { at(v: DateTime): Int }`,
+				Query("at", func(context.Context, map[string]any) (int, error) { return 1, nil }),
+				Scalar("DateTime", ScalarFuncs{Parse: func(any) (any, error) { return nil, tt.parseErr }}),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			reqs := map[string]Request{
+				"variable": {Query: `query ($v: DateTime) { at(v: $v) }`, Variables: map[string]any{"v": "x"}},
+				"literal":  {Query: `{ at(v: "x") }`},
+			}
+
+			for path, req := range reqs {
+				r := s.Execute(t.Context(), req)
+				if len(r.Errors) != 1 {
+					t.Fatalf("%s: errors = %v, want one", path, r.Errors)
+				}
+
+				msg := r.Errors[0].Message
+				if !strings.Contains(msg, tt.want) || (tt.wantMissing != "" && strings.Contains(msg, tt.wantMissing)) {
+					t.Errorf("%s: message = %q, want %q without %q", path, msg, tt.want, tt.wantMissing)
+				}
+			}
+		})
 	}
 }
 

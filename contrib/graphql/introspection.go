@@ -1,7 +1,9 @@
 package graphql
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 )
@@ -366,7 +368,16 @@ func (b *builder) bindMemberIntrospection() {
 func printGraphQL(v *value) string {
 	switch v.kind { //nolint:exhaustive // the remaining kinds take the common path below
 	case valString:
-		return strconv.Quote(v.raw)
+		var buf bytes.Buffer
+
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+
+		if err := enc.Encode(v.raw); err != nil { // a string never fails to encode
+			return strconv.Quote(v.raw)
+		}
+
+		return strings.TrimSuffix(buf.String(), "\n")
 	case valList:
 		parts := make([]string, 0, len(v.list))
 		for _, it := range v.list {

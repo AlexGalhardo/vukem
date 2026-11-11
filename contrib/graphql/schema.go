@@ -458,6 +458,17 @@ func (b *builder) load(sdl string) error {
 		}
 	}
 
+	return b.checkDirectives()
+}
+
+// checkDirectives validates directive arguments once every type is resolved.
+func (b *builder) checkDirectives() error {
+	for _, name := range b.s.dirNames {
+		if err := b.checkInputs("@"+name, b.s.directives[name].args); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
