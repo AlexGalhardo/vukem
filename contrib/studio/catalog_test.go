@@ -60,7 +60,7 @@ func TestSchemaCatalog(t *testing.T) {
 		t.Errorf("Table(nope) = %v, %v", ok, err)
 	}
 
-	if _, ok, err := cat.Table(t.Context(), "pets; DROP TABLE users"); ok {
-		t.Errorf("a hostile name was found (err %v)", err)
+	if _, ok, err := cat.Table(t.Context(), "pets; DROP TABLE users"); ok || err != nil {
+		t.Errorf("a hostile name = %v, %v; want not found and no error", ok, err)
 	}
 }

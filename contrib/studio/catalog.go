@@ -2,6 +2,7 @@ package studio
 
 import (
 	"context"
+	"regexp"
 
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -27,8 +28,16 @@ func (c schemaCatalog) Tables(ctx context.Context) ([]Table, error) {
 	return out, nil
 }
 
+// identRe is what schema.InspectTable accepts as a table name; anything else
+// is refused there with an error, which for a browser means "no such table".
+var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // Table implements Introspector.
 func (c schemaCatalog) Table(ctx context.Context, name string) (Table, bool, error) {
+	if !identRe.MatchString(name) {
+		return Table{}, false, nil
+	}
+
 	t, ok, err := schema.InspectTable(ctx, c.ex, name)
 	if err != nil || !ok {
 		return Table{}, false, err
