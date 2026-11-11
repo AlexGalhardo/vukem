@@ -142,6 +142,12 @@ func (rt *Route) Use(mw ...Middleware) *Route {
 	return rt
 }
 
+// Summarizer is implemented by route docs (Route.Doc) that have a one-line
+// summary; route:list prints it.
+type Summarizer interface {
+	RouteSummary() string
+}
+
 // RouteInfo describes a compiled route.
 type RouteInfo struct {
 	Method string `json:"method"`
@@ -554,6 +560,18 @@ func (r *Router) Routes() []RouteInfo {
 	}
 
 	return infos
+}
+
+// ServerMiddleware returns the names of the server middleware (UseServer)
+// in the order it runs, outermost first. The names are the function names,
+// as in RouteInfo.Middleware.
+func (r *Router) ServerMiddleware() []string {
+	names := make([]string, 0, len(r.server))
+	for _, mw := range r.server {
+		names = append(names, funcName(mw))
+	}
+
+	return names
 }
 
 func funcName(mw Middleware) string {

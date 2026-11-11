@@ -857,7 +857,32 @@ func (a *App) initViews(o *options) error {
 	return nil
 }
 
+// duplicateProvider reports the first provider name used twice.
+func duplicateProvider(providers []Provider) error {
+	seen := map[string]Provider{}
+
+	for _, p := range providers {
+		np, ok := p.(NamedProvider)
+		if !ok || np.Name() == "" {
+			continue
+		}
+
+		if first, dup := seen[np.Name()]; dup {
+			return fmt.Errorf("vukem: provider %q registered twice (%T and %T); remove one of them from WithProviders",
+				np.Name(), first, p)
+		}
+
+		seen[np.Name()] = p
+	}
+
+	return nil
+}
+
 func (a *App) registerProvidersAndRoutes(o *options) error {
+	if err := duplicateProvider(a.providers); err != nil {
+		return err
+	}
+
 	for _, p := range a.providers {
 		if !runsIn(p, a.Kind) {
 			continue

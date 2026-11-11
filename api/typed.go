@@ -49,6 +49,10 @@ type Operation struct {
 	Out    reflect.Type
 }
 
+// RouteSummary returns the operation summary; it makes Operation a
+// router.Summarizer, so route:list can print it.
+func (o *Operation) RouteSummary() string { return o.Summary }
+
 // Registrar is a router.Router or router.Group.
 type Registrar interface {
 	Match(methods []string, path string, h web.HandlerFunc) []*router.Route

@@ -579,3 +579,148 @@ func BenchmarkNotFound(b *testing.B) {
 		h.ServeHTTP(httptest.NewRecorder(), req)
 	}
 }
+
+func otherMiddleware(next http.Handler) http.Handler { return next }
+
+func TestServerMiddlewareNames(t *testing.T) {
+	t.Parallel()
+
+	r := newRouter()
+	if got := r.ServerMiddleware(); len(got) != 0 {
+		t.Fatalf("ServerMiddleware() on an empty router = %v", got)
+	}
+
+	r.UseServer(sampleMiddleware, otherMiddleware)
+	r.Use(sampleMiddleware)
+
+	got := r.ServerMiddleware()
+	if len(got) != 2 || !strings.Contains(got[0], "sampleMiddleware") || !strings.Contains(got[1], "otherMiddleware") {
+		t.Fatalf("ServerMiddleware() = %v, want [sampleMiddleware otherMiddleware]", got)
+	}
+}
+
+// traceTag returns middleware that appends label to the X-Trace response header.
+func traceTag(label string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if prev := w.Header().Get("X-Trace"); prev != "" {
+				w.Header().Set("X-Trace", prev+","+label)
+			} else {
+				w.Header().Set("X-Trace", label)
+			}
+
+			next.ServeHTTP(w, req)
+		})
+	}
+}
+
+func TestMiddlewareScope(t *testing.T) {
+	t.Parallel()
+
+	trace := func(t *testing.T, h http.Handler, target string) string {
+		t.Helper()
+
+		return serve(t, h, http.MethodGet, target).Header().Get("X-Trace")
+	}
+
+	tests := []struct {
+		name   string
+		build  func(r *Router)
+		target string
+		want   string
+	}{
+		{
+			name: "UseServer runs for unmatched paths, Use does not",
+			build: func(r *Router) {
+				r.UseServer(traceTag("server"))
+				r.Use(traceTag("router"))
+				r.Get("/x", text(""))
+			},
+			target: "/missing",
+			want:   "server",
+		},
+		{
+			name: "Use called after the route still applies",
+			build: func(r *Router) {
+				r.Get("/x", text(""))
+				r.Use(traceTag("router"))
+			},
+			target: "/x",
+			want:   "router",
+		},
+		{
+			name: "Group.Use reaches nested groups",
+			build: func(r *Router) {
+				r.Group("/a", func(g *Group) {
+					g.Use(traceTag("outer"))
+					g.Group("/b", func(n *Group) { n.Get("/x", text("")) })
+				})
+			},
+			target: "/a/b/x",
+			want:   "outer",
+		},
+		{
+			name: "Group.Use does not reach routes outside the group",
+			build: func(r *Router) {
+				r.Group("/a", func(g *Group) { g.Use(traceTag("outer")); g.Get("/x", text("")) })
+				r.Get("/y", text(""))
+			},
+			target: "/y",
+			want:   "",
+		},
+		{
+			name: "Route.Use reaches only that route",
+			build: func(r *Router) {
+				r.Get("/x", text("")).Use(traceTag("route"))
+				r.Get("/y", text(""))
+			},
+			target: "/y",
+			want:   "",
+		},
+		{
+			name: "full order for a route in a nested group",
+			build: func(r *Router) {
+				r.UseServer(traceTag("server"))
+				r.Use(traceTag("router"))
+				r.Group("/a", func(g *Group) {
+					g.Use(traceTag("outer"))
+					g.Group("/b", func(n *Group) {
+						n.Use(traceTag("inner"))
+						n.Get("/x", text("")).Use(traceTag("route"))
+					})
+				})
+			},
+			target: "/a/b/x",
+			want:   "server,router,outer,inner,route",
+		},
+		{
+			name: "Group.Use called after a route of the group registers it",
+			build: func(r *Router) {
+				r.Group("/a", func(g *Group) {
+					g.Get("/x", text(""))
+					g.Use(traceTag("late"))
+				})
+			},
+			target: "/a/x",
+			want:   "late",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := newRouter()
+			tt.build(r)
+
+			h, err := r.Handler()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got := trace(t, h, tt.target); got != tt.want {
+				t.Fatalf("X-Trace = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

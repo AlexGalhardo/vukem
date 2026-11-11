@@ -3689,3 +3689,101 @@ func TestSecurity_A01_CrossOriginUsesOverriddenMethod(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultMiddlewareOrder(t *testing.T) {
+	t.Parallel()
+
+	baseServer := []string{"Recover", "RequestID", "SecureHeaders", "Maintenance", "Logger", "MethodOverride"}
+	baseRouter := []string{"BodyLimit", "session", "csrf"}
+	crossOrigin := []CrossOriginRoute{{Pattern: "/embed/", CORS: middleware.CORSConfig{AllowedOrigins: []string{"*"}}}}
+
+	tests := []struct {
+		name       string
+		env        map[string]string
+		opts       MiddlewareOptions
+		translated bool
+		wantServer []string
+		wantRouter []string
+	}{
+		{name: "default", wantServer: baseServer, wantRouter: baseRouter},
+		{
+			name: "NoIndex sits between SecureHeaders and Maintenance",
+			env:  map[string]string{"NOINDEX": "true"},
+			wantServer: []string{
+				"Recover",
+				"RequestID",
+				"SecureHeaders",
+				"NoIndex",
+				"Maintenance",
+				"Logger",
+				"MethodOverride",
+			},
+			wantRouter: baseRouter,
+		},
+		{
+			// MethodOverride runs first so the cross-origin routes match the
+			// overridden method; the route-level session is swapped for the bypass.
+			name:       "cross-origin runs after MethodOverride",
+			opts:       MiddlewareOptions{CrossOrigin: crossOrigin},
+			wantServer: append(slices.Clone(baseServer), "crossOriginMiddleware"),
+			wantRouter: []string{"BodyLimit", "bypass", "csrf"},
+		},
+		{
+			name:       "stateless has no session",
+			opts:       MiddlewareOptions{Stateless: true},
+			wantServer: baseServer,
+			wantRouter: []string{"BodyLimit", "csrf"},
+		},
+		{
+			name:       "translations add the locale resolver after CSRF",
+			translated: true,
+			wantServer: baseServer,
+			wantRouter: []string{"BodyLimit", "session", "csrf", "i18n"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := []Option{
+				WithSource(testSource(tt.env)), WithLogger(discardLogger()),
+				WithRoutes(func(r *router.Router, app *App) error {
+					r.Get("/x", func(*web.Ctx) error { return nil })
+
+					return DefaultMiddlewareWith(app, r, tt.opts)
+				}),
+			}
+			if tt.translated {
+				opts = append(opts, WithTranslations(fstest.MapFS{"en.json": {Data: []byte(`{"a": "b"}`)}}))
+			}
+
+			app, err := New(opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := app.Handler(); err != nil {
+				t.Fatal(err)
+			}
+
+			matchOrder(t, "server", app.Router.ServerMiddleware(), tt.wantServer)
+			matchOrder(t, "router", app.Router.Routes()[0].Middleware, tt.wantRouter)
+		})
+	}
+}
+
+// matchOrder fails unless got has the same length as want and each name
+// contains the fragment at its position (closure names carry suffixes).
+func matchOrder(t *testing.T, stack string, got, want []string) {
+	t.Helper()
+
+	ok := len(got) == len(want)
+	for i := 0; ok && i < len(want); i++ {
+		ok = strings.Contains(got[i], want[i])
+	}
+
+	if !ok {
+		t.Errorf("%s stack = %v, want in order %v", stack, got, want)
+	}
+}

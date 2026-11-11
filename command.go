@@ -29,6 +29,7 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/openapi"
+	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/ssg"
 )
 
@@ -207,18 +208,26 @@ func builtinCommands() []Command {
 }
 
 func routeListCommand() Command {
-	var asJSON *bool
+	var (
+		asJSON               *bool
+		method, path, naming *string
+	)
 
 	return CommandFunc{
 		CommandName: "route:list",
 		Desc:        "List the registered routes",
-		DefineFlags: func(fs *flag.FlagSet) { asJSON = fs.Bool("json", false, "print JSON") },
+		DefineFlags: func(fs *flag.FlagSet) {
+			asJSON = fs.Bool("json", false, "print JSON")
+			method = fs.String("method", "", "only routes with this HTTP method (ANY matches Any routes)")
+			path = fs.String("path", "", "only routes whose host and path contain this text")
+			naming = fs.String("name", "", "only routes whose name contains this text")
+		},
 		Fn: func(_ context.Context, app *App, _ []string) error {
 			if _, err := app.Router.Handler(); err != nil {
 				return err
 			}
 
-			routes := app.Router.Routes()
+			routes := filterRoutes(app.Router.Routes(), *method, *path, *naming)
 			if *asJSON {
 				enc := json.NewEncoder(app.stdout)
 				enc.SetIndent("", "  ")
@@ -226,16 +235,69 @@ func routeListCommand() Command {
 				return enc.Encode(routes)
 			}
 
-			tw := tabwriter.NewWriter(app.stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "METHOD\tPATH\tNAME\tMIDDLEWARE")
+			if len(routes) == 0 {
+				fmt.Fprintln(app.stdout, "No routes match.")
+				return nil
+			}
 
-			for _, r := range routes {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Method, r.Host+r.Path, r.Name, strings.Join(r.Middleware, ", "))
+			summaries := make([]string, len(routes))
+			hasSummary := false
+
+			for i, r := range routes {
+				if s, ok := r.Doc.(router.Summarizer); ok {
+					summaries[i] = s.RouteSummary()
+					hasSummary = hasSummary || summaries[i] != ""
+				}
+			}
+
+			tw := tabwriter.NewWriter(app.stdout, 0, 4, 2, ' ', 0)
+			if hasSummary {
+				fmt.Fprintln(tw, "METHOD\tPATH\tNAME\tSUMMARY\tMIDDLEWARE")
+			} else {
+				fmt.Fprintln(tw, "METHOD\tPATH\tNAME\tMIDDLEWARE")
+			}
+
+			for i, r := range routes {
+				if hasSummary {
+					fmt.Fprintf(
+						tw,
+						"%s\t%s\t%s\t%s\t%s\n",
+						r.Method,
+						r.Host+r.Path,
+						r.Name,
+						summaries[i],
+						strings.Join(r.Middleware, ", "),
+					)
+				} else {
+					fmt.Fprintf(
+						tw,
+						"%s\t%s\t%s\t%s\n",
+						r.Method,
+						r.Host+r.Path,
+						r.Name,
+						strings.Join(r.Middleware, ", "),
+					)
+				}
 			}
 
 			return tw.Flush()
 		},
 	}
+}
+
+// filterRoutes keeps the routes matching every non-empty filter: method is
+// compared without case, path and name by substring.
+func filterRoutes(routes []router.RouteInfo, method, path, name string) []router.RouteInfo {
+	out := make([]router.RouteInfo, 0, len(routes))
+
+	for _, r := range routes {
+		if (method == "" || strings.EqualFold(r.Method, method)) &&
+			strings.Contains(r.Host+r.Path, path) && strings.Contains(r.Name, name) {
+			out = append(out, r)
+		}
+	}
+
+	return out
 }
 
 func openAPIExportCommand() Command {

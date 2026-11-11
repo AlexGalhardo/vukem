@@ -1440,3 +1440,46 @@ func TestSecurity_A05_MissingAppEnvBootsAsProduction(t *testing.T) {
 		t.Fatalf("New() without APP_KEY or APP_ENV = %v, want the missing APP_KEY error", err)
 	}
 }
+
+type namedProvider struct{ name string }
+
+func (namedProvider) Register(*App) error { return nil }
+func (p namedProvider) Name() string      { return p.name }
+
+type unnamedProvider struct{}
+
+func (unnamedProvider) Register(*App) error { return nil }
+
+func TestNewRefusesDuplicateProviders(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		providers []Provider
+		wantErr   string // substring; empty means New succeeds
+	}{
+		{
+			name:      "same name twice",
+			providers: []Provider{namedProvider{"billing"}, namedProvider{"billing"}},
+			wantErr:   `provider "billing" registered twice`,
+		},
+		{name: "different names", providers: []Provider{namedProvider{"billing"}, namedProvider{"audit"}}},
+		{name: "two unnamed of the same type", providers: []Provider{unnamedProvider{}, unnamedProvider{}}},
+		{name: "empty name twice", providers: []Provider{namedProvider{""}, namedProvider{""}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithProviders(tt.providers...))
+
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("New() = %v, want no error", err)
+			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Fatalf("New() = %v, want error containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
