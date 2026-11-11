@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -56,7 +57,10 @@ func (s *Server) Subscribe(ctx context.Context, channels ...string) (*Subscripti
 		topics[i] = topic(ch)
 	}
 
-	events, unsub := s.hub.Subscribe(ctx, topics...)
+	events, unsub, err := s.hub.TrySubscribe(ctx, topics...)
+	if err != nil {
+		return nil, fmt.Errorf("broadcast: subscribe: %w", err)
+	}
 
 	sub := &Subscription{
 		id:       newID(),

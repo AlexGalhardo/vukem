@@ -33,7 +33,11 @@ func (a *App) Run(ctx context.Context) error {
 	if a.Kind == KindWeb && !a.noHTTP {
 		r, err := a.httpRunner()
 		if err != nil {
-			return err
+			// Boot succeeded, so everything it started must be stopped.
+			shutCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), a.Config.ShutdownTimeout)
+			defer stop()
+
+			return errors.Join(err, a.Shutdown(shutCtx))
 		}
 
 		a.AddRunner("http", r)

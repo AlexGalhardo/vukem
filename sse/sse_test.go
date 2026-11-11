@@ -713,3 +713,33 @@ func TestHubEndsStreamsWhenBrokerSubscriptionDrops(t *testing.T) {
 		}
 	})
 }
+
+func TestHubTrySubscribeReportsBrokerFailure(t *testing.T) {
+	t.Parallel()
+
+	hub := sse.NewHub(&gatedBroker{fail: 2})
+	t.Cleanup(hub.Close)
+
+	ch, unsub, err := hub.TrySubscribe(t.Context(), "news")
+	if err == nil || !strings.Contains(err.Error(), "broker down") {
+		t.Fatalf("TrySubscribe() error = %v, want the broker failure", err)
+	}
+
+	unsub()
+
+	if _, open := <-ch; open {
+		t.Error("TrySubscribe() returned an open stream with its error")
+	}
+
+	if n := hub.Subscribers("news"); n != 0 {
+		t.Errorf("Subscribers = %d after a failed TrySubscribe, want 0", n)
+	}
+
+	// Subscribe keeps its contract: a closed stream, no error.
+	ch, unsub = hub.Subscribe(t.Context(), "news")
+	unsub()
+
+	if _, open := <-ch; open {
+		t.Error("Subscribe() returned an open stream after a broker failure")
+	}
+}

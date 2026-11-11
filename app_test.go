@@ -1322,3 +1322,98 @@ func TestConfigCallbackURL(t *testing.T) {
 		t.Errorf("Origin() = %q", got)
 	}
 }
+
+func TestBootFailureShutsDownStartedProviders(t *testing.T) {
+	t.Parallel()
+
+	rec := &recorder{}
+	first := &testProvider{name: "first", rec: rec}
+	second := &testProvider{name: "second", rec: rec, fail: "boot"}
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithProviders(first, second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Boot(t.Context()); err == nil {
+		t.Fatal("Boot() = nil, want the second provider's error")
+	}
+
+	want := []string{"register:first", "register:second", "boot:first", "boot:second", "shutdown:first"}
+	if diff := cmp.Diff(want, rec.get()); diff != "" {
+		t.Errorf("provider calls (-want +got):\n%s", diff)
+	}
+}
+
+func TestRunShutsDownWhenHTTPRunnerFails(t *testing.T) {
+	t.Parallel()
+
+	rec := &recorder{}
+	p := &testProvider{name: "p", rec: rec}
+	ok := func(*web.Ctx) error { return nil }
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithProviders(p),
+		WithRoutes(func(r *router.Router, _ *App) error {
+			r.Get("/a/{x}", ok)
+			r.Get("/a/{y}", ok)
+
+			return nil
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Run(t.Context()); err == nil {
+		t.Fatal("Run() = nil, want the route build error")
+	}
+
+	want := []string{"register:p", "boot:p", "shutdown:p"}
+	if diff := cmp.Diff(want, rec.get()); diff != "" {
+		t.Errorf("provider calls (-want +got):\n%s", diff)
+	}
+}
+
+func TestBootFailureUnwindIsFinal(t *testing.T) {
+	t.Parallel()
+
+	rec := &recorder{}
+	first := &testProvider{name: "first", rec: rec}
+	failingStop := &testProvider{name: "stop", rec: rec, fail: "shutdown"}
+	last := &testProvider{name: "last", rec: rec, fail: "boot"}
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithProviders(first, failingStop, last))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A cancelled context (a signal during boot) must not skip the cleanup.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	bootErr := app.Boot(ctx)
+	if bootErr == nil || !strings.Contains(bootErr.Error(), "shutdown") {
+		t.Fatalf("Boot() = %v, want the boot error joined with the failing shutdown", bootErr)
+	}
+
+	if again := app.Boot(t.Context()); !errors.Is(again, bootErr) {
+		t.Errorf("second Boot() = %v, want %v", again, bootErr)
+	}
+
+	want := []string{
+		"register:first", "register:stop", "register:last",
+		"boot:first", "boot:stop", "boot:last", "shutdown:stop", "shutdown:first",
+	}
+	if diff := cmp.Diff(want, rec.get()); diff != "" {
+		t.Fatalf("provider calls after Boot (-want +got):\n%s", diff)
+	}
+
+	// A deferred or cleanup Shutdown after the failed boot must not stop
+	// the providers a second time.
+	if err := app.Shutdown(t.Context()); err != nil {
+		t.Errorf("Shutdown() after a failed boot = %v, want nil", err)
+	}
+
+	if diff := cmp.Diff(want, rec.get()); diff != "" {
+		t.Errorf("provider calls after Shutdown (-want +got):\n%s", diff)
+	}
+}

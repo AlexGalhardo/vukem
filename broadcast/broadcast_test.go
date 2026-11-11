@@ -639,3 +639,42 @@ func TestSecurity_A01_BroadcastPrivateChannelsAuthorized(t *testing.T) {
 		t.Errorf("POST status = %d, want 405", resp.StatusCode)
 	}
 }
+
+// downBroker cannot subscribe and counts the events published through it.
+type downBroker struct {
+	mu        sync.Mutex
+	published int
+}
+
+func (b *downBroker) Publish(context.Context, string, []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.published++
+
+	return nil
+}
+
+func (*downBroker) Subscribe(context.Context, ...string) (<-chan []byte, error) {
+	return nil, errors.New("broker down")
+}
+
+func TestSubscribeFailsWhenHubCannotSubscribe(t *testing.T) {
+	t.Parallel()
+
+	broker := &downBroker{}
+	b := newServer(t, broadcast.Config{Broker: broker})
+
+	sub, err := b.Subscribe(withUser(t.Context(), "7"), "presence-room.1")
+	if err == nil {
+		sub.Close()
+		t.Fatal("Subscribe() = nil error, want the broker failure")
+	}
+
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+
+	if broker.published != 0 {
+		t.Errorf("published = %d, want no presence event for a failed subscription", broker.published)
+	}
+}
