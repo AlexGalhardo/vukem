@@ -38,6 +38,35 @@ func (notFoundError) Error() string   { return "mongo: document not found" }
 func (notFoundError) HTTPStatus() int { return http.StatusNotFound }
 func (notFoundError) Unwrap() error   { return mongo.ErrNoDocuments }
 
+// ErrDuplicate is returned by writes that violate a unique index. A handler
+// that returns it answers 409; errors.Is(err, mongo.ErrDuplicate) matches, and
+// the driver's error stays reachable with errors.As.
+var ErrDuplicate error = duplicateError{}
+
+type duplicateError struct{}
+
+func (duplicateError) Error() string   { return "mongo: duplicate key" }
+func (duplicateError) HTTPStatus() int { return http.StatusConflict }
+
+// writeDuplicateError wraps the driver error; a pointer keeps errors.Is from
+// comparing the (possibly uncomparable) driver error by value.
+type writeDuplicateError struct{ err error }
+
+func (e *writeDuplicateError) Error() string        { return "mongo: duplicate key: " + e.err.Error() }
+func (e *writeDuplicateError) HTTPStatus() int      { return http.StatusConflict }
+func (e *writeDuplicateError) Unwrap() error        { return e.err }
+func (e *writeDuplicateError) Is(target error) bool { return target == ErrDuplicate }
+
+// mapWriteError wraps duplicate-key errors as ErrDuplicate; any other error,
+// and nil, pass through.
+func mapWriteError(err error) error {
+	if err != nil && mongo.IsDuplicateKeyError(err) {
+		return &writeDuplicateError{err: err}
+	}
+
+	return err
+}
+
 // Client is a connection pool bound to a database.
 type Client struct {
 	client *mongo.Client
@@ -201,7 +230,7 @@ func (c *Coll[T]) Count(ctx context.Context, filter any) (int64, error) {
 func (c *Coll[T]) Insert(ctx context.Context, doc T) (any, error) {
 	res, err := c.c.InsertOne(ctx, doc)
 	if err != nil {
-		return nil, err
+		return nil, mapWriteError(err)
 	}
 
 	return res.InsertedID, nil
@@ -211,7 +240,7 @@ func (c *Coll[T]) Insert(ctx context.Context, doc T) (any, error) {
 func (c *Coll[T]) InsertMany(ctx context.Context, docs []T) ([]any, error) {
 	res, err := c.c.InsertMany(ctx, docs)
 	if err != nil {
-		return nil, err
+		return nil, mapWriteError(err)
 	}
 
 	return res.InsertedIDs, nil
@@ -222,7 +251,7 @@ func (c *Coll[T]) InsertMany(ctx context.Context, docs []T) ([]any, error) {
 func (c *Coll[T]) UpdateOne(ctx context.Context, filter, update any) (matched, modified int64, err error) {
 	res, err := c.c.UpdateOne(ctx, filter, update)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, mapWriteError(err)
 	}
 
 	return res.MatchedCount, res.ModifiedCount, nil
@@ -232,7 +261,7 @@ func (c *Coll[T]) UpdateOne(ctx context.Context, filter, update any) (matched, m
 func (c *Coll[T]) UpdateMany(ctx context.Context, filter, update any) (matched, modified int64, err error) {
 	res, err := c.c.UpdateMany(ctx, filter, update)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, mapWriteError(err)
 	}
 
 	return res.MatchedCount, res.ModifiedCount, nil
@@ -242,7 +271,7 @@ func (c *Coll[T]) UpdateMany(ctx context.Context, filter, update any) (matched, 
 func (c *Coll[T]) ReplaceOne(ctx context.Context, filter any, doc T) (matched int64, err error) {
 	res, err := c.c.ReplaceOne(ctx, filter, doc)
 	if err != nil {
-		return 0, err
+		return 0, mapWriteError(err)
 	}
 
 	return res.MatchedCount, nil

@@ -110,3 +110,33 @@ func TestErrNotFoundIs404(t *testing.T) {
 		t.Fatalf("errors.Is(%v, ErrNotFound / mongo.ErrNoDocuments) = false", err)
 	}
 }
+
+func TestMapWriteErrorDuplicate(t *testing.T) {
+	t.Parallel()
+
+	dup := mongo.WriteException{WriteErrors: mongo.WriteErrors{{Code: 11000, Message: "E11000 duplicate key"}}}
+
+	err := mapWriteError(fmt.Errorf("insert: %w", dup))
+
+	if !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("errors.Is(%v, ErrDuplicate) = false", err)
+	}
+
+	var h interface{ HTTPStatus() int }
+	if !errors.As(err, &h) || h.HTTPStatus() != http.StatusConflict {
+		t.Errorf("HTTPStatus = %v, want 409", h)
+	}
+
+	if _, ok := errors.AsType[mongo.WriteException](err); !ok {
+		t.Error("errors.As cannot reach the driver's WriteException")
+	}
+
+	if got := mapWriteError(nil); got != nil {
+		t.Errorf("mapWriteError(nil) = %v", got)
+	}
+
+	other := errors.New("boom")
+	if got := mapWriteError(other); got != other { //nolint:errorlint // identity is the point
+		t.Errorf("mapWriteError(other) = %v, want it unchanged", got)
+	}
+}
