@@ -37,8 +37,8 @@ type Query {
 type Mutation { mutate: Boolean }
 `
 
-func validationSchema(t *testing.T) *Schema {
-	t.Helper()
+func validationSchema(tb testing.TB) *Schema {
+	tb.Helper()
 
 	opts := []Option{}
 	for _, f := range []string{"dog", "pet", "catOrDog", "findDog", "booleanList", "required", "int"} {
@@ -49,7 +49,7 @@ func validationSchema(t *testing.T) *Schema {
 
 	s, err := New(validationSDL, opts...)
 	if err != nil {
-		t.Fatalf("New(validation) error = %v", err)
+		tb.Fatalf("New(validation) error = %v", err)
 	}
 
 	return s
@@ -267,6 +267,25 @@ func TestValidation(t *testing.T) {
 			},
 		},
 		{
+			"conflicting args behind a different first parent",
+			`{ pet { ... on Cat { x: name(surname: true) } ... on Dog { x: name(surname: true) } ... on Dog { x: name(surname: false) } } }`,
+			[]string{
+				`Fields "x" conflict because they have differing arguments. Use different aliases on the fields to fetch both if this was intentional. (1:60) (1:98)`,
+			},
+		},
+		{
+			"same args on distinct objects",
+			`{ pet { ... on Cat { x: name(surname: true) } ... on Dog { x: name(surname: false) } } }`,
+			nil,
+		},
+		{
+			"one error per response key",
+			`{ dog { x: name(surname: true) x: name(surname: false) x: nickname x: barkVolume } }`,
+			[]string{
+				`Fields "x" conflict because they have differing arguments. Use different aliases on the fields to fetch both if this was intentional. (1:9) (1:32)`,
+			},
+		},
+		{
 			"different types allowed on distinct objects",
 			`{ pet { ... on Dog { x: barkVolume } ... on Cat { x: meowVolume } } }`,
 			nil,
@@ -318,6 +337,68 @@ func TestValidation(t *testing.T) {
 
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Errorf("validate(%q) (-want +got):\n%s", tt.query, diff)
+			}
+		})
+	}
+}
+
+// repeatedField returns a query selecting the same field n times under one
+// response key.
+func repeatedField(field string, n int) string {
+	return "{ dog { " + strings.Repeat("x: "+field+" ", n) + "} }"
+}
+
+func TestValidationRepeatedFieldsAreComparedOnce(t *testing.T) {
+	t.Parallel()
+
+	s := validationSchema(t)
+
+	for _, tt := range []struct {
+		name, query string
+		wantMax     int
+	}{
+		{"no arguments", repeatedField("name", 3000), 0},
+		{"same arguments", repeatedField("name(surname: true)", 1200), 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			doc, err := parseQuery(tt.query, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			v := &validator{s: s, doc: doc, frags: map[string]*fragmentDef{}, scopes: map[any]*scope{}}
+			v.selectionSet(doc.operations[0].sel, s.query, &scope{})
+
+			if len(v.errs) > 0 {
+				t.Errorf("errors = %v, want none", v.errs)
+			}
+
+			if v.comparisons > tt.wantMax {
+				t.Errorf("comparisons = %d, want at most %d", v.comparisons, tt.wantMax)
+			}
+		})
+	}
+}
+
+func BenchmarkValidateRepeatedField(b *testing.B) {
+	s := validationSchema(b)
+
+	for _, bc := range []struct{ name, query string }{
+		{"3000 x: name", repeatedField("name", 3000)},
+		{"1200 x: name(surname: true)", repeatedField("name(surname: true)", 1200)},
+	} {
+		doc, err := parseQuery(bc.query, 0)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		b.Run(bc.name, func(b *testing.B) {
+			for b.Loop() {
+				if errs := s.validate(doc, false); len(errs) > 0 {
+					b.Fatal(errs)
+				}
 			}
 		})
 	}

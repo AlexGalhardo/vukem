@@ -18,6 +18,8 @@ type validator struct {
 	introspection bool
 
 	scopes map[any]*scope // *operation or *fragmentDef
+
+	comparisons int // pairwise field comparisons made by mergeable, for tests
 }
 
 // scope collects what a definition uses, for the variable and fragment
@@ -678,11 +680,45 @@ func (v *validator) mergeable(sel []selection, parent *namedType) {
 	v.gather(sel, parent, groups, &order, map[string]bool{})
 
 	for _, key := range order {
-		fields := groups[key]
-		for i := 1; i < len(fields); i++ {
-			if msg := v.conflict(key, fields[0], fields[i]); msg != "" {
-				v.report(msg, fields[0].f.pos, fields[i].f.pos)
-				break
+		v.firstConflict(key, groups[key])
+	}
+}
+
+// fieldSignature identifies fields that cannot conflict with one another: the
+// same parent, field and arguments always select the same thing.
+type fieldSignature struct {
+	parent *namedType
+	name   string
+	args   string
+}
+
+// firstConflict reports the first conflicting pair among fields sharing key.
+// Fields with the same signature are compared once, through their first
+// occurrence, so a query repeating one field n times costs O(n) rather than
+// O(n²); distinct signatures that do not conflict need distinct object
+// parents, which the schema bounds. Every remaining pair is compared, since
+// fields[0] may have a different parent than two later fields that conflict
+// with each other.
+func (v *validator) firstConflict(key string, fields []keyedField) {
+	seen := make(map[fieldSignature]bool, len(fields))
+	reps := make([]keyedField, 0, len(fields))
+
+	for _, f := range fields {
+		sig := fieldSignature{f.parent, f.f.name, printArguments(f.f.args)}
+		if !seen[sig] {
+			seen[sig] = true
+
+			reps = append(reps, f)
+		}
+	}
+
+	for i := range reps {
+		for j := i + 1; j < len(reps); j++ {
+			v.comparisons++
+
+			if msg := v.conflict(key, reps[i], reps[j]); msg != "" {
+				v.report(msg, reps[i].f.pos, reps[j].f.pos)
+				return
 			}
 		}
 	}
