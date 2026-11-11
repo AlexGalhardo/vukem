@@ -34,7 +34,22 @@ func Driver() database.Driver {
 		Dialect: database.MySQL,
 		Schemes: []string{"mysql", "mariadb"},
 		DSN:     DSN,
+
+		IsUniqueViolation: isUniqueViolation,
 	}
+}
+
+// erDupEntry is ER_DUP_ENTRY, the code MySQL and MariaDB give a unique or
+// primary key violation. ER_DUP_UNIQUE (1169) is left out: it only comes
+// from internal temporary tables, never from a write to a user table.
+const erDupEntry = 1062
+
+// isUniqueViolation decides by the server's error number, never by the
+// message, which carries the duplicated value.
+func isUniqueViolation(err error) bool {
+	me, ok := errors.AsType[*gomysql.MySQLError](err)
+
+	return ok && me.Number == erDupEntry
 }
 
 // ErrInvalidURL is returned (wrapped) for URLs DSN cannot translate. The

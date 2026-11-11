@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -162,6 +163,36 @@ func TestSecurity_A04_MySQLRemoteRequiresTLS(t *testing.T) {
 		if got != want {
 			t.Errorf("DSN(%s) tls = %q, want %q", host, got, want)
 		}
+	}
+}
+
+func TestIsUniqueViolation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			"duplicate entry",
+			&gomysql.MySQLError{Number: 1062, Message: "Duplicate entry 'a' for key 'users.email'"},
+			true,
+		},
+		{"wrapped duplicate entry", fmt.Errorf("insert: %w", &gomysql.MySQLError{Number: 1062}), true},
+		{"other server error", &gomysql.MySQLError{Number: 1064, Message: "Duplicate entry in the text"}, false},
+		{"text only", errors.New("Error 1062 (23000): Duplicate entry"), false},
+		{"nil", nil, false},
+	}
+
+	for _, tt := range tests {
+		if got := isUniqueViolation(tt.err); got != tt.want {
+			t.Errorf("%s: isUniqueViolation = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+
+	if Driver().IsUniqueViolation == nil {
+		t.Error("Driver() does not set IsUniqueViolation")
 	}
 }
 
