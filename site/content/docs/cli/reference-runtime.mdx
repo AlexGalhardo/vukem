@@ -425,7 +425,7 @@ vukem codegen:models [-o file] [-pkg name] [-check]
 vukem codegen:models -check
 ```
 
-Without `WithModels` the command fails with `codegen:models: no models registered; pass vukem.WithModels(orm.ModelOf[T]()...)`. The file is deterministic (tables in name order, fields in struct order), so CI can run `-check`. See [the query builder](/docs/database).
+Without `WithModels` the command fails with `codegen:models: no models registered; pass vukem.WithModels(orm.ModelOf[T]()...)`. The file is deterministic (tables in name order, fields in struct order), so CI can run `-check`. See [the query builder](/docs/database/orm).
 
 ## `vukem codegen:routes`
 
