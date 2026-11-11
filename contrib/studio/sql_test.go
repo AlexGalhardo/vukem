@@ -700,3 +700,165 @@ func TestSecurity_A09_StudioConsoleWriteIsAuditedAndAtomic(t *testing.T) {
 		t.Errorf("the refused write was not audited: %s", logs.String())
 	}
 }
+
+// TestGridSQL runs the same cases on the three dialects: the filter operators,
+// keyset and offset paging and the page-size limits.
+func TestGridSQL(t *testing.T) {
+	t.Parallel()
+
+	users := sqlTables[0]
+
+	for _, d := range []database.Dialect{database.SQLite, database.Postgres, database.MySQL} {
+		q := d.Quote
+		ph := func(n int) string { return d.Placeholder(n) }
+		sel := "SELECT " + q("id") + ", " + q("name") + ", " + q("bio") + " FROM " + q("users")
+		like := func(col string, n int) string {
+			if database.MustCapabilities(d).Family == "postgres" {
+				col = "CAST(" + col + " AS TEXT)"
+			}
+
+			return col + " LIKE " + ph(n) + " ESCAPE '!'"
+		}
+
+		tests := []struct {
+			name  string
+			q     RowQuery
+			query string
+			args  []any
+		}{
+			{"no filter", RowQuery{}, sel + " ORDER BY " + q("id") + " LIMIT 51", nil},
+			{
+				"eq",
+				RowQuery{Filters: []Filter{{"name", "eq", "a"}}},
+				sel + " WHERE " + q("name") + " = " + ph(1) + " ORDER BY " + q("id") + " LIMIT 51",
+				[]any{"a"},
+			},
+			{
+				"ne",
+				RowQuery{Filters: []Filter{{"id", "ne", "1"}}},
+				sel + " WHERE " + q("id") + " <> " + ph(1) + " ORDER BY " + q("id") + " LIMIT 51",
+				[]any{"1"},
+			},
+			{
+				"lt",
+				RowQuery{Filters: []Filter{{"id", "lt", "1"}}},
+				sel + " WHERE " + q("id") + " < " + ph(1) + " ORDER BY " + q("id") + " LIMIT 51",
+				[]any{"1"},
+			},
+			{
+				"lte",
+				RowQuery{Filters: []Filter{{"id", "lte", "1"}}},
+				sel + " WHERE " + q("id") + " <= " + ph(1) + " ORDER BY " + q("id") + " LIMIT 51",
+				[]any{"1"},
+			},
+			{
+				"gt",
+				RowQuery{Filters: []Filter{{"id", "gt", "1"}}},
+				sel + " WHERE " + q("id") + " > " + ph(1) + " ORDER BY " + q("id") + " LIMIT 51",
+				[]any{"1"},
+			},
+			{
+				"gte",
+				RowQuery{Filters: []Filter{{"id", "gte", "1"}}},
+				sel + " WHERE " + q("id") + " >= " + ph(1) + " ORDER BY " + q("id") + " LIMIT 51",
+				[]any{"1"},
+			},
+			{
+				"contains",
+				RowQuery{Filters: []Filter{{"name", "contains", "50%_!"}}},
+				sel + " WHERE " + like(q("name"), 1) + " ORDER BY " + q("id") + " LIMIT 51",
+				[]any{"%50!%!_!!%"},
+			},
+			{
+				"starts",
+				RowQuery{Filters: []Filter{{"name", "starts", "a"}}},
+				sel + " WHERE " + like(q("name"), 1) + " ORDER BY " + q("id") + " LIMIT 51",
+				[]any{"a%"},
+			},
+			{
+				"null",
+				RowQuery{Filters: []Filter{{"bio", "null", ""}}},
+				sel + " WHERE " + q("bio") + " IS NULL ORDER BY " + q("id") + " LIMIT 51",
+				nil,
+			},
+			{
+				"notnull",
+				RowQuery{Filters: []Filter{{"bio", "notnull", ""}}},
+				sel + " WHERE " + q("bio") + " IS NOT NULL ORDER BY " + q("id") + " LIMIT 51",
+				nil,
+			},
+			{
+				"keyset",
+				RowQuery{After: []string{"7"}},
+				sel + " WHERE (" + q("id") + ") > (" + ph(1) + ") ORDER BY " + q("id") + " LIMIT 51",
+				[]any{"7"},
+			},
+			{
+				"keyset desc",
+				RowQuery{After: []string{"7"}, Desc: true},
+				sel + " WHERE (" + q("id") + ") < (" + ph(1) + ") ORDER BY " + q("id") + " DESC LIMIT 51",
+				[]any{"7"},
+			},
+			{
+				"sort by a column",
+				RowQuery{Sort: "name", Page: 2},
+				sel + " ORDER BY " + q("name") + ", " + q("id") + " LIMIT 51 OFFSET 50",
+				nil,
+			},
+			{"per page 0", RowQuery{PerPage: 0}, sel + " ORDER BY " + q("id") + " LIMIT 51", nil},
+			{"per page 50", RowQuery{PerPage: 50}, sel + " ORDER BY " + q("id") + " LIMIT 51", nil},
+			{"per page 9999", RowQuery{PerPage: 9999}, sel + " ORDER BY " + q("id") + " LIMIT 201", nil},
+		}
+
+		for _, tt := range tests {
+			query, args, err := buildRows(d, users, tt.q)
+			if err != nil {
+				t.Fatalf("%s/%s: %v", database.MustCapabilities(d).Family, tt.name, err)
+			}
+
+			if query != tt.query {
+				t.Errorf("%s/%s:\n got  %s\n want %s", database.MustCapabilities(d).Family, tt.name, query, tt.query)
+			}
+
+			if diff := cmp.Diff(tt.args, args); diff != "" {
+				t.Errorf("%s/%s args (-want +got):\n%s", database.MustCapabilities(d).Family, tt.name, diff)
+			}
+		}
+	}
+}
+
+// TestSecurity_A03_StudioEscapesCellHTML: a value, a column name and a console
+// result that hold HTML are shown as text on every page that prints them.
+func TestSecurity_A03_StudioEscapesCellHTML(t *testing.T) {
+	t.Parallel()
+
+	_, s, _, c := sqlStudio(t, false)
+
+	const payload = "<script>alert(1)</script>"
+
+	check := func(name, body string) {
+		t.Helper()
+
+		if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+			t.Errorf("%s does not escape the HTML: %q", name, body)
+		}
+	}
+
+	// users.bio of row 4 holds the payload.
+	_, body := get(s, c, "/s/db/t/users?f=bio:contains:alert")
+	check("the grid", body)
+
+	_, body = get(s, c, "/s/db/t/users/r?k=4")
+	check("the row page", body)
+
+	code, body := postConsole(
+		s,
+		c,
+		url.Values{"sql": {"SELECT bio, 1 AS \"<script>alert(1)</script>\" FROM users WHERE id = 4"}},
+	)
+	if code != 200 {
+		t.Fatalf("console = %d", code)
+	}
+
+	check("the console result", body)
+}
