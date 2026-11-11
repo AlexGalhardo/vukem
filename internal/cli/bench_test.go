@@ -1,16 +1,20 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -518,5 +522,219 @@ func TestBenchForwardsYes(t *testing.T) {
 	code, out, errOut := vukem(t, dir, "bench", "-database-url", "postgres://x/y", "-yes")
 	if code != 0 || out != "app: bench:run -database-url=postgres://x/y -yes=true\n" {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
+	}
+}
+
+func TestBenchReportWritesHTML(t *testing.T) {
+	t.Parallel()
+
+	srv := benchServer(t, nil)
+	dir := t.TempDir()
+
+	if code, _, errOut := vukem(t, dir, "bench", "-n", "50", "-report", "out.html", srv.URL+"/"); code != 0 {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+
+	b, err := os.ReadFile(filepath.Join(dir, "out.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := string(b)
+	if !strings.Contains(html, "<svg") || strings.Contains(html, "<script") || strings.Contains(html, "http://") {
+		t.Fatalf("the report is not a self-contained page with charts: %.300s", html)
+	}
+}
+
+func TestBenchReportFailureIsAnError(t *testing.T) {
+	t.Parallel()
+
+	srv := benchServer(t, nil)
+
+	if code, _, errOut := vukem(
+		t,
+		t.TempDir(),
+		"bench",
+		"-n",
+		"5",
+		"-report",
+		filepath.Join("missing", "out.html"),
+		srv.URL+"/",
+	); code != 1 ||
+		!strings.Contains(errOut, "report") {
+		t.Fatalf("code=%d err=%q, want a failure that names the report", code, errOut)
+	}
+}
+
+// interactive runs the CLI as in a terminal, with a cancellable context and a stderr the test can watch.
+func interactive(ctx context.Context, dir string, stderr io.Writer, args ...string) int {
+	var out bytes.Buffer
+
+	return Run(ctx, args, Env{
+		Dir: dir, Stdout: &out, Stderr: stderr, Interactive: true, Now: fixedNow, Version: "v0.0.0-test",
+	})
+}
+
+func TestBenchUIRejectsJSON(t *testing.T) {
+	t.Parallel()
+
+	srv := benchServer(t, nil)
+
+	var errOut bytes.Buffer
+
+	if code := interactive(t.Context(), t.TempDir(), &errOut, "bench", "-ui", "-json", srv.URL+"/"); code != 2 {
+		t.Fatalf("-ui -json = %d (%s), want a usage error", code, errOut.String())
+	}
+}
+
+func TestBenchUINeedsTerminal(t *testing.T) {
+	t.Parallel()
+
+	srv := benchServer(t, nil)
+
+	code, _, errOut := vukem(t, t.TempDir(), "bench", "-ui", "-n", "1", srv.URL+"/")
+	if code != 2 || !strings.Contains(errOut, "--ui needs an interactive terminal; use --report in CI") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+func TestBenchUIOptionsNeedUI(t *testing.T) {
+	t.Parallel()
+
+	srv := benchServer(t, nil)
+
+	for _, extra := range [][]string{{"-ui-port", "9"}, {"-no-open"}} {
+		var errOut bytes.Buffer
+
+		args := append([]string{"bench", "-n", "1"}, extra...)
+		args = append(args, srv.URL+"/")
+
+		if code := interactive(t.Context(), t.TempDir(), &errOut, args...); code != 2 {
+			t.Errorf("%v without -ui = %d, want a usage error", extra, code)
+		}
+	}
+}
+
+// signalWriter is a stderr that reports each line the command prints.
+type signalWriter struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	lines chan string
+}
+
+func (s *signalWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	s.buf.Write(p)
+	s.mu.Unlock()
+
+	for line := range strings.SplitSeq(string(p), "\n") {
+		if line != "" {
+			select {
+			case s.lines <- line:
+			default:
+			}
+		}
+	}
+
+	return len(p), nil
+}
+
+func TestBenchUIServesDashboard(t *testing.T) {
+	t.Parallel()
+
+	srv := benchServer(t, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	defer cancel()
+
+	errOut := &signalWriter{lines: make(chan string, 64)}
+	done := make(chan int, 1)
+
+	go func() {
+		code := interactive(ctx, t.TempDir(), errOut, "bench", "-ui", "-no-open", "-d", "1s", "-c", "2", srv.URL+"/")
+		done <- code
+	}()
+
+	var url string
+
+	timeout := time.After(30 * time.Second)
+
+	for url == "" {
+		select {
+		case line := <-errOut.lines:
+			if rest, ok := strings.CutPrefix(line, "dashboard  "); ok {
+				url = strings.TrimSpace(rest)
+			}
+		case <-timeout:
+			t.Fatal("no dashboard line on stderr")
+		}
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the dashboard answered %d", resp.StatusCode)
+	}
+
+	// The run ends after a second; the process then waits for the user. Wait for the dashboard to say finished.
+	deadline := time.Now().Add(30 * time.Second)
+	base, _, _ := strings.Cut(url, "/?")
+
+	for {
+		resp, err := client.Get(base + "/summary.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		b, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		// Only the final summary carries the concurrency of the run: the run is over and the process is waiting.
+		if strings.Contains(string(b), `"concurrency": 2`) && !strings.Contains(string(b), `"http_reqs": 0,`) {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("the summary never filled: %s", b)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	select {
+	case code := <-done:
+		t.Fatalf("the command exited (%d) before the user quit", code)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	cancel()
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("exit code = %d after quitting, want 0", code)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the command did not exit after Ctrl+C")
+	}
+}
+
+func TestLiveurlDropsCredentialsQueryAndFragment(t *testing.T) {
+	t.Parallel()
+
+	if got := liveurl("http://user:pw@127.0.0.1:3000/posts?token=abc#frag"); got != "http://127.0.0.1:3000/posts" {
+		t.Fatalf("liveurl = %q", got)
 	}
 }

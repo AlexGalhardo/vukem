@@ -104,6 +104,10 @@ func parseTarget(rawURL string, allow []string) (*url.URL, error) {
 		host, host)
 }
 
+// IsLoopbackHost reports whether the host of hostport (a bare host or host:port) is localhost, a *.localhost name or a
+// loopback IP literal. The live dashboard uses it to refuse any other Host header.
+func IsLoopbackHost(hostport string) bool { return loopbackHost(hostport) }
+
 // loopbackHost reports localhost, *.localhost and loopback IP literals.
 func loopbackHost(hostport string) bool {
 	host, _, err := net.SplitHostPort(hostport)

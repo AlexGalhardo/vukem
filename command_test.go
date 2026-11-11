@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1155,5 +1156,214 @@ func TestSecurity_A05_BenchRunDatabaseURLNeedsConfirmation(t *testing.T) {
 		"--database-url", "postgres://user:pw@db.internal/app", "-d", "1s")
 	if !errors.Is(err, errUsage) || c.setups.Load() != 0 {
 		t.Fatalf("err = %v setups=%d, want a usage error before anything starts", err, c.setups.Load())
+	}
+}
+
+func TestBenchRunReport(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "report.html")
+
+	var c benchEnvCapture
+
+	if _, errOut, err := runBenchMain(
+		t,
+		nil,
+		[]BenchScenario{c.scenario("ping", nil)},
+		"-d",
+		"500ms",
+		"-c",
+		"1",
+		"--report",
+		path,
+	); err != nil {
+		t.Fatalf("err = %v, stderr %q", err, errOut)
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(b), "<svg") || !strings.Contains(string(b), "ping") ||
+		strings.Contains(string(b), "<script") {
+		t.Fatalf("report = %.300s", b)
+	}
+}
+
+// benchStderr reports each line the command prints on stderr.
+type benchStderr struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	lines chan string
+}
+
+func (b *benchStderr) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	b.buf.Write(p)
+	b.mu.Unlock()
+
+	for line := range strings.SplitSeq(string(p), "\n") {
+		if line != "" {
+			select {
+			case b.lines <- line:
+			default:
+			}
+		}
+	}
+
+	return len(p), nil
+}
+
+// runBenchDirect calls runBench as a terminal user would, with a context the test can cancel.
+func runBenchDirect(
+	ctx context.Context,
+	interactive bool,
+	scenarios []BenchScenario,
+	stderr io.Writer,
+	args ...string,
+) error {
+	var out bytes.Buffer
+
+	getenv := func(k string) (string, bool) {
+		v, ok := map[string]string{"APP_KEY": testKey}[k]
+
+		return v, ok
+	}
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts,
+			WithLogger(discardLogger()), WithStdout(&out), WithStderr(stderr), WithBench(scenarios...),
+			WithRoutes(func(r *router.Router, _ *App) error {
+				r.Get("/ping", func(c *web.Ctx) error { return c.String(http.StatusOK, "pong") }).Name("ping")
+
+				return nil
+			}),
+		)...)
+	}
+
+	return runBench(ctx, args, getenv, build, nil, interactive)
+}
+
+func TestBenchRunUIFlagChecks(t *testing.T) {
+	t.Parallel()
+
+	var c benchEnvCapture
+
+	scenarios := []BenchScenario{c.scenario("ping", nil)}
+
+	if err := runBenchDirect(t.Context(), false, scenarios, io.Discard, "--ui", "-d", "1s"); !errors.Is(err, errUsage) {
+		t.Errorf("--ui without a terminal = %v, want a usage error", err)
+	}
+
+	if err := runBenchDirect(
+		t.Context(),
+		true,
+		scenarios,
+		io.Discard,
+		"--ui",
+		"--json",
+		"-d",
+		"1s",
+	); !errors.Is(
+		err,
+		errUsage,
+	) {
+		t.Errorf("--ui --json = %v, want a usage error", err)
+	}
+
+	for _, flagName := range []string{"--ui-port=9", "--no-open"} {
+		if err := runBenchDirect(
+			t.Context(),
+			true,
+			scenarios,
+			io.Discard,
+			flagName,
+			"-d",
+			"1s",
+		); !errors.Is(
+			err,
+			errUsage,
+		) {
+			t.Errorf("%s without --ui = %v, want a usage error", flagName, err)
+		}
+	}
+
+	if c.setups.Load() != 0 {
+		t.Error("the app was set up before the flags were checked")
+	}
+}
+
+func TestBenchRunUIServesDashboard(t *testing.T) {
+	t.Parallel()
+
+	var c benchEnvCapture
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	defer cancel()
+
+	errOut := &benchStderr{lines: make(chan string, 64)}
+	done := make(chan error, 1)
+
+	go func() {
+		done <- runBenchDirect(ctx, true, []BenchScenario{c.scenario("ping", nil)}, errOut, "--ui", "--no-open", "-d", "1s", "-c", "2")
+	}()
+
+	var url string
+
+	timeout := time.After(30 * time.Second)
+
+	for url == "" {
+		select {
+		case line := <-errOut.lines:
+			if rest, ok := strings.CutPrefix(line, "dashboard  "); ok {
+				url = strings.TrimSpace(rest)
+			}
+		case <-timeout:
+			t.Fatal("no dashboard line on stderr")
+		}
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the dashboard answered %d", resp.StatusCode)
+	}
+
+	// The run lasts a second; after it the process must wait for the user.
+	time.Sleep(1800 * time.Millisecond)
+
+	select {
+	case err := <-done:
+		t.Fatalf("the command returned (%v) before the user quit", err)
+	default:
+	}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("after quitting: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the command did not return after Ctrl+C")
+	}
+
+	if c.ran.Load() == 0 {
+		t.Error("the scenario never ran")
 	}
 }

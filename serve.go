@@ -299,7 +299,7 @@ func RunMain(ctx context.Context, args []string, getenv func(string) (string, bo
 
 	// Like key:generate, bench:run is resolved before build: it builds the app itself, on its own database.
 	if cmd == benchRunName {
-		return runBench(ctx, rest, getenv, build, opts)
+		return runBench(ctx, rest, getenv, build, opts, stdinIsTerminal())
 	}
 
 	base := []Option{WithEnv(osDirFS("."), getenv)}

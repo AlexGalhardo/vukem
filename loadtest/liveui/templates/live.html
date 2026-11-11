@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vukem bench</title>
+<link rel="stylesheet" href="/assets/live.css">
+<script src="/assets/live.js" defer></script>
+</head>
+<body>
+<header>
+	<h1>vukem bench</h1>
+	<p class="subtitle" id="title">connecting</p>
+	<span class="badge running" id="status">connecting</span>
+	<span class="meta" id="elapsed">0:00</span>
+</header>
+
+<div class="cards">
+	<div class="card"><span class="value" id="card-rps">-</span><span class="label">requests per second</span></div>
+	<div class="card"><span class="value" id="card-p95">-</span><span class="label">p95 latency</span></div>
+	<div class="card"><span class="value" id="card-failed">-</span><span class="label">failed</span></div>
+	<div class="card"><span class="value" id="card-target">-</span><span class="label" id="card-target-label">target</span></div>
+</div>
+
+<div class="charts">
+	<figure>
+		<svg viewBox="0 0 600 160" role="img" aria-labelledby="t-throughput"><title id="t-throughput">Throughput, requests per second</title><g id="chart-throughput"></g></svg>
+		<figcaption>Throughput (requests per second)</figcaption>
+	</figure>
+	<figure>
+		<svg viewBox="0 0 600 160" role="img" aria-labelledby="t-latency"><title id="t-latency">Latency percentiles per second, in milliseconds</title><g id="chart-latency"></g></svg>
+		<figcaption>Latency (ms): p50 solid, p95 dashed, p99 dotted</figcaption>
+	</figure>
+	<figure>
+		<svg viewBox="0 0 600 160" role="img" aria-labelledby="t-failures"><title id="t-failures">Failed requests per second</title><g id="chart-failures"></g></svg>
+		<figcaption>Failures (requests per second)</figcaption>
+	</figure>
+	<figure>
+		<svg viewBox="0 0 600 160" role="img" aria-labelledby="t-load"><title id="t-load">Requests in flight and target load</title><g id="chart-load"></g></svg>
+		<figcaption>In flight (solid) and target (dashed)</figcaption>
+	</figure>
+</div>
+
+<section>
+	<h2>Thresholds</h2>
+	<ul id="thresholds"><li class="empty">none set</li></ul>
+</section>
+
+<section>
+	<h2>Requests</h2>
+	<table>
+		<thead><tr><th>name</th><th>reqs</th><th>failed</th><th>p50</th><th>p95</th><th>p99</th></tr></thead>
+		<tbody id="names"></tbody>
+	</table>
+</section>
+
+<section>
+	<h2>Latency histogram</h2>
+	<svg viewBox="0 0 600 120" role="img" aria-labelledby="t-histogram"><title id="t-histogram">Latency histogram</title><g id="chart-histogram"></g></svg>
+</section>
+
+<footer>
+	<a href="/report.html" download>Download report</a>
+	<a href="/summary.json">Summary (JSON)</a>
+	<span>read-only: stop the run with Ctrl+C in the terminal</span>
+</footer>
+</body>
+</html>
