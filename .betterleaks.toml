@@ -28,6 +28,7 @@ regexes = [
 	'''^(hunter2|s3cret|secret|password|pass|pw|test|guess|wrong|short|app|vukem|lumek|not used)$''',
 	'''^p%40ss$''',
 	'''^(longenough|a very long one)$''',
+	'''^_etc_passwd\.jsonl$''',
 	'''(?i)^(a brand new|another long|wrong|not my) password$''',
 	'''testPassword''',
 	'''\.\.\.$''',
