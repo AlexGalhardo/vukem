@@ -26,11 +26,6 @@ import (
 // URLs follow drivers/postgres and drivers/mysql: POSTGRES_URL, MYSQL_URL and
 // MARIADB_URL, by default the compose services.
 
-// skipKnownBugs skips the test of a bug in the studio code that is reported
-// and not fixed yet (this file only adds tests); the fix commit sets it to
-// false or deletes it.
-const skipKnownBugs = false
-
 type itServer struct {
 	name, url string
 	driver    database.Option
@@ -399,14 +394,25 @@ func TestIntegrationCatalogThroughSchemaInspect(t *testing.T) {
 	})
 }
 
-// refused runs st on the read-only console and says whether it was refused
-// with the masked error.
+// refused runs st on the read-only console and checks it did not run: the
+// verb check refuses it (an input error) before it reaches the server.
 func refused(t *testing.T, e *itEnv, st string) {
 	t.Helper()
 
 	_, err := e.src.Query(t.Context(), st, false)
+	if !errors.Is(err, errInput) {
+		t.Errorf("the read-only console did not refuse %q before running it: %v", st, err)
+	}
+}
+
+// refusedByServer runs st past the verb check, on the read-only barrier of the
+// dialect alone, and checks the database refused it with the masked error.
+func refusedByServer(t *testing.T, e *itEnv, st string) {
+	t.Helper()
+
+	_, err := e.src.exec(t.Context(), st, false)
 	if err == nil {
-		t.Errorf("the read-only console ran %q", st)
+		t.Errorf("the read-only transaction ran %q", st)
 		return
 	}
 
@@ -426,12 +432,16 @@ func TestIntegrationConsoleIsReadOnly(t *testing.T) {
 		}
 
 		if e.fam == "postgres" {
-			statements = append(statements,
-				"WITH d AS (DELETE FROM "+e.items+" RETURNING id) SELECT * FROM d")
+			// It starts with WITH, so only the read-only transaction can stop it.
+			st := "WITH d AS (DELETE FROM " + e.items + " RETURNING id) SELECT * FROM d"
+			if _, err := e.src.Query(t.Context(), st, false); err == nil {
+				t.Errorf("the read-only console ran %q", st)
+			}
 		}
 
 		for _, st := range statements {
 			refused(t, e, st)
+			refusedByServer(t, e, st)
 		}
 
 		if n := e.count(t, e.items); n != 8 {
@@ -445,17 +455,12 @@ func TestIntegrationConsoleIsReadOnly(t *testing.T) {
 	})
 }
 
-// DDL is refused on PostgreSQL by the read-only transaction. MySQL and MariaDB
-// commit implicitly before a DDL statement, which ends the read-only
-// transaction the console opened, so the statement runs: bug in Query.
+// MySQL and MariaDB commit implicitly before a DDL statement, which ends the
+// read-only transaction the console opened, so the read-only console refuses
+// everything that is not a read before it reaches the server.
 func TestIntegrationConsoleIsReadOnlyForDDL(t *testing.T) {
 	eachServer(t, func(t *testing.T, e *itEnv) {
 		t.Helper()
-
-		if e.fam == "mysql" && skipKnownBugs {
-			t.Skip("bug: the read-only console of MySQL/MariaDB runs CREATE/ALTER/TRUNCATE/DROP TABLE: " +
-				"the implicit commit before DDL ends the READ ONLY transaction")
-		}
 
 		ddl := "sit_ddl_" + e.suffix
 
