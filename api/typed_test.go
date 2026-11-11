@@ -423,10 +423,41 @@ func TestRegisterWithPanicsAtBoot(t *testing.T) {
 	}
 }
 
-// TestRegisterWithKeepsTagDerivedOpenAPI guards the documentation: the
-// OpenAPI document comes from the input and output types, so a custom schema
-// must leave it byte-identical to the one Register produces.
-func TestRegisterWithKeepsTagDerivedOpenAPI(t *testing.T) {
+// TestRegisterWithExposesSchema checks the schema given to RegisterWith
+// reaches the route's Operation, so document generators can describe it;
+// Register, which derives its schema from tags, leaves it nil.
+func TestRegisterWithExposesSchema(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.RegisterWith(
+		r,
+		"POST /keys",
+		api.Op{Name: "keys.store"},
+		runtimeKeySchema([]string{"read", "write"}),
+		keyHandler,
+	)
+	api.Register(r, "POST /tagged", api.Op{Name: "keys.tagged"}, keyHandler)
+
+	ops := map[string]*api.Operation{}
+	for _, rt := range r.Routes() {
+		ops[rt.Name] = rt.Doc.(*api.Operation)
+	}
+
+	if ops["keys.store"].Schema == nil {
+		t.Error("RegisterWith Operation.Schema = nil, want the given schema")
+	}
+
+	if ops["keys.tagged"].Schema != nil {
+		t.Errorf("Register Operation.Schema = %v, want nil", ops["keys.tagged"].Schema)
+	}
+}
+
+// TestRegisterWithSchemaReachesOpenAPI checks the document describes what
+// the RegisterWith schema enforces, not only In's tags: the runtime bound on
+// abilities shows up, the tag rules still hold, and the refinement, which has
+// no JSON Schema form, leaves no trace.
+func TestRegisterWithSchemaReachesOpenAPI(t *testing.T) {
 	t.Parallel()
 
 	build := func(register func(r *router.Router)) string {
@@ -456,12 +487,18 @@ func TestRegisterWithKeepsTagDerivedOpenAPI(t *testing.T) {
 			runtimeKeySchema([]string{"read", "write"}), keyHandler)
 	})
 
-	if diff := cmp.Diff(tagged, custom); diff != "" {
-		t.Errorf("document (-Register +RegisterWith):\n%s", diff)
+	for _, want := range []string{`"minItems": 1`, `"maxItems": 2`, `"maxLength": 20`} {
+		if !strings.Contains(custom, want) {
+			t.Errorf("RegisterWith document lacks %s:\n%s", want, custom)
+		}
 	}
 
-	if !strings.Contains(custom, `"maxLength": 20`) {
-		t.Errorf("document lost the tag-derived rules:\n%s", custom)
+	if cmp.Equal(tagged, custom) {
+		t.Error("RegisterWith document = Register document, want the schema's rules in it")
+	}
+
+	if strings.Contains(custom, "svc-") {
+		t.Errorf("document carries the refinement text:\n%s", custom)
 	}
 }
 

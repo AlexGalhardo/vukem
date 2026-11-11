@@ -210,7 +210,7 @@ func tagCore(rt reflect.Type, depth int) structCore {
 			continue // json:"-"
 		}
 
-		rules, crossRules := splitCross(splitRules(f.Tag.Get("validate")))
+		rules, crossRules := splitCross(SplitRules(f.Tag.Get("validate")))
 		for _, r := range crossRules {
 			cross = append(cross, crossTag{owner: keys[0], rule: r})
 		}
@@ -226,9 +226,10 @@ func tagCore(rt reflect.Type, depth int) structCore {
 	return newStructCore(rt, shape).withCrossRules(rt.String(), cross)
 }
 
-// splitRules splits "required,min=3,regex=^a,b$" keeping regex last and
-// whole.
-func splitRules(tag string) []string {
+// SplitRules splits a `validate` tag into its rules: "required,min=3,regex=^a,b$"
+// gives required, min=3 and regex=^a,b$. A regex= rule is last and keeps its
+// commas.
+func SplitRules(tag string) []string {
 	if tag == "" {
 		return nil
 	}
