@@ -197,7 +197,7 @@ func TestDoctorAppEnvCheck(t *testing.T) {
 		{"in .env", "APP_ENV=development\n", "", "ok"},
 		{"in the process environment", "APP_KEY=\n", "production", "ok"},
 		{"test", "APP_ENV=test\n", "", "ok"},
-		{"mixed case like the boot", "APP_ENV=Production\n", "", "ok"},
+		{"mixed case is refused like the boot", "APP_ENV=Production\n", "", "fail"},
 		{"invalid in .env", "APP_ENV=staging\n", "", "fail"},
 		{"invalid in the process environment", "APP_KEY=\n", "prod", "fail"},
 	} {
