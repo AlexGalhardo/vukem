@@ -426,7 +426,10 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 	}
 
 	where, wargs := q.whereSQL()
-	query, err := renumber("UPDATE "+q.quote(q.m.table)+" SET "+strings.Join(sets, ", ")+where, q.ex.Dialect())
+	query, err := renumber(
+		"UPDATE "+q.quote(q.m.table)+" SET "+strings.Join(sets, ", ")+q.resolve(where),
+		q.ex.Dialect(),
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -441,6 +444,10 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 
 // limited reports a write that would silently ignore its row limit.
 func (q Query[T]) limited(op string) error {
+	if len(q.joins) > 0 || len(q.groups) > 0 {
+		return fmt.Errorf("orm: %s does not support joins or grouping; filter with WhereHas or WhereInQuery", op)
+	}
+
 	if len(q.orders) > 0 || q.limit >= 0 || q.offset > 0 {
 		return fmt.Errorf("orm: %s applies to every matching row; remove OrderBy, Limit and Offset", op)
 	}
@@ -470,7 +477,7 @@ func (q Query[T]) Delete(ctx context.Context) (int64, error) {
 
 	where, args := q.whereSQL()
 
-	query, err := renumber("DELETE FROM "+q.quote(q.m.table)+where, q.ex.Dialect())
+	query, err := renumber("DELETE FROM "+q.quote(q.m.table)+q.resolve(where), q.ex.Dialect())
 	if err != nil {
 		return 0, err
 	}

@@ -130,6 +130,8 @@ func Run(t *testing.T, db *database.DB) {
 	run("ORM", testORM)
 	run("Transactions", testTransactions)
 	run("Relations", testRelations)
+	run("QueryFeatures", testQueryFeatures)
+	run("Upsert", testUpsert)
 	run("SchemaAlter", testAlter)
 	run("Queue", testQueue)
 	run("BulkLocksChecks", testBulkLocksChecks)
@@ -143,7 +145,7 @@ func clean(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
 	s := schema.New(ctx, db)
-	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks", "dbt_conflict"} {
+	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks", "dbt_conflict", "dbt_upserts", "dbt_trash_upserts", "dbt_qbook_tag", "dbt_qreviews", "dbt_qtags", "dbt_qbooks", "dbt_qauthors"} {
 		if err := s.DropIfExists(table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}

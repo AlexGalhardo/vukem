@@ -52,13 +52,21 @@ type Query[T any] struct {
 	limit   int
 	offset  int
 	trashed int // 0 exclude, 1 include, 2 only
-	with    []string
+	withs   []withSpec
 	lock    string // "", "UPDATE" or "SHARE"
 	wait    string // "", "SKIP LOCKED" or "NOWAIT"
 	// maxPerPage bounds Paginate and CursorPaginate; 0 means
 	// DefaultMaxPerPage.
 	maxPerPage int
 	err        error
+
+	joins    []join   // InnerJoin/LeftJoin, in call order
+	scope    []*meta  // metas of joined models, for column validation
+	exprs    []string // SelectAs/SelectExpr, rendered
+	distinct bool     // SELECT DISTINCT
+	groups   []string // GroupBy columns
+	havings  []cond   // Having/HavingRaw
+	counts   []string // WithCount relation names
 }
 
 // QueryOf starts a query for model T on ex.
@@ -71,6 +79,13 @@ func (q Query[T]) clone() Query[T] {
 	q.conds = slices.Clip(q.conds)
 	q.orders = slices.Clip(q.orders)
 	q.keys = slices.Clip(q.keys)
+	q.withs = slices.Clip(q.withs)
+	q.joins = slices.Clip(q.joins)
+	q.scope = slices.Clip(q.scope)
+	q.exprs = slices.Clip(q.exprs)
+	q.groups = slices.Clip(q.groups)
+	q.havings = slices.Clip(q.havings)
+	q.counts = slices.Clip(q.counts)
 
 	return q
 }
@@ -88,7 +103,7 @@ func (q Query[T]) Select(cols ...string) Query[T] {
 	q = q.clone()
 
 	for _, c := range cols {
-		col, err := q.m.column(c)
+		col, err := q.column(c)
 		if err != nil {
 			return q.fail(err)
 		}
@@ -107,7 +122,7 @@ func (q Query[T]) Where(col string, args ...any) Query[T] { return q.where(false
 func (q Query[T]) OrWhere(col string, args ...any) Query[T] { return q.where(true, col, args) }
 
 func (q Query[T]) where(or bool, colName string, args []any) Query[T] {
-	col, err := q.m.column(colName)
+	col, err := q.column(colName)
 	if err != nil {
 		return q.fail(err)
 	}
@@ -141,13 +156,13 @@ func (q Query[T]) where(or bool, colName string, args []any) Query[T] {
 	if val == nil {
 		switch op {
 		case "=":
-			return q.addCond(or, q.quote(col)+" IS NULL")
+			return q.addCond(or, q.tok(col)+" IS NULL")
 		case "!=", "<>":
-			return q.addCond(or, q.quote(col)+" IS NOT NULL")
+			return q.addCond(or, q.tok(col)+" IS NOT NULL")
 		}
 	}
 
-	return q.addCond(or, q.quote(col)+" "+op+" ?", val)
+	return q.addCond(or, q.tok(col)+" "+op+" ?", val)
 }
 
 func (q Query[T]) addCond(or bool, sqlFrag string, args ...any) Query[T] {
@@ -186,7 +201,7 @@ func (q Query[T]) OrWhereNotIn(col string, values ...any) Query[T] {
 }
 
 func (q Query[T]) whereIn(or bool, colName string, values []any, not bool) Query[T] {
-	col, err := q.m.column(colName)
+	col, err := q.column(colName)
 	if err != nil {
 		return q.fail(err)
 	}
@@ -211,7 +226,7 @@ func (q Query[T]) whereIn(or bool, colName string, values []any, not bool) Query
 		kw = " NOT IN ("
 	}
 
-	return q.addCond(or, q.quote(col)+kw+marks(len(values))+")", values...)
+	return q.addCond(or, q.tok(col)+kw+marks(len(values))+")", values...)
 }
 
 // flatten expands a single slice argument: WhereIn("id", ids) or WhereIn("id", 1, 2).
@@ -256,12 +271,12 @@ func (q Query[T]) OrWhereBetween(colName string, low, high any) Query[T] {
 }
 
 func (q Query[T]) whereBetween(or bool, colName string, low, high any) Query[T] {
-	col, err := q.m.column(colName)
+	col, err := q.column(colName)
 	if err != nil {
 		return q.fail(err)
 	}
 
-	return q.addCond(or, q.quote(col)+" BETWEEN ? AND ?", low, high)
+	return q.addCond(or, q.tok(col)+" BETWEEN ? AND ?", low, high)
 }
 
 // WhereRaw adds a raw condition. It must use "?" placeholders for every
@@ -283,6 +298,10 @@ func (q Query[T]) OrWhereRaw(sqlFrag string, args ...any) Query[T] {
 }
 
 func (q Query[T]) whereRaw(or bool, sqlFrag string, args []any) Query[T] {
+	if !rawFragmentOK(sqlFrag) {
+		return q.fail(errors.New("orm: WhereRaw fragment holds a reserved control character"))
+	}
+
 	dialect := ""
 	if q.ex != nil {
 		dialect = capsOf(q.ex).Family
@@ -355,7 +374,7 @@ func joinConds(conds []cond) (string, []any) {
 
 // OrderBy adds an ORDER BY column (validated) and direction.
 func (q Query[T]) OrderBy(colName string, dir Direction) Query[T] {
-	col, err := q.m.column(colName)
+	col, err := q.column(colName)
 	if err != nil {
 		return q.fail(err)
 	}
@@ -365,7 +384,7 @@ func (q Query[T]) OrderBy(colName string, dir Direction) Query[T] {
 	}
 
 	q = q.clone()
-	q.orders = append(q.orders, q.quote(col)+" "+string(dir))
+	q.orders = append(q.orders, q.tok(col)+" "+string(dir))
 	q.keys = append(q.keys, orderKey{col, dir})
 
 	return q
@@ -485,9 +504,9 @@ func (q Query[T]) whereSQL() (string, []any) {
 	if q.m.soft {
 		switch q.trashed {
 		case 0:
-			conds = append([]cond{{sql: q.quote("deleted_at") + " IS NULL"}}, wrapOr(conds)...)
+			conds = append([]cond{{sql: q.tok("deleted_at") + " IS NULL"}}, wrapOr(conds)...)
 		case 2:
-			conds = append([]cond{{sql: q.quote("deleted_at") + " IS NOT NULL"}}, wrapOr(conds)...)
+			conds = append([]cond{{sql: q.tok("deleted_at") + " IS NOT NULL"}}, wrapOr(conds)...)
 		}
 	}
 
@@ -527,10 +546,50 @@ func (q Query[T]) selectSQL(cols string) (string, []any, error) {
 		return "", nil, err
 	}
 
+	text, args := q.rawSelectSQL(cols)
+
+	s, err := renumber(text, q.ex.Dialect())
+
+	return s, args, err
+}
+
+// rawSelectSQL renders the SELECT with "?" placeholders, the column markers
+// resolved, so a subquery can be embedded in an outer statement that is
+// renumbered once.
+func (q Query[T]) rawSelectSQL(cols string) (string, []any) {
 	where, args := q.whereSQL()
 
 	var b strings.Builder
-	b.WriteString("SELECT " + cols + " FROM " + q.quote(q.m.table) + where)
+
+	b.WriteString("SELECT ")
+
+	if q.distinct {
+		b.WriteString("DISTINCT ")
+	}
+
+	b.WriteString(cols + " FROM " + q.quote(q.m.table))
+
+	for _, j := range q.joins {
+		b.WriteString(" " + j.kind + " JOIN " + q.quote(j.table) + " ON " + j.on)
+	}
+
+	b.WriteString(where)
+
+	if len(q.groups) > 0 {
+		toks := make([]string, len(q.groups))
+		for i, g := range q.groups {
+			toks[i] = q.tok(g)
+		}
+
+		b.WriteString(" GROUP BY " + strings.Join(toks, ", "))
+	}
+
+	if len(q.havings) > 0 {
+		frag, hargs := joinConds(q.havings)
+		b.WriteString(" HAVING " + frag)
+
+		args = append(args, hargs...)
+	}
 
 	if len(q.orders) > 0 {
 		b.WriteString(" ORDER BY " + strings.Join(q.orders, ", "))
@@ -553,24 +612,89 @@ func (q Query[T]) selectSQL(cols string) (string, []any, error) {
 
 	b.WriteString(q.lockSQL())
 
-	s, err := renumber(b.String(), q.ex.Dialect())
-
-	return s, args, err
+	return q.resolve(b.String()), args
 }
 
-func (q Query[T]) columnList() string {
-	if len(q.selects) > 0 {
-		cols := make([]string, len(q.selects))
-		for i, c := range q.selects {
-			cols[i] = q.quote(c)
-		}
+// Column markers: a column of the query's own model is written into
+// conditions as markOpen+name+markClose and resolved when the statement is
+// rendered, because a join added later must qualify it with the table. The
+// names are validated identifiers; raw fragments from callers may not carry
+// the marker bytes.
+const (
+	markOpen  = '\x01'
+	markClose = '\x02'
+)
 
-		return strings.Join(cols, ", ")
+// tok is the SQL for a validated column name: "table.column" quoted, "*", or
+// a marker for a column of the query's model.
+func (q Query[T]) tok(name string) string {
+	if name == "*" {
+		return name
 	}
 
-	cols := make([]string, len(q.m.fields))
-	for i, f := range q.m.fields {
-		cols[i] = q.quote(f.column)
+	if strings.Contains(name, ".") {
+		return q.quote(name)
+	}
+
+	return string(markOpen) + name + string(markClose)
+}
+
+// resolve replaces the column markers of sqlText: the quoted column, or
+// "table"."column" when the query has joins.
+func (q Query[T]) resolve(sqlText string) string {
+	if !strings.ContainsRune(sqlText, markOpen) {
+		return sqlText
+	}
+
+	var b strings.Builder
+
+	for {
+		i := strings.IndexRune(sqlText, markOpen)
+		if i < 0 {
+			break
+		}
+
+		k := strings.IndexRune(sqlText[i:], markClose)
+		if k < 0 {
+			break
+		}
+
+		b.WriteString(sqlText[:i])
+
+		col := sqlText[i+1 : i+k]
+		if len(q.joins) > 0 {
+			b.WriteString(q.quote(q.m.table) + ".")
+		}
+
+		b.WriteString(q.quote(col))
+
+		sqlText = sqlText[i+k+1:]
+	}
+
+	b.WriteString(sqlText)
+
+	return b.String()
+}
+
+// rawFragmentOK rejects a caller's raw SQL fragment that carries the column
+// marker bytes.
+func rawFragmentOK(frag string) bool { return !strings.ContainsAny(frag, "\x01\x02") }
+
+func (q Query[T]) columnList() string {
+	var cols []string
+
+	switch {
+	case len(q.selects) > 0 || len(q.exprs) > 0:
+		for _, c := range q.selects {
+			cols = append(cols, q.tok(c))
+		}
+
+		cols = append(cols, q.exprs...)
+	default:
+		cols = make([]string, len(q.m.fields))
+		for i, f := range q.m.fields {
+			cols[i] = q.tok(f.column)
+		}
 	}
 
 	return strings.Join(cols, ", ")
@@ -632,8 +756,8 @@ func (q Query[T]) Get(ctx context.Context) ([]T, error) {
 		out = []T{}
 	}
 
-	if len(q.with) > 0 {
-		if err := loadRelations(ctx, q.ex, q.m, reflect.ValueOf(out), q.with); err != nil {
+	if len(q.withs) > 0 || len(q.counts) > 0 {
+		if err := loadRelations(ctx, q.ex, q.m, reflect.ValueOf(out), q.withs, q.counts); err != nil {
 			return nil, err
 		}
 	}
@@ -651,6 +775,11 @@ func (q Query[T]) Each(ctx context.Context) iter.Seq2[T, error] {
 
 		if q.err != nil {
 			yield(zero, q.err)
+			return
+		}
+
+		if len(q.exprs) > 0 || len(q.groups) > 0 {
+			yield(zero, errProjected)
 			return
 		}
 
@@ -750,8 +879,24 @@ func (q Query[T]) Count(ctx context.Context) (int64, error) {
 }
 
 func (q Query[T]) countSQL() (string, []any, error) {
+	if len(q.groups) > 0 || len(q.exprs) > 0 {
+		return "", nil, errors.New("orm: Count does not support GroupBy or projections; use Scan")
+	}
+
 	q.orders, q.limit, q.offset, q.lock, q.wait = nil, -1, 0, "", ""
-	return q.selectSQL("COUNT(*)")
+
+	if !q.distinct {
+		return q.selectSQL("COUNT(*)")
+	}
+
+	if err := checkDialect(q.ex); err != nil {
+		return "", nil, err
+	}
+
+	inner, args := q.rawSelectSQL(q.columnList())
+	s, err := renumber("SELECT COUNT(*) FROM ("+inner+") AS t", q.ex.Dialect())
+
+	return s, args, err
 }
 
 // Exists reports whether any row matches (without row locks, see Count).
@@ -784,7 +929,7 @@ func (q Query[T]) Exists(ctx context.Context) (bool, error) {
 
 // Pluck returns one column of every matching row as []V.
 func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error) {
-	col, err := q.m.column(colName)
+	col, err := q.column(colName)
 	if err != nil {
 		return nil, err
 	}
@@ -797,7 +942,7 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 		return nil, err
 	}
 
-	query, args, err := q.selectSQL(q.quote(col))
+	query, args, err := q.selectSQL(q.tok(col))
 	if err != nil {
 		return nil, err
 	}
@@ -843,7 +988,7 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 // Where and soft deletes, and returns an empty map for no rows. NULL
 // values are not supported: filter them out with WhereNotNull.
 func (q Query[T]) GroupCount[K comparable](ctx context.Context, colName string) (map[K]int64, error) {
-	col, err := q.m.column(colName)
+	col, err := q.column(colName)
 	if err != nil {
 		return nil, err
 	}
@@ -858,13 +1003,14 @@ func (q Query[T]) GroupCount[K comparable](ctx context.Context, colName string) 
 	}
 
 	q.orders, q.limit, q.offset, q.lock, q.wait = nil, -1, 0, "", ""
+	q.groups = []string{col}
 
-	query, args, err := q.selectSQL(q.quote(col) + ", COUNT(*)")
+	query, args, err := q.selectSQL(q.tok(col) + ", COUNT(*)")
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := q.ex.QueryContext(ctx, query+" GROUP BY "+q.quote(col), args...)
+	rows, err := q.ex.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("orm: group count %s.%s: %w", q.m.table, col, err)
 	}

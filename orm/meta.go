@@ -110,6 +110,7 @@ type meta struct {
 	hasUpdated bool
 	soft       bool
 	relations  map[string]relation
+	counts     map[string][]int // relation name -> index of its orm:"count:..." field
 }
 
 var metaCache sync.Map //nolint:gochecknoglobals // memoization of immutable per-type metadata
@@ -145,6 +146,7 @@ func buildMeta(rt reflect.Type) *meta {
 		keys:      keys,
 		byColumn:  map[string]field{},
 		relations: map[string]relation{},
+		counts:    map[string][]int{},
 	}
 
 	for _, f := range reflect.VisibleFields(rt) {
@@ -174,7 +176,18 @@ func buildMeta(rt reflect.Type) *meta {
 			continue // embedded duplicates: the shallowest field wins (VisibleFields order)
 		}
 
-		fd := field{column: col, index: f.Index, typ: f.Type, readonly: columnReadonly(rt, f)}
+		readonly, count := columnTag(rt, f)
+		if count != "" {
+			if f.Type.Kind() != reflect.Int64 {
+				panic(fmt.Sprintf("orm: %s.%s is tagged orm:\"count:%s\" but is not an int64", rt, f.Name, count))
+			}
+
+			m.counts[count] = f.Index
+
+			continue
+		}
+
+		fd := field{column: col, index: f.Index, typ: f.Type, readonly: readonly}
 		m.fields = append(m.fields, fd)
 		m.byColumn[col] = fd
 
@@ -188,11 +201,7 @@ func buildMeta(rt reflect.Type) *meta {
 		}
 	}
 
-	for _, r := range m.relations {
-		if _, ok := m.byColumn[r.fk]; r.kind == relBelongsTo && !ok {
-			panic(fmt.Sprintf("orm: %s.%s needs a %q column (or an orm:\"fk:...\" tag)", rt, r.name, r.fk))
-		}
-	}
+	m.checkRelations(rt)
 
 	pkField, ok := m.byColumn[m.pk]
 	if !ok {
@@ -218,22 +227,47 @@ func buildMeta(rt reflect.Type) *meta {
 	return m
 }
 
-// columnReadonly parses the orm tag of a column field; "readonly" is its
-// only option.
-func columnReadonly(rt reflect.Type, f reflect.StructField) bool {
-	readonly := false
+// checkRelations panics on a belongs-to without its foreign key column and on
+// a count field that does not name a HasMany or ManyToMany relation.
+func (m *meta) checkRelations(rt reflect.Type) {
+	for _, r := range m.relations {
+		if _, ok := m.byColumn[r.fk]; r.kind == relBelongsTo && !ok {
+			panic(fmt.Sprintf("orm: %s.%s needs a %q column (or an orm:\"fk:...\" tag)", rt, r.name, r.fk))
+		}
+	}
 
+	for name := range m.counts {
+		if r, ok := m.relations[name]; !ok || r.kind != relHasMany && r.kind != relManyToMany {
+			panic(
+				fmt.Sprintf(
+					"orm: %s has a count field for %q, which is not a HasMany or ManyToMany relation",
+					rt,
+					name,
+				),
+			)
+		}
+	}
+}
+
+// columnTag parses the orm tag of a column field: "readonly" marks a column
+// the ORM reads but never writes, "count:<Relation>" turns the field into the
+// target of WithCount (it is not a column).
+func columnTag(rt reflect.Type, f reflect.StructField) (readonly bool, count string) {
 	for opt := range strings.SplitSeq(f.Tag.Get("orm"), ",") {
-		switch strings.TrimSpace(opt) {
-		case "readonly":
+		opt = strings.TrimSpace(opt)
+
+		switch {
+		case opt == "readonly":
 			readonly = true
-		case "":
+		case strings.HasPrefix(opt, "count:"):
+			count = strings.TrimPrefix(opt, "count:")
+		case opt == "":
 		default:
 			panic(fmt.Sprintf("orm: %s.%s has unknown orm tag option %q", rt, f.Name, opt))
 		}
 	}
 
-	return readonly
+	return readonly, count
 }
 
 // keysOf returns the primary key columns of rt: CompositeKeyer, then

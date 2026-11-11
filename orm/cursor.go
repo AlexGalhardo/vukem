@@ -51,6 +51,10 @@ func (q Query[T]) CursorPaginate(
 		return CursorPage[T]{}, q.err
 	}
 
+	if len(q.joins) > 0 || len(q.groups) > 0 {
+		return CursorPage[T]{}, errors.New("orm: CursorPaginate does not support joins or grouping")
+	}
+
 	perPage = q.perPage(perPage)
 
 	keys := q.keys
