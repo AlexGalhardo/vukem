@@ -189,6 +189,8 @@ Under the hood:
 
 ## Typed views and view:check
 
+The HTMX starter that `vukem new` creates already ships with typed views: `app/views/views.go` declares every page (`home`, the posts and the uploads page), `bootstrap/app.go` lists them with `vukem.WithViewPages(views.All()...)`, the controllers render through them, and `vukem view:check` passes on a new project. The `--minimal` starter ships the home page only; the `--api`, `--templ` and `--inertia` starters have no `html/template` pages, so they have no `app/views`.
+
 `c.Render(name, data any)` accepts any value, so a misspelt field, a renamed route or an `hx-target` with no matching element only fails at runtime. `view.Of[T]` declares the data type of a view, and `vukem view:check` compares the template with it.
 
 ```go title="app/views/views.go"
