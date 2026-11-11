@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // proxyHeaders mark a request relayed by a proxy or tunnel: the direct
@@ -23,13 +25,7 @@ func (d *Devtools) Allowed(r *http.Request) bool {
 		return true
 	}
 
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-
-	ip, err := netip.ParseAddr(host)
-	if err != nil || !ip.Unmap().IsLoopback() {
+	if !web.PeerIP(r).IsLoopback() {
 		return false
 	}
 
