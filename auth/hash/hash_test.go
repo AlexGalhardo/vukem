@@ -2,8 +2,10 @@ package hash
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRoundTrips(t *testing.T) {
@@ -141,5 +143,81 @@ func TestMalformedHashes(t *testing.T) {
 		if !Fake().NeedsRehash(h) {
 			t.Errorf("NeedsRehash(%q) = false", h)
 		}
+	}
+}
+
+// Each argon2id computation allocates Memory KiB, so a burst of logins must
+// queue instead of reserving N times that. With the only slot taken, Make and
+// Verify of an argon2id hash wait for it; a bcrypt hash does not use it.
+func TestSecurity_A04_Argon2idBoundsConcurrency(t *testing.T) {
+	t.Parallel()
+
+	params := Argon2Params{Memory: 8, Time: 1, Threads: 1, SaltLen: 8, KeyLen: 16, MaxConcurrent: 1}
+	hasher := Argon2id(params)
+
+	h, ok := hasher.(argonHasher)
+	if !ok {
+		t.Fatal("Argon2id() is not an argonHasher")
+	}
+
+	if got, want := cap(Argon2id(Argon2Params{}).(argonHasher).sem), runtime.GOMAXPROCS(0); got != want {
+		t.Errorf("default MaxConcurrent = %d, want GOMAXPROCS %d", got, want)
+	}
+
+	stored, err := hasher.Make("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bcrypted, err := Bcrypt(4).Make("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold the only slot: every argon2id computation must now wait.
+	h.sem <- struct{}{}
+
+	finished := func(fn func()) <-chan struct{} {
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+
+			fn()
+		}()
+
+		return done
+	}
+
+	make1 := finished(func() { _, _ = hasher.Make("other") })
+	verify1 := finished(func() { _, _ = hasher.Verify(stored, "pw") })
+	verifyBcrypt := finished(func() { _, _ = hasher.Verify(bcrypted, "pw") })
+
+	select {
+	case <-verifyBcrypt:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a bcrypt Verify waited for the argon2id slot")
+	}
+
+	for name, done := range map[string]<-chan struct{}{"Make": make1, "Verify": verify1} {
+		select {
+		case <-done:
+			t.Errorf("argon2id %s ran while the only slot was taken", name)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	<-h.sem
+
+	for name, done := range map[string]<-chan struct{}{"Make": make1, "Verify": verify1} {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Errorf("argon2id %s did not finish after the slot was released", name)
+		}
+	}
+
+	if ok, err := hasher.Verify(stored, "pw"); err != nil || !ok {
+		t.Errorf("Verify() = %v, %v", ok, err)
 	}
 }

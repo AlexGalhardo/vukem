@@ -14,7 +14,7 @@ import (
 
 var (
 	secretRe   = regexp.MustCompile(`id="two-factor-secret">([A-Z2-7]+)<`)
-	recoveryRe = regexp.MustCompile(`[A-Z2-7]{5}-[A-Z2-7]{5}`)
+	recoveryRe = regexp.MustCompile(`[A-Z2-7]{4}(?:-[A-Z2-7]{4}){3}`)
 )
 
 // totpCode returns the app code of secret steps periods from now.

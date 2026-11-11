@@ -12,6 +12,8 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -120,7 +122,12 @@ func (j JWK) Key() (Key, error) {
 // a token names an unknown key id (rotation), at most once per MinRefresh.
 type RemoteJWKS struct {
 	URL string
-	// Client fetches the set (default: 10s timeout).
+	// InsecureHTTP accepts a plain http URL on a host other than loopback.
+	// Dangerous: the keys that verify tokens can be replaced in transit.
+	InsecureHTTP bool
+	// Client fetches the set (default: 10s timeout, and redirects that leave
+	// https are refused). A client you set is not changed: give it a
+	// CheckRedirect with the same rule.
 	Client *http.Client
 	// MaxAge refreshes the cache after this long (default 1h).
 	MaxAge time.Duration
@@ -272,10 +279,64 @@ func (r *RemoteJWKS) safeFetch(ctx context.Context) (keys map[string]Key, err er
 	return r.fetch(ctx)
 }
 
+// secureURL accepts an https URL, or an http one for a loopback host (tests
+// and local identity providers) or when insecure is set.
+func secureURL(raw string, insecure bool) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case u.Scheme == "https" && u.Host != "":
+		return nil
+	case u.Scheme == "http" && u.Host != "" && (insecure || loopbackHost(u.Hostname())):
+		return nil
+	}
+
+	return errors.New("jwt: JWKS URL must use https")
+}
+
+func loopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+
+	ip, err := netip.ParseAddr(host)
+
+	return err == nil && ip.IsLoopback()
+}
+
+// maxRedirects bounds the redirects the default client follows.
+const maxRedirects = 5
+
+// checkRedirect applies the https rule to every hop of the default client: a
+// fetch that started on https stays on https, and one that started on a
+// loopback or InsecureHTTP host may only follow what secureURL allows.
+func (r *RemoteJWKS) checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("jwt: JWKS fetch stopped after %d redirects", maxRedirects)
+	}
+
+	if via[0].URL.Scheme == "https" {
+		if req.URL.Scheme != "https" {
+			return errors.New("jwt: JWKS redirect must use https")
+		}
+
+		return nil
+	}
+
+	return secureURL(req.URL.String(), r.InsecureHTTP)
+}
+
 func (r *RemoteJWKS) fetch(ctx context.Context) (map[string]Key, error) {
+	if err := secureURL(r.URL, r.InsecureHTTP); err != nil {
+		return nil, err
+	}
+
 	client := r.Client
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: r.checkRedirect}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.URL, http.NoBody)

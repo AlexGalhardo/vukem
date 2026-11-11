@@ -117,7 +117,7 @@ See [Encryption](/docs/security/encryption) for `orm.Encrypted` and key rotation
 1. **Enable** stores a new secret waiting for confirmation (a pending secret is replaced). A **confirmed** setup is never replaced: that answers `409` (`auth.two_factor.already_enabled`), because replacing it would switch 2FA off without the password check of Disable.
 2. The settings page shows the QR code of the `otpauth://` URI (issuer `APP_NAME`, account = the user's email) and the secret as a setup key.
 3. **Confirm** turns 2FA on only after a valid code. A wrong code answers `422` and logs `auth.2fa_failed` with `stage=confirm`. A code at or before the last accepted step is refused, the confirmation code included.
-4. Eight recovery codes (`ABCDE-FGHIJ`) are flashed in the encrypted session and shown **once**; only their hashes are stored.
+4. Eight recovery codes (`ABCD-EFGH-IJKL-MNOP`) are flashed in the encrypted session and shown **once**; only their hashes are stored.
 5. Every **other** session of the user ends, on every session driver (`Accounts.RevokeOtherSessions` bumps the session version), and `Web.RefreshSession` keeps the current one. A session an attacker opened before enrolment does not survive it.
 
 ### Login with a code

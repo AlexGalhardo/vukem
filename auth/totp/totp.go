@@ -197,17 +197,18 @@ func URI(issuer, account, secret string, o Options) string {
 	return u.String()
 }
 
-// RecoveryCodes returns n single-use codes ("ABCDE-FGHIJ") to show the
-// user once, and their hashes to store.
+// RecoveryCodes returns n single-use codes ("ABCD-EFGH-IJKL-MNOP", 80 random
+// bits) to show the user once, and their hashes to store. Codes issued in
+// the shorter format ("ABCDE-FGHIJ") still verify with UseRecoveryCode.
 func RecoveryCodes(n int) (plain, hashes []string, err error) {
 	for range n {
-		b := make([]byte, 7)
+		b := make([]byte, 10)
 		if _, err := rand.Read(b); err != nil {
 			return nil, nil, err
 		}
 
-		s := b32.EncodeToString(b)[:10]
-		c := s[:5] + "-" + s[5:]
+		s := b32.EncodeToString(b)
+		c := s[0:4] + "-" + s[4:8] + "-" + s[8:12] + "-" + s[12:16]
 
 		plain = append(plain, c)
 		hashes = append(hashes, HashRecoveryCode(c))

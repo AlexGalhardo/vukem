@@ -329,3 +329,49 @@ func TestSecurity_A04_JWTRejectsCriticalHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestSecurity_A07_VerifierChecksTyp(t *testing.T) {
+	t.Parallel()
+
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	payload := base64.RawURLEncoding.EncodeToString(mustJSON(t, map[string]any{
+		"sub": "42", "iss": "https://vukem.test", "aud": "api", "exp": now.Add(time.Hour).Unix(),
+	}))
+
+	tests := []struct {
+		name   string
+		types  []string
+		header string
+		ok     bool
+	}{
+		{"no types, any typ", nil, `{"alg":"HS256","kid":"hs","typ":"at+jwt"}`, true},
+		{"no types, no typ", nil, `{"alg":"HS256","kid":"hs"}`, true},
+		{"JWT", []string{"JWT"}, `{"alg":"HS256","kid":"hs","typ":"JWT"}`, true},
+		{"lower case", []string{"JWT"}, `{"alg":"HS256","kid":"hs","typ":"jwt"}`, true},
+		{"media type prefix", []string{"JWT"}, `{"alg":"HS256","kid":"hs","typ":"application/jwt"}`, true},
+		{"other typ", []string{"JWT"}, `{"alg":"HS256","kid":"hs","typ":"at+jwt"}`, false},
+		{"missing typ", []string{"JWT"}, `{"alg":"HS256","kid":"hs"}`, false},
+		{"empty typ", []string{"JWT"}, `{"alg":"HS256","kid":"hs","typ":""}`, false},
+		{"at+jwt with prefix", []string{"at+jwt"}, `{"alg":"HS256","kid":"hs","typ":"application/at+jwt"}`, true},
+		{"configured with prefix", []string{"application/JWT"}, `{"alg":"HS256","kid":"hs","typ":"jwt"}`, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			v := jwt.NewVerifier(jwt.StaticKeys(jwt.HS256("hs", secret)), jwt.VerifyOptions{
+				Issuer: "https://vukem.test", Audience: "api", Types: tt.types, Now: clock,
+			})
+
+			_, err := v.Verify(t.Context(), resign(t, tt.header, payload, secret))
+			if tt.ok && err != nil {
+				t.Fatalf("Verify() error = %v, want nil", err)
+			}
+
+			if !tt.ok && (!errors.Is(err, jwt.ErrInvalid) || !strings.Contains(err.Error(), "typ")) {
+				t.Fatalf("Verify() error = %v, want ErrInvalid naming typ", err)
+			}
+		})
+	}
+}
