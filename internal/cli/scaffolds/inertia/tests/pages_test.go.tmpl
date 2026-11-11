@@ -68,12 +68,9 @@ func TestEveryPageIsTyped(t *testing.T) {
 
 	slices.Sort(files)
 
-	// Pages added by vukem install:* (Auth/Login, Billing...) are not typed
-	// until you declare them; only the starter's own pages must be.
-	for _, name := range declared {
-		if !slices.Contains(files, name) {
-			t.Errorf("typed page %q has no component in resources/js/pages", name)
-		}
+	if !slices.Equal(files, declared) {
+		t.Errorf("pages in resources/js/pages = %v, typed pages = %v", files, declared)
+		t.Log("declare each page in app/pages and list it in pages.All")
 	}
 
 	if _, err := os.Stat(filepath.Join("..", "resources", "js", "page-props.ts")); err != nil {

@@ -11,6 +11,7 @@ import (
 
 	"{{.Module}}/app/accounts"
 	"{{.Module}}/app/models"
+	"{{.Module}}/app/pages"
 	"{{.Module}}/app/requests"
 )
 
@@ -26,13 +27,14 @@ func (h *TwoFactorHandlers) Show(c *web.Ctx) error {
 		return err
 	}
 
-	props := inertia.Props{
-		"enabled":           tf.Enabled(),
-		"pending":           tf.Pending(),
-		"recoveryCodes":     flashedCodes(c),
-		"recoveryCodesLeft": len(tf.TwoFactorRecoveryCodes.V),
-		"secret":            nil,
-		"qr":                nil,
+	props := pages.TwoFactorProps{
+		Enabled:           tf.Enabled(),
+		Pending:           tf.Pending(),
+		RecoveryCodesLeft: len(tf.TwoFactorRecoveryCodes.V),
+	}
+
+	if codes := flashedCodes(c); codes != nil {
+		props.RecoveryCodes = &codes
 	}
 
 	if tf.Pending() {
@@ -42,11 +44,11 @@ func (h *TwoFactorHandlers) Show(c *web.Ctx) error {
 		}
 
 		// A data: URL rendered with <img>: the page never inserts raw HTML.
-		props["secret"] = tf.TwoFactorSecret.V
-		props["qr"] = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
+		qr := "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
+		props.Secret, props.QR = &tf.TwoFactorSecret.V, &qr
 	}
 
-	return inertia.Render(c, "Auth/TwoFactor", props)
+	return pages.TwoFactor.Render(c, props)
 }
 
 // Enable creates a secret to scan; it is active once confirmed.
@@ -167,7 +169,7 @@ func (h *TwoFactorHandlers) ShowChallenge(c *web.Ctx) error {
 		return h.expiredChallenge(c, err)
 	}
 
-	return inertia.Render(c, "Auth/TwoFactorChallenge", nil)
+	return pages.TwoFactorChallenge.Render(c, struct{}{})
 }
 
 // Challenge finishes the login with a code from the app or a recovery

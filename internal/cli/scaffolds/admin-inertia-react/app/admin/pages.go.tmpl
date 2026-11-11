@@ -4,8 +4,9 @@ import (
 	"regexp"
 
 	"github.com/AlexGalhardo/vukem/errs"
-	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/pages"
 )
 
 // slugPattern is the shape of a resource slug (the panel's own rule). A slug is placed in the URL the React page
@@ -22,7 +23,7 @@ type Pages struct{}
 
 // Dashboard renders /admin.
 func (Pages) Dashboard(c *web.Ctx) error {
-	return inertia.Render(c, "Admin/Dashboard", inertia.Props{"dataUrl": DataPrefix})
+	return pages.AdminDashboard.Render(c, pages.AdminDashboardProps{DataURL: DataPrefix})
 }
 
 // List renders /admin/{slug}.
@@ -31,7 +32,7 @@ func (Pages) List(c *web.Ctx) error {
 		return errs.ErrNotFound
 	}
 
-	return inertia.Render(c, "Admin/ResourceList", inertia.Props{"slug": c.Param("slug"), "dataUrl": DataPrefix})
+	return pages.AdminResourceList.Render(c, pages.AdminResourceListProps{Slug: c.Param("slug"), DataURL: DataPrefix})
 }
 
 // Show renders /admin/{slug}/{id}.
@@ -40,6 +41,6 @@ func (Pages) Show(c *web.Ctx) error {
 		return errs.ErrNotFound
 	}
 
-	return inertia.Render(c, "Admin/ResourceShow",
-		inertia.Props{"slug": c.Param("slug"), "id": c.Param("id"), "dataUrl": DataPrefix})
+	return pages.AdminResourceShow.Render(c,
+		pages.AdminResourceShowProps{Slug: c.Param("slug"), ID: c.Param("id"), DataURL: DataPrefix})
 }

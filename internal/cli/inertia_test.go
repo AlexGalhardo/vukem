@@ -127,6 +127,17 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				t.Fatalf("install:billing = %d\n%s%s", code, out, errOut)
 			}
 
+			// The installers type the pages they add and regenerate
+			// page-props.ts, so the file is current without a manual step.
+			if code, out, errOut := vukem(t, project, "codegen:pages", "-check"); code != 0 {
+				t.Fatalf("codegen:pages -check after the installers = %d\n%s%s", code, out, errOut)
+			}
+
+			if props := read(t, project, "resources/js/page-props.ts"); !strings.Contains(props, `"Auth/Login"`) ||
+				!strings.Contains(props, `"Auth/TwoFactor"`) || !strings.Contains(props, `"Billing"`) {
+				t.Errorf("page-props.ts lacks the pages of the installers:\n%s", props)
+			}
+
 			run("go", "test", "./...")
 
 			// The Go the three frontends generate is the same; linting one
@@ -173,6 +184,21 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 
 			if m := read(t, project, "resources/public/build/.vite/manifest.json"); !strings.Contains(m, st.entry) {
 				t.Errorf("manifest lacks %s:\n%s", st.entry, m)
+			}
+
+			// install:admin types its pages too (React only). The panel's own
+			// generated test is not run here: it is outside what this covers.
+			if st.name == "react" {
+				if code, out, errOut := vukem(t, project, "install:admin", "-stack", "inertia"); code != 0 {
+					t.Fatalf("install:admin -stack inertia = %d\n%s%s", code, out, errOut)
+				}
+
+				if code, out, errOut := vukem(t, project, "codegen:pages", "-check"); code != 0 {
+					t.Fatalf("codegen:pages -check after install:admin = %d\n%s%s", code, out, errOut)
+				}
+
+				run("go", "build", "./...")
+				run("go", "test", "./tests", "-run", "TestEveryPageIsTyped")
 			}
 		})
 	}

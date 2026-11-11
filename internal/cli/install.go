@@ -210,6 +210,8 @@ func authProviders(only bool, socialList, list string, extras bool) ([]string, e
 func installAuthPages(
 	env *Env, data map[string]string, only, addOn bool, providers []string, force bool,
 ) ([]registration, error) {
+	regs := []registration{{"routes/registry.go", "All", "Auth"}}
+
 	switch {
 	case only:
 		if err := installSocialOnlyPages(env, data, providers, force); err != nil {
@@ -221,11 +223,14 @@ func installAuthPages(
 				return nil, err
 			}
 		}
+
+		regs = append(regs, pageRegistrations(env, "Login", "Register", "ForgotPassword", "CheckEmail",
+			"VerifyEmail", "Dashboard", "ResetPassword")...)
 	default:
 		return nil, nil
 	}
 
-	return []registration{{"routes/registry.go", "All", "Auth"}}, nil
+	return regs, nil
 }
 
 func installSocial(env *Env, data map[string]string, providers []string, force bool) ([]registration, error) {
@@ -542,7 +547,13 @@ func finishInstall(ctx context.Context, env *Env, regs []registration) error {
 	}
 
 	// Scaffolds import packages (auth/hash → x/crypto) the starter did not.
-	return tool(ctx, env, "go", "mod", "tidy")
+	if err := tool(ctx, env, "go", "mod", "tidy"); err != nil {
+		return err
+	}
+
+	refreshPageProps(ctx, env)
+
+	return nil
 }
 
 // socialOnlyPassed reports whether the user set --social-only. An empty

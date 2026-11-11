@@ -1,0 +1,30 @@
+package pages
+
+import "github.com/AlexGalhardo/vukem/inertia"
+
+// Billing is the typed page of vukem install:billing.
+var Billing = inertia.Define[BillingProps]("Billing")
+
+// BillingPlan is a plan the user can pick.
+type BillingPlan struct {
+	Name    string `json:"name"`
+	Label   string `json:"label"`
+	Current bool   `json:"current"`
+}
+
+// BillingSubscription is the user's subscription.
+type BillingSubscription struct {
+	Plan              string `json:"plan"`
+	Status            string `json:"status"`
+	Valid             bool   `json:"valid"`
+	CurrentPeriodEnd  string `json:"currentPeriodEnd"`
+	CancelAtPeriodEnd bool   `json:"cancelAtPeriodEnd"`
+}
+
+// BillingProps are the props of Billing.
+type BillingProps struct {
+	Plans        []BillingPlan        `json:"plans"`
+	Subscription *BillingSubscription `json:"subscription"`
+	Subscribed   bool                 `json:"subscribed"`
+	Checkout     bool                 `json:"checkout"`
+}

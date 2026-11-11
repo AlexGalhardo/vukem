@@ -61,6 +61,10 @@ func installAdmin(set *flag.FlagSet) func(context.Context, *Env, []string) error
 			{"routes/registry.go", "All", "Admin"},
 		}
 
+		if *stack == "inertia" {
+			regs = append(regs, pageRegistrations(env, "AdminDashboard", "AdminResourceList", "AdminResourceShow")...)
+		}
+
 		if err := appendEnvExample(env, []string{"ADMIN_EMAILS"}); err != nil {
 			return err
 		}

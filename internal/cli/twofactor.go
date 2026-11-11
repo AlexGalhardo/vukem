@@ -172,10 +172,12 @@ func installTwoFactor(env *Env, data map[string]string, force bool) ([]registrat
 		return nil, err
 	}
 
-	return []registration{
+	regs := []registration{
 		{"database/migrations/registry.go", "All", "m" + data["TS4"] + "AddTwoFactorColumns()"},
 		{"routes/registry.go", "All", "TwoFactor"},
-	}, nil
+	}
+
+	return append(regs, pageRegistrations(env, "TwoFactor", "TwoFactorChallenge")...), nil
 }
 
 // checkPatches fails when an existing file has neither the text a
