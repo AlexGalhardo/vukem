@@ -42,6 +42,8 @@ Usage:
   make:admin-resource <Model>  Create an admin panel resource and policy for a model and register them
   make:test <Name>             Create a test using the fluent client
   make:proto <Name>            Create a gRPC service .proto (and buf.yaml, buf.gen.yaml)
+ stub
+  stub:publish [name...]       Copy the make:* stubs into stubs/ so the project can edit them
  codegen
   codegen:rpc                  Generate Go and connect-go code from proto/ (buf or protoc, plugins via go tool)
 

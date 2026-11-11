@@ -115,6 +115,7 @@ func commands() []command {
 		},
 		{"make:test", "<Name>", "Create a test using the fluent client", makeTest},
 		{"make:proto", "<Name>", "Create a gRPC service .proto (and buf.yaml, buf.gen.yaml)", makeProto},
+		{"stub:publish", "[name...]", "Copy the make:* stubs into stubs/ so the project can edit them", stubPublish},
 		{
 			"codegen:rpc",
 			"",

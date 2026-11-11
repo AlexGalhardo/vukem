@@ -430,6 +430,28 @@ Next:
   vukem codegen:rpc     # writes gen/blog/v1 (buf, or protoc when buf is missing)
 ```
 
+## `vukem stub:publish`
+
+Copy the embedded `make:*` stubs into `stubs/`, where a file with the same name wins over the built-in one.
+
+```text
+vukem stub:publish [flags] [name...]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Overwrite stubs that already exist in `stubs/`. |
+
+With no name it publishes every stub. A name may be `controller`, `controller.go` or `controller.go.tmpl`; a name that matches no stub or several (such as `mail`) is a usage error that lists the valid ones. Every target is checked before anything is written, so a refusal never leaves half a set. It must run inside a project.
+
+```bash
+vukem stub:publish controller
+```
+
+```text
+created stubs/controller.go.tmpl
+```
+
 ## `vukem codegen:rpc`
 
 Generate Go and connect-go code from your `.proto` files.
@@ -504,5 +526,5 @@ usage error: --async and --queued are exclusive
 Run 'vukem list' for the available commands.
 ```
 
-To change what a generator writes, copy its stub from `internal/cli/stubs` in the Vukem repository to `stubs/` in your project. A stub has the data fields `.Name`, `.Snake`, `.Kebab`, `.Camel`, `.Plural` and `.Module`, plus a few per generator. An unknown field is an error, not an empty string. The full table is in the [overview](/docs/cli/overview#custom-stubs).
+To change what a generator writes, run `vukem stub:publish <name>` to copy its stub into `stubs/` in your project. A stub has the data fields `.Name`, `.Snake`, `.Kebab`, `.Camel`, `.Plural` and `.Module`, plus a few per generator. An unknown field is an error, not an empty string. The full table is in the [overview](/docs/cli/overview#custom-stubs).
 
