@@ -295,6 +295,36 @@ db:backup: wrote /var/backups/app.sqlite
 db:backup: restored /tmp/restore/app.sqlite
 ```
 
+## `vukem db`
+
+Open the native console of the configured database. It starts a client you already have installed; Vukem embeds none.
+
+```text
+vukem db [-force] [-print]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Required when `APP_ENV=production`: the console has full power over the database. |
+| `-print` | bool | `false` | Print the client command instead of running it. The password is never in it. |
+
+| `DATABASE_URL` | Client |
+| --- | --- |
+| `file:` or `sqlite:` | `sqlite3 <absolute file path>`. An in-memory database has no file to open. |
+| `postgres://` or `postgresql://` | `psql -h host -p port -U user -d database`. The password goes in `PGPASSWORD` and a `sslmode` query value in `PGSSLMODE`. Missing parts are left to the client's defaults. |
+
+`mysql://` and `mariadb://` URLs are refused for now: `MYSQL_PWD` is deprecated as of MySQL 8.4 and the MariaDB client documents no environment variable for the password, so there is no way yet to open them without putting the password in the command line. Any other scheme is refused too. A client that is not installed is an error that names the client and says nothing about the user, host or password.
+
+The password travels in the environment of the client process, not on its command line, so it does not show in `ps` output. PostgreSQL's own documentation does not recommend `PGPASSWORD` either, because some systems let other users read a process environment; a `~/.pgpass` file is the alternative if that matters for the machine. A database name that psql would read as a connection string (it holds `=`, a space or `://`) is refused. The exit code of the client is the exit code of `vukem db`.
+
+```bash
+vukem db -print
+```
+
+```text
+sqlite3 /srv/app/storage/database.sqlite
+```
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |

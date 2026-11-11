@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1562,5 +1563,206 @@ func TestMigrateExplainsQueueTableClash(t *testing.T) {
 
 	if _, err := migrate(map[string]string{}); err != nil {
 		t.Errorf("migrate with the sync queue = %v, want nil", err)
+	}
+}
+
+func anyBinary(name string) (string, error) { return name, nil }
+
+func TestDBConsoleFor(t *testing.T) {
+	t.Parallel()
+
+	sqlitePath, err := filepath.Abs("storage/app.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		url     string
+		lookup  func(string) (string, error)
+		want    dbConsole
+		wantErr string
+	}{
+		{
+			"sqlite file",
+			"file:storage/app.db?cache=shared",
+			anyBinary,
+			dbConsole{Bin: "sqlite3", Args: []string{sqlitePath}},
+			"",
+		},
+		{
+			"sqlite scheme",
+			"sqlite:storage/app.db",
+			anyBinary,
+			dbConsole{Bin: "sqlite3", Args: []string{sqlitePath}},
+			"",
+		},
+		{
+			"postgres full", "postgres://app:p%40ss@db.internal:5433/shop?sslmode=require", anyBinary,
+			dbConsole{
+				Bin:  "psql",
+				Args: []string{"-h", "db.internal", "-p", "5433", "-U", "app", "-d", "shop"},
+				Env:  []string{"PGPASSWORD=p@ss", "PGSSLMODE=require"},
+			},
+			"",
+		},
+		{
+			"postgresql without port or password", "postgresql://app@localhost/shop", anyBinary,
+			dbConsole{Bin: "psql", Args: []string{"-h", "localhost", "-U", "app", "-d", "shop"}},
+			"",
+		},
+		{"in memory", ":memory:", anyBinary, dbConsole{}, "an in-memory database has no file to open"},
+		{"in memory mode", "file:x?mode=memory", anyBinary, dbConsole{}, "an in-memory database has no file to open"},
+		{"no scheme", "app:secret@db.internal/shop", anyBinary, dbConsole{}, "no URL scheme"},
+		{
+			"unknown scheme",
+			"redis://u:secret@cache.internal/0",
+			anyBinary,
+			dbConsole{},
+			`no console client for "redis" URLs`,
+		},
+		{
+			"mysql is not wired",
+			"mysql://app:secret@db.internal/app",
+			anyBinary,
+			dbConsole{},
+			`no console client for "mysql" URLs`,
+		},
+		{
+			"mariadb is not wired",
+			"mariadb://app:secret@db.internal/app",
+			anyBinary,
+			dbConsole{},
+			`no console client for "mariadb" URLs`,
+		},
+		{
+			"database name that psql would parse as a connection string", "postgres://app@db.internal/x%20host%3Devil",
+			anyBinary,
+			dbConsole{},
+			"database name",
+		},
+		{
+			"missing binary", "postgres://app:secret@db.internal/shop",
+			func(string) (string, error) { return "", errors.New("not found") },
+			dbConsole{},
+			"psql is not installed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := consoleFor(tt.url, tt.lookup)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Fatalf("console mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestSecurity_A02_DBConsoleKeepsPasswordOutOfArgv(t *testing.T) {
+	t.Parallel()
+
+	got, err := consoleFor("postgres://app:hunter2@db.internal:5432/shop", anyBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, a := range got.Args {
+		if strings.Contains(a, "hunter2") {
+			t.Fatalf("the password is in argv: %v", got.Args)
+		}
+	}
+
+	if !slices.Contains(got.Env, "PGPASSWORD=hunter2") {
+		t.Fatalf("env = %v, want the password in PGPASSWORD", got.Env)
+	}
+
+	for _, raw := range []string{
+		"postgres://app:hunter2@db.internal:5432/shop",
+		"mysql://app:hunter2@db.internal:3306/shop",
+		"redis://app:hunter2@db.internal:6379/0",
+	} {
+		_, err := consoleFor(raw, func(string) (string, error) { return "", errors.New("not found") })
+		if err == nil {
+			t.Fatalf("consoleFor(%q) succeeded without the binary", raw)
+		}
+
+		for _, secret := range []string{"hunter2", "app", "db.internal"} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("the error for %q leaks %q: %v", raw, secret, err)
+			}
+		}
+	}
+}
+
+func runDBConsole(t *testing.T, env string, dbURL string, args ...string) (string, error) {
+	t.Helper()
+
+	var out bytes.Buffer
+
+	getenv := func(k string) (string, bool) {
+		v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": env, "DATABASE_URL": dbURL}[k]
+		return v, ok
+	}
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts, WithLogger(discardLogger()), WithStdout(&out))...)
+	}
+
+	err := RunMain(t.Context(), append([]string{"app", "db"}, args...), getenv, build)
+
+	return out.String(), err
+}
+
+func TestDBConsolePrint(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(testutil.TempDir(t), "console.db")
+
+	out, err := runDBConsole(t, "test", "file:"+file, "-print")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "sqlite3 " + abs + "\n"; out != want {
+		t.Fatalf("-print = %q, want %q", out, want)
+	}
+
+	out, err = runDBConsole(t, "test", "postgres://app:hunter2@db.internal/shop", "-print")
+	if err != nil || strings.Contains(out, "hunter2") || !strings.HasPrefix(out, "psql -h db.internal") {
+		t.Fatalf("postgres -print = %q, %v", out, err)
+	}
+}
+
+func TestSecurity_A05_DBConsoleNeedsForceInProduction(t *testing.T) {
+	t.Parallel()
+
+	file := "file:" + filepath.Join(testutil.TempDir(t), "console.db")
+
+	if _, err := runDBConsole(t, "production", file, "-print"); !errors.Is(err, errForceRequired) {
+		t.Fatalf("db in production = %v, want errForceRequired", err)
+	}
+
+	if _, err := runDBConsole(t, "production", file, "-print", "-force"); err != nil {
+		t.Fatalf("db -force in production = %v", err)
 	}
 }
