@@ -194,6 +194,17 @@ vukem studio [flags]
 | `-allow-production` | bool | `false` | Run even with `APP_ENV=production` (an unset `APP_ENV` counts as production). |
 | `-database-url` | string | `DATABASE_URL` | Use this database instead. |
 | `-version` | bool | `false` | Print the vukem-studio version and exit. |
+| `-write` | bool | `false` | Enable editing of documents and keys (see below). Without it nothing can change data. |
+| `-refresh` | duration | `2s` | Interval of the live refresh; a negative value turns it off; the minimum is `500ms`. |
+| `-mongo-url` | string | `MONGO_URL` | Use this MongoDB URL. |
+| `-mongo-database` | string | `MONGO_DATABASE` | The MongoDB database when the URL has none. |
+| `-redis-url` | string | `REDIS_URL` | Use this Redis URL. |
+| `-mongo-watch` | bool | `false` | Reserved: change streams instead of polling are not implemented yet (Studio polls). |
+| `-redis-notify` | bool | `false` | Reserved: keyspace notifications instead of polling are not implemented yet (Studio polls). |
+
+**Sources**: the SQL database from `DATABASE_URL`, MongoDB from `MONGO_URL` (and `MONGO_DATABASE`) and Redis from `REDIS_URL`; a source that is not configured is not shown. A page refreshes itself when its data changes (the server polls every `-refresh` and sends a server-sent event only on a change; at most 8 streams at a time).
+
+**Editing** (`-write`): documents can be inserted, replaced and deleted, and Redis strings, hash fields and TTLs edited, with a typed confirmation for every deletion (the document's `_id` or the key name). Every write is logged on stderr (source, action, target and result; never the values). With `-write` and `APP_ENV=production` you still need `-allow-production`. The MongoDB console refuses `$where`, `$function` and `$accumulator` always, and `$out` and `$merge` without `-write`. The Redis console runs only the commands on an allow-list (reads always, writes with `-write`); `KEYS`, `FLUSHALL`, `CONFIG`, `EVAL` and the rest are refused. Keys are browsed with `SCAN`, never `KEYS`.
 
 **Security**: it listens on loopback only and answers 403 to any other peer, to a request with a proxy header, and to a `Host` that is not a loopback name. The start URL carries a random token that is traded for an `HttpOnly`, `SameSite=Strict` cookie. Every response has a strict Content Security Policy. Nothing writes to the database. Passwords and URLs never appear in the output.
 
