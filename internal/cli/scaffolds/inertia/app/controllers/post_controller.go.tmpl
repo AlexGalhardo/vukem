@@ -10,6 +10,7 @@ import (
 	"github.com/AlexGalhardo/vukem/web"
 
 	"{{.Module}}/app/models"
+	"{{.Module}}/app/pages"
 	"{{.Module}}/app/requests"
 )
 
@@ -39,14 +40,14 @@ func (pc *PostController) Index(c *web.Ctx) error {
 		return c.JSON(http.StatusOK, map[string]any{"data": posts})
 	}
 
-	return inertia.Render(c, "Posts/Index", inertia.Props{
-		"posts":   posts,
-		"filters": map[string]string{"q": c.Query("q")},
+	return pages.PostsIndex.Render(c, pages.PostsIndexProps{
+		Posts:   posts,
+		Filters: pages.PostFilters{Q: c.Query("q")},
 	})
 }
 
 // Create shows the form for a new post.
-func (*PostController) Create(c *web.Ctx) error { return inertia.Render(c, "Posts/Create", nil) }
+func (*PostController) Create(c *web.Ctx) error { return pages.PostsCreate.Render(c, struct{}{}) }
 
 // Store validates and saves a new post.
 func (pc *PostController) Store(c *web.Ctx) error {
@@ -80,7 +81,7 @@ func (pc *PostController) Show(c *web.Ctx) error {
 		return c.JSON(http.StatusOK, post)
 	}
 
-	return inertia.Render(c, "Posts/Show", inertia.Props{"post": post})
+	return pages.PostsShow.Render(c, pages.PostProps{Post: post})
 }
 
 // Edit shows the edit form.
@@ -90,7 +91,7 @@ func (pc *PostController) Edit(c *web.Ctx) error {
 		return err
 	}
 
-	return inertia.Render(c, "Posts/Edit", inertia.Props{"post": post})
+	return pages.PostsEdit.Render(c, pages.PostProps{Post: post})
 }
 
 // Update validates and saves changes.

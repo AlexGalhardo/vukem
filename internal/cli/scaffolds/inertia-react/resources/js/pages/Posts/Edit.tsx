@@ -1,9 +1,9 @@
 import { Head } from "@inertiajs/react";
 
 import PostForm from "../../components/PostForm";
-import type { Post } from "../../types";
+import type { Page } from "../../page-props";
 
-export default function Edit({ post }: { post: Post }) {
+export default function Edit({ post }: Page<"Posts/Edit">) {
   return (
     <>
       <Head title={`Edit ${post.title}`} />

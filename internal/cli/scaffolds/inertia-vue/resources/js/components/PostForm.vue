@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useForm } from "@inertiajs/vue3";
 
-import type { Post } from "../types";
+import type { Post } from "../page-props";
 
 const props = defineProps<{ post?: Post }>();
 

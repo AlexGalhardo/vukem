@@ -1,14 +1,9 @@
 import { Head, Link, router } from "@inertiajs/react";
 import { useState } from "react";
 
-import type { Post } from "../../types";
+import type { Page } from "../../page-props";
 
-interface Props {
-  posts: Post[];
-  filters: { q: string };
-}
-
-export default function Index({ posts, filters }: Props) {
+export default function Index({ posts, filters }: Page<"Posts/Index">) {
   const [q, setQ] = useState(filters.q);
 
   const search = (value: string) => {

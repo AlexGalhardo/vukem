@@ -132,12 +132,12 @@ func applyInertia(env *Env, framework string) error {
 
 	// Patch bootstrap/app.go in memory first: a file the CLI cannot patch
 	// must fail before any HTMX page is deleted.
-	patched, err := patchInertiaApp(src)
+	module, err := modulePath(env)
 	if err != nil {
 		return err
 	}
 
-	module, err := modulePath(env)
+	patched, err := patchInertiaApp(src, module)
 	if err != nil {
 		return err
 	}
@@ -167,11 +167,31 @@ func applyInertia(env *Env, framework string) error {
 
 // patchInertiaApp adds vukem.WithInertia after vukem.WithVite in the
 // source of bootstrap/app.go, with its import.
-func patchInertiaApp(src []byte) ([]byte, error) {
+func patchInertiaApp(src []byte, module string) ([]byte, error) {
+	const config = "vukem.WithInertia(inertia.Config{Pages: pages.All(), SharedType: reflect.TypeFor[pages.Shared]()}),"
+
+	pagesImport := "\t\"" + module + "/app/pages\"\n"
+
 	src = bytes.Replace(src, []byte("\t\tvukem.WithVite(resources.Public()),\n"),
-		[]byte("\t\tvukem.WithVite(resources.Public()),\n\t\tvukem.WithInertia(inertia.Config{}),\n"), 1)
-	src = bytes.Replace(src, []byte("vukem \"github.com/AlexGalhardo/vukem\"\n"),
-		[]byte("vukem \"github.com/AlexGalhardo/vukem\"\n\t\"github.com/AlexGalhardo/vukem/inertia\"\n"), 1)
+		[]byte("\t\tvukem.WithVite(resources.Public()),\n\t\t"+config+"\n"), 1)
+	src = bytes.Replace(
+		src,
+		[]byte("import (\n\tvukem \"github.com/AlexGalhardo/vukem\"\n"),
+		[]byte(
+			"import (\n\t\"reflect\"\n\n\tvukem \"github.com/AlexGalhardo/vukem\"\n\t\"github.com/AlexGalhardo/vukem/inertia\"\n",
+		),
+		1,
+	)
+
+	// The starter lists app/listeners before app/views; keep the pages in
+	// the same group, or after the framework imports when it is not there.
+	listeners := []byte("\t\"" + module + "/app/listeners\"\n")
+	if bytes.Contains(src, listeners) {
+		src = bytes.Replace(src, listeners, append(listeners, pagesImport...), 1)
+	} else {
+		inertiaImport := []byte("\t\"github.com/AlexGalhardo/vukem/inertia\"\n")
+		src = bytes.Replace(src, inertiaImport, append(inertiaImport, pagesImport...), 1)
+	}
 
 	if !bytes.Contains(src, []byte("vukem.WithInertia(")) {
 		return nil, errors.New("bootstrap/app.go: no vukem.WithVite(resources.Public()) line to add Inertia after")

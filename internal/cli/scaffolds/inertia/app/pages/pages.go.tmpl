@@ -1,0 +1,64 @@
+// Package pages declares the props of every Inertia page. Controllers render
+// them with pages.<Page>.Render(c, props), inertia.Config lists them in
+// Pages, and vukem codegen:pages writes resources/js/page-props.ts from them,
+// so the page components and the Go controllers share one declaration.
+package pages
+
+import (
+	"time"
+
+	"github.com/AlexGalhardo/vukem/inertia"
+
+	"{{.Module}}/app/models"
+)
+
+// Shared is the props every page receives (inertia.Config.SharedType).
+type Shared struct {
+	AppName string      `json:"appName"`
+	Auth    *SharedAuth `json:"auth"` // present after vukem install:auth
+}
+
+// SharedAuth is the signed-in user, or null.
+type SharedAuth struct {
+	User *SharedUser `json:"user"`
+}
+
+// SharedUser is the part of the user every page receives.
+type SharedUser struct {
+	ID              int64      `json:"id"`
+	Name            string     `json:"name"`
+	Email           string     `json:"email"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+}
+
+// The typed pages.
+var (
+	Home        = inertia.Define[struct{}]("Home")
+	PostsIndex  = inertia.Define[PostsIndexProps]("Posts/Index")
+	PostsCreate = inertia.Define[struct{}]("Posts/Create")
+	PostsShow   = inertia.Define[PostProps]("Posts/Show")
+	PostsEdit   = inertia.Define[PostProps]("Posts/Edit")
+)
+
+// PostsIndexProps are the props of Posts/Index.
+type PostsIndexProps struct {
+	Posts   []models.Post `json:"posts"`
+	Filters PostFilters   `json:"filters"`
+}
+
+// PostFilters echoes the search the list was filtered by.
+type PostFilters struct {
+	Q string `json:"q"`
+}
+
+// PostProps are the props of Posts/Show and Posts/Edit.
+type PostProps struct {
+	Post models.Post `json:"post"`
+}
+
+// All lists the typed pages for inertia.Config.Pages.
+func All() []inertia.PageInfo {
+	return []inertia.PageInfo{
+		Home.Info(), PostsIndex.Info(), PostsCreate.Info(), PostsShow.Info(), PostsEdit.Info(),
+	}
+}

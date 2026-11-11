@@ -2,9 +2,9 @@
 import { Head, Link, router } from "@inertiajs/vue3";
 import { ref } from "vue";
 
-import type { Post } from "../../types";
+import type { PostsIndexProps } from "../../page-props";
 
-const props = defineProps<{ posts: Post[]; filters: { q: string } }>();
+const props = defineProps<PostsIndexProps>();
 
 const q = ref(props.filters.q);
 

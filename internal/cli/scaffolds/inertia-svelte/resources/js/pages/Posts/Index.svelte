@@ -2,14 +2,9 @@
   import { Link, router } from "@inertiajs/svelte";
   import { untrack } from "svelte";
 
-  import type { Post } from "../../types";
+  import type { Page } from "../../page-props";
 
-  interface Props {
-    posts: Post[];
-    filters: { q: string };
-  }
-
-  let { posts, filters }: Props = $props();
+  let { posts, filters }: Page<"Posts/Index"> = $props();
 
   // Seeded once: the input owns the query after that (preserveState keeps it).
   let q = $state(untrack(() => filters.q));

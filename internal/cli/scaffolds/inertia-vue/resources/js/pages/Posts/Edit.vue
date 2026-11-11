@@ -2,9 +2,9 @@
 import { Head } from "@inertiajs/vue3";
 
 import PostForm from "../../components/PostForm.vue";
-import type { Post } from "../../types";
+import type { PostsEditProps } from "../../page-props";
 
-defineProps<{ post: Post }>();
+defineProps<PostsEditProps>();
 </script>
 
 <template>

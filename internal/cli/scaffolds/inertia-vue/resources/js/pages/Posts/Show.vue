@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Head, Link } from "@inertiajs/vue3";
 
-import type { Post } from "../../types";
+import type { PostsShowProps } from "../../page-props";
 
-defineProps<{ post: Post }>();
+defineProps<PostsShowProps>();
 </script>
 
 <template>
