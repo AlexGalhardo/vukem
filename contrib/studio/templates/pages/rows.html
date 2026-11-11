@@ -3,7 +3,11 @@
 <div class="mb-4 flex flex-wrap items-center gap-3">
 	<h1 class="text-2xl font-semibold">{{.Source}} / {{.Table.Name}}</h1>
 	<a class="btn btn-ghost" data-nav="tables" href="/s/{{path .Source}}">Tables</a>
-	<a class="btn btn-secondary ml-auto" data-nav="console" href="/s/{{path .Source}}/console">Console</a>
+	<span class="ml-auto"></span>
+	{{if and .Write .Table.PrimaryKey}}<a class="btn btn-default" href="/s/{{path .Source}}/t/{{path .Table.Name}}/new">New row</a>{{end}}
+	<a class="btn btn-secondary" href="/s/{{path .Source}}/t/{{path .Table.Name}}/export?{{.Query}}">Export JSON Lines</a>
+	<a class="btn btn-secondary" href="/s/{{path .Source}}/t/{{path .Table.Name}}/export?format=csv&{{.Query}}">Export CSV</a>
+	<a class="btn btn-secondary" data-nav="console" href="/s/{{path .Source}}/console">Console</a>
 </div>
 <form method="get" class="mb-4 flex items-end gap-2">
 	<label class="flex flex-col gap-1 text-sm font-medium">Filter

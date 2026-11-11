@@ -4,10 +4,31 @@
 	<h1 class="text-2xl font-semibold">{{.Source}} / {{.Table.Name}}</h1>
 	<a class="btn btn-ghost" href="/s/{{path .Source}}/t/{{path .Table.Name}}">Back to the rows</a>
 </div>
-<dl class="card grid gap-2 sm:grid-cols-[12rem_1fr]">
+{{if .CanWrite}}<form method="post" action="/s/{{path .Source}}/t/{{path .Table.Name}}/r?{{.Key}}" class="card">
+	<input type="hidden" name="action" value="update">
+	{{range .Fields}}<div class="grid gap-2 sm:grid-cols-[12rem_1fr]">
+		<label class="text-sm font-medium" for="col-{{.Name}}">{{.Name}} <span class="text-xs text-muted-foreground">{{.Type}}</span></label>
+		{{if .Editable}}<div class="flex items-center gap-2">
+			<textarea class="input" id="col-{{.Name}}" name="col.{{.Name}}" rows="1">{{.Text}}</textarea>
+			<label class="flex items-center gap-1 text-xs"><input type="checkbox" name="null.{{.Name}}" value="1"{{if .Null}} checked{{end}}> NULL</label>
+		</div>{{else}}<div class="text-sm break-words">{{if .Null}}<span class="null-cell">NULL</span>{{else}}<pre class="whitespace-pre-wrap">{{.Text}}</pre>{{end}}</div>{{end}}
+	</div>{{end}}
+	<button class="btn btn-default self-start">Save</button>
+</form>
+<form method="post" action="/s/{{path .Source}}/t/{{path .Table.Name}}/r?{{.Key}}" class="card mt-4">
+	<input type="hidden" name="action" value="delete">
+	<h2 class="text-lg font-semibold">Delete this row</h2>
+	<label class="text-sm font-medium">Type <code>{{.Confirm}}</code> to confirm
+		<input class="input" name="confirm" autocomplete="off">
+	</label>
+	<button class="btn btn-destructive self-start">Delete</button>
+</form>
+{{else}}<dl class="card grid gap-2 sm:grid-cols-[12rem_1fr]">
 	{{range .Fields}}<dt class="text-sm font-medium">{{.Name}} <span class="text-xs text-muted-foreground">{{.Type}}</span></dt>
 	<dd class="text-sm break-words">{{if .Null}}<span class="null-cell">NULL</span>{{else}}<pre class="whitespace-pre-wrap">{{.Text}}</pre>{{end}}</dd>{{end}}
-</dl>
+</dl>{{end}}
 {{if .Table.ForeignKeys}}<h2 class="mt-6 mb-2 text-lg font-semibold">References</h2>
 <ul class="text-sm">{{range .Table.ForeignKeys}}<li>{{range .Columns}}{{.}} {{end}}to <a class="underline" href="/s/{{path $.Source}}/t/{{path .RefTable}}">{{.RefTable}}</a></li>{{end}}</ul>{{end}}
+{{if .Incoming}}<h2 class="mt-6 mb-2 text-lg font-semibold">Referenced by</h2>
+<ul class="text-sm">{{range .Incoming}}<li><a class="underline" href="{{.Link}}">{{.Table}}</a></li>{{end}}</ul>{{end}}
 {{end}}

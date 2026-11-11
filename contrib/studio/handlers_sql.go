@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -13,6 +14,7 @@ import (
 func (s *Studio) sqlRoutes() {
 	s.view("GET /s/{source}/t/{table}", s.rowsPage)
 	s.view("GET /s/{source}/t/{table}/r", s.rowPage)
+	s.mux.HandleFunc("GET /s/{source}/t/{table}/export", s.exportRows)
 	s.mux.HandleFunc("GET /s/{source}/console", s.sqlConsole)
 	s.mux.HandleFunc("POST /s/{source}/console", s.sqlConsole)
 }
@@ -144,15 +146,60 @@ func (s *Studio) rowPage(w http.ResponseWriter, r *http.Request) {
 
 	type field struct {
 		Name, Type, Text string
-		Null             bool
+		Null, Editable   bool
 	}
 
+	// A value that was cut or is binary is shown but never offered for editing:
+	// saving it would write the cut text back.
+	canWrite := s.cfg.Write && len(t.PrimaryKey) > 0
 	fields := make([]field, len(d.Columns))
+
 	for i, c := range d.Columns {
-		fields[i] = field{Name: c.Name, Type: c.Type, Text: d.Cells[i].Text, Null: d.Cells[i].Null}
+		cell := d.Cells[i]
+		fields[i] = field{
+			Name: c.Name, Type: c.Type, Text: cell.Text, Null: cell.Null,
+			Editable: canWrite && !cell.Truncated && !cell.Binary && !slices.Contains(t.PrimaryKey, c.Name),
+		}
 	}
 
-	s.page(w, r, http.StatusOK, "row", map[string]any{"Source": src.Name(), "Table": t, "Fields": fields})
+	key := r.URL.Query()["k"]
+
+	refs, err := src.References(r.Context(), t.Name)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	type incoming struct{ Table, Link string }
+
+	var in []incoming
+
+	for _, ref := range refs {
+		v := url.Values{}
+
+		for i, col := range ref.Columns {
+			for j, c := range d.Columns {
+				if c.Name == ref.RefColumns[i] && !d.Cells[j].Null && !d.Cells[j].Truncated {
+					v.Add("f", col+":eq:"+d.Cells[j].Text)
+				}
+			}
+		}
+
+		if len(v["f"]) == len(ref.Columns) {
+			in = append(
+				in,
+				incoming{
+					ref.Table,
+					"/s/" + url.PathEscape(src.Name()) + "/t/" + url.PathEscape(ref.Table) + "?" + v.Encode(),
+				},
+			)
+		}
+	}
+
+	s.page(w, r, http.StatusOK, "row", map[string]any{
+		"Source": src.Name(), "Table": t, "Fields": fields, "Incoming": in, "CanWrite": canWrite,
+		"Key": url.Values{"k": key}.Encode(), "Confirm": confirmKey(key),
+	})
 }
 
 func (s *Studio) sqlConsole(w http.ResponseWriter, r *http.Request) {

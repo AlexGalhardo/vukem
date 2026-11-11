@@ -7,6 +7,6 @@
 </div>
 {{if .Tables}}<ul class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
 	{{range .Tables}}<li class="card"><a class="text-lg font-semibold underline" data-nav="tables" href="/s/{{path $.Source}}/t/{{path .Name}}">{{.Name}}</a>
-	<span class="text-sm text-muted-foreground">{{len .Columns}} columns{{if not .PrimaryKey}}, no primary key{{end}}</span></li>{{end}}
+	<span class="text-sm text-muted-foreground">{{len .Columns}} columns{{if ge .RowEstimate 0}}, {{.RowEstimate}} rows{{end}}{{if not .PrimaryKey}}, no primary key{{end}}</span></li>{{end}}
 </ul>{{else}}{{template "partials/empty" (dict "Title" "No tables" "Text" "This database has no table yet.")}}{{end}}
 {{end}}

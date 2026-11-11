@@ -13,6 +13,9 @@ type Table struct {
 	Columns     []Column
 	PrimaryKey  []string
 	ForeignKeys []ForeignKey
+	// RowEstimate is set by SQLSource.Tables only: the row count when it was
+	// cheap to get, -1 when it was not. A catalog leaves it zero.
+	RowEstimate int64
 }
 
 // Column is one column of a Table.
@@ -36,6 +39,8 @@ type ForeignKey struct {
 type Introspector interface {
 	// Tables returns every base table, sorted by name.
 	Tables(ctx context.Context) ([]Table, error)
-	// Table returns one table; the second result is false when it does not exist.
+	// Table returns one table; the second result is false when it does not
+	// exist, which includes a name the catalog cannot represent (the browser
+	// answers 404 for it, never a server error).
 	Table(ctx context.Context, name string) (Table, bool, error)
 }

@@ -36,6 +36,20 @@ type SQLSource interface {
 	Query(ctx context.Context, sql string, write bool) (ResultSet, error)
 	// Explain returns the statement that shows the plan of sql.
 	Explain(sql string) string
+	// References lists the foreign keys of other tables that point at table.
+	References(ctx context.Context, table string) ([]Reference, error)
+	// Writes, used only when Studio runs with --write. A table without a
+	// primary key refuses them (ErrNotFound); a write changes exactly one row
+	// or rolls back.
+	Insert(ctx context.Context, table string, fields map[string]Field) error
+	Update(ctx context.Context, table string, key []string, fields map[string]Field) error
+	Delete(ctx context.Context, table string, key []string) error
+}
+
+// Reference is a foreign key of Table that points at another table.
+type Reference struct {
+	Table string
+	ForeignKey
 }
 
 // NewSQL wraps an open database as the source called name, listing tables
