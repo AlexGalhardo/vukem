@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 // Schema is a JSON Schema (2020-12, as used by OpenAPI 3.1) object.
@@ -64,6 +66,16 @@ func (s *Schemas) of(t reflect.Type, rules []string) Schema {
 			inner["type"] = []any{typ, "null"}
 		}
 
+		// A nil pointer is valid whatever the value rules say, so null must
+		// also pass the keywords that would otherwise reject it.
+		if alts, ok := inner["anyOf"].([]any); ok {
+			inner["anyOf"] = append(slices.Clip(alts), Schema{"type": "null"})
+		}
+
+		if enum, ok := inner["enum"].([]any); ok && !slices.Contains(enum, nil) {
+			inner["enum"] = append(slices.Clip(enum), nil)
+		}
+
 		return inner
 	}
 
@@ -87,37 +99,28 @@ func (s *Schemas) of(t reflect.Type, rules []string) Schema {
 
 	switch t.Kind() {
 	case reflect.String:
-		return stringSchema(value)
+		return constrained(Schema{"type": "string"}, t, value)
 	case reflect.Bool:
 		return Schema{"type": "boolean"}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return numberSchema("integer", t, value)
+		return constrained(numberFormat("integer", t), t, value)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		sc := numberSchema("integer", t, value)
+		sc := constrained(numberFormat("integer", t), t, value)
 		if _, ok := sc["minimum"]; !ok {
 			sc["minimum"] = 0
 		}
 
 		return sc
 	case reflect.Float32, reflect.Float64:
-		return numberSchema("number", t, value)
+		return constrained(numberFormat("number", t), t, value)
 	case reflect.Slice, reflect.Array:
 		if t.Elem().Kind() == reflect.Uint8 {
 			return Schema{"type": "string", "contentEncoding": "base64"}
 		}
 
-		sc := Schema{"type": "array", "items": s.of(t.Elem(), dive)}
-		lengths(sc, value, "minItems", "maxItems")
-
-		for _, r := range value {
-			if r == "unique" {
-				sc["uniqueItems"] = true
-			}
-		}
-
-		return sc
+		return constrained(Schema{"type": "array", "items": s.of(t.Elem(), dive)}, t, value)
 	case reflect.Map:
-		return Schema{"type": "object", "additionalProperties": s.of(t.Elem(), dive)}
+		return constrained(Schema{"type": "object", "additionalProperties": s.of(t.Elem(), dive)}, t, value)
 	case reflect.Struct:
 		if t.Name() == "" {
 			return s.Object(t, nil)
@@ -360,7 +363,7 @@ func Fields(t reflect.Type) []Field {
 			optional = optional || t.FieldByIndex(f.Index[:i]).Type.Kind() == reflect.Pointer
 		}
 
-		rules := splitRules(f.Tag.Get("validate"))
+		rules := z.SplitRules(f.Tag.Get("validate"))
 		// `enum:"a,b"` documents the values without validating them; a
 		// validate oneof rule already documents (and enforces) its own set.
 		if enum := f.Tag.Get("enum"); enum != "" && !slices.ContainsFunc(rules, func(r string) bool {
@@ -369,34 +372,16 @@ func Fields(t reflect.Type) []Field {
 			rules = append(rules, "oneof="+strings.Join(strings.Split(enum, ","), " "))
 		}
 		value, _ := splitDive(rules)
+		_, required, err := z.Keywords(f.Type, value)
+		required = required || err != nil && slices.Contains(value, "required")
 
 		out = append(out, Field{
-			Key: key, Type: f.Type, Rules: rules, Required: has(value, "required"),
+			Key: key, Type: f.Type, Rules: rules, Required: required,
 			Doc: f.Tag.Get("doc"), Example: f.Tag.Get("example"), optional: optional,
 		})
 	}
 
 	return out
-}
-
-// splitRules mirrors z: regex= is last and may contain commas.
-func splitRules(tag string) []string {
-	if tag == "" {
-		return nil
-	}
-
-	if i := strings.Index(tag, "regex="); i >= 0 {
-		head := strings.TrimSuffix(tag[:i], ",")
-
-		var rules []string
-		if head != "" {
-			rules = strings.Split(head, ",")
-		}
-
-		return append(rules, tag[i:])
-	}
-
-	return strings.Split(tag, ",")
 }
 
 func splitDive(rules []string) (value, dive []string) {
@@ -409,85 +394,9 @@ func splitDive(rules []string) (value, dive []string) {
 	return rules, nil
 }
 
-func has(rules []string, name string) bool {
-	for _, r := range rules {
-		if strings.TrimSpace(r) == name {
-			return true
-		}
-	}
-
-	return false
-}
-
-func lengths(sc Schema, rules []string, minKey, maxKey string) {
-	for _, r := range rules {
-		name, arg, _ := strings.Cut(strings.TrimSpace(r), "=")
-
-		n, err := strconv.Atoi(arg)
-		if err != nil {
-			continue
-		}
-
-		switch name {
-		case "min":
-			sc[minKey] = n
-		case "max":
-			sc[maxKey] = n
-		case "len":
-			sc[minKey], sc[maxKey] = n, n
-		}
-	}
-}
-
-func stringSchema(rules []string) Schema {
-	sc := Schema{"type": "string"}
-	lengths(sc, rules, "minLength", "maxLength")
-
-	// z rejects "" for a required string whatever min says.
-	if n, _ := sc["minLength"].(int); has(rules, "required") && n < 1 {
-		sc["minLength"] = 1
-	}
-
-	for _, r := range rules {
-		name, arg, _ := strings.Cut(strings.TrimSpace(r), "=")
-
-		switch name {
-		case "email":
-			sc["format"] = "email"
-		case "url":
-			sc["format"] = "uri"
-		case "uuid":
-			sc["format"] = "uuid"
-		case "ulid":
-			sc["pattern"] = "^[0-9A-HJKMNP-TV-Z]{26}$"
-		case "alpha":
-			sc["pattern"] = "^[a-zA-Z]+$"
-		case "alphanum":
-			sc["pattern"] = "^[a-zA-Z0-9]+$"
-		case "numeric":
-			sc["pattern"] = "^[0-9]+$"
-		case "oneof":
-			var enum []any
-			for v := range strings.FieldsSeq(arg) {
-				enum = append(enum, v)
-			}
-
-			sc["enum"] = enum
-		case "regex":
-			sc["pattern"] = arg
-		case "startswith":
-			sc["pattern"] = "^" + regexp.QuoteMeta(arg)
-		case "endswith":
-			sc["pattern"] = regexp.QuoteMeta(arg) + "$"
-		case "contains":
-			sc["pattern"] = regexp.QuoteMeta(arg)
-		}
-	}
-
-	return sc
-}
-
-func numberSchema(typ string, t reflect.Type, rules []string) Schema {
+// numberFormat is the structural part of a number schema: the type and the
+// width format; the constraint keywords come from z.
+func numberFormat(typ string, t reflect.Type) Schema {
 	sc := Schema{"type": typ}
 
 	switch t.Kind() { //nolint:exhaustive // other kinds have no format
@@ -501,19 +410,22 @@ func numberSchema(typ string, t reflect.Type, rules []string) Schema {
 		sc["format"] = "double"
 	}
 
-	for _, r := range rules {
-		name, arg, _ := strings.Cut(strings.TrimSpace(r), "=")
+	return sc
+}
 
-		n, err := strconv.ParseFloat(arg, 64)
+// constrained adds to the structural schema sc the keywords that z enforces
+// for the `validate` rules on a value of type t; structural keys win. A rule
+// z rejects leaves sc as is: z.For already fails at boot for such a tag, and
+// the document must not take the generator down.
+func constrained(sc Schema, t reflect.Type, rules []string) Schema {
+	kw, _, err := z.Keywords(t, rules)
+	if err != nil {
+		return sc
+	}
 
-		switch {
-		case name == "positive":
-			sc["exclusiveMinimum"] = 0
-		case err != nil:
-		case name == "min":
-			sc["minimum"] = n
-		case name == "max":
-			sc["maximum"] = n
+	for k, v := range kw {
+		if _, ok := sc[k]; !ok {
+			sc[k] = v
 		}
 	}
 

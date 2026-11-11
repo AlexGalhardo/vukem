@@ -47,6 +47,9 @@ type Operation struct {
 	Params []string
 	In     reflect.Type
 	Out    reflect.Type
+	// Schema is the input schema given to RegisterWith, nil for Register
+	// (whose schema comes from In's tags, which generators already read).
+	Schema z.AnySchema
 }
 
 // RouteSummary returns the operation summary; it makes Operation a
@@ -93,11 +96,11 @@ func Register[In, Out any](g Registrar, pattern string, op Op, fn func(*web.Ctx,
 // field errors, the same output handling. It panics on a nil schema, so the
 // mistake surfaces at boot.
 //
-// The OpenAPI document is generated from In and Out (their `json`,
-// `validate` and `doc` tags), so schema never reaches it: the document
-// describes exactly what [Register] would have documented. Keep the static
-// rules in the tags and let schema add only what they cannot say, or the
-// document under-describes what the route enforces.
+// The OpenAPI document describes schema: its constraint keywords replace the
+// tag-derived ones on the top-level inputs (path and query parameters, body
+// properties) and required follows it. Nested structs keep the $ref derived
+// from their tags, and a z.Refine or z.Transform has no JSON Schema form, so
+// the document cannot show it.
 //
 //	schema := z.Struct[CreateKey](z.Shape{
 //		"name":      z.String().Min(1).Max(20),
@@ -130,6 +133,11 @@ func register[In, Out any](
 	schema z.Schema[In],
 	fn func(*web.Ctx, In) (Out, error),
 ) *router.Route {
+	var given z.AnySchema
+	if schema != nil {
+		given = schema
+	}
+
 	method, path, ok := strings.Cut(pattern, " ")
 	if !ok || method == "" || !strings.HasPrefix(path, "/") {
 		panic(fmt.Sprintf("api: %s pattern %q must be \"METHOD /path\"", who, pattern))
@@ -188,7 +196,9 @@ func register[In, Out any](
 		params = append(params, m[1])
 	}
 
-	return rt.Doc(&Operation{Op: op, Method: method, Path: rt.Path(), Params: params, In: inType, Out: outType})
+	return rt.Doc(&Operation{
+		Op: op, Method: method, Path: rt.Path(), Params: params, In: inType, Out: outType, Schema: given,
+	})
 }
 
 func responseStatus(op Op, method string, noOutput bool) int {

@@ -22,6 +22,7 @@ import (
 	"github.com/AlexGalhardo/vukem/api"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 // Info configures the document.
@@ -570,6 +571,7 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 		}
 
 		op.Responses["422"] = Response{Ref: "#/components/responses/ValidationError"}
+		overlayInputSchema(op, t.Schema)
 	}
 
 	s.input = false
@@ -612,4 +614,114 @@ func underPrefix(path, prefix string) bool {
 	prefix = strings.TrimSuffix(prefix, "/")
 
 	return prefix == "" || path == prefix || strings.HasPrefix(path, prefix+"/")
+}
+
+// overlayInputSchema describes the schema given to RegisterWith on the
+// operation's top-level inputs (path and query parameters, body properties):
+// its constraint keywords replace the tag-derived ones, and required follows
+// it. Nested structs keep their tag-derived $ref (keywords beside a $ref are
+// ignored, and inlining would fork a shared component), and keys the schema
+// has but In lacks are ignored.
+func overlayInputSchema(op *Operation, schema z.AnySchema) {
+	props, ok := z.Properties(schema)
+	if !ok {
+		return
+	}
+
+	required := map[string]bool{}
+	if keys, ok := z.JSONSchema(schema)["required"].([]string); ok {
+		for _, k := range keys {
+			required[k] = true
+		}
+	}
+
+	for i, p := range op.Parameters {
+		if zp, ok := props[p.Name]; ok {
+			op.Parameters[i].Schema = overlaySchema(zp, p.Schema)
+			if p.In == "query" {
+				op.Parameters[i].Required = required[p.Name]
+			}
+		}
+	}
+
+	if op.RequestBody == nil {
+		return
+	}
+
+	body := op.RequestBody.Content["application/json"].Schema
+	bodyProps, _ := body["properties"].(map[string]any)
+
+	var req []string
+
+	for _, k := range slices.Sorted(maps.Keys(bodyProps)) {
+		if zp, ok := props[k]; ok {
+			if sc, ok := bodyProps[k].(Schema); ok {
+				bodyProps[k] = overlaySchema(zp, sc)
+			}
+		}
+
+		if required[k] {
+			req = append(req, k)
+		}
+	}
+
+	delete(body, "required")
+
+	if len(req) > 0 {
+		body["required"] = req
+	}
+}
+
+// overlaySchema replaces the constraint keywords of the structural schema sc
+// with those of zp (the RegisterWith schema validates, not the tags), unless
+// sc is or wraps a $ref, or describes base64 bytes.
+func overlaySchema(zp z.AnySchema, sc Schema) Schema {
+	if isRef(sc) || sc["contentEncoding"] != nil {
+		return sc
+	}
+
+	out := maps.Clone(sc)
+	for _, k := range constraintKeys {
+		delete(out, k)
+	}
+
+	// format is structural for Go types (time.Time, int64, float64) and a
+	// rule otherwise (email, uri, uuid).
+	if f, _ := out["format"].(string); !slices.Contains(goFormats, f) {
+		delete(out, "format")
+	}
+
+	maps.Copy(out, z.SchemaKeywords(zp))
+
+	return out
+}
+
+// goFormats are the formats the document derives from Go types.
+var goFormats = []string{"date-time", "int32", "int64", "float", "double"} //nolint:gochecknoglobals // read-only
+
+// constraintKeys are the keywords a validation rule adds to a schema; the
+// structure (type, format of Go types, items, properties) is not among them.
+var constraintKeys = []string{ //nolint:gochecknoglobals // read-only
+	"minLength", "maxLength", "pattern", "enum", "const", "minimum", "maximum", "exclusiveMinimum",
+	"exclusiveMaximum", "multipleOf", "minItems", "maxItems", "uniqueItems", "minProperties",
+	"maxProperties", "default", "anyOf",
+}
+
+// isRef reports a $ref schema or the allOf/anyOf wrapper around one that
+// withDescription, withExamples and nullable pointers produce.
+func isRef(sc Schema) bool {
+	if _, ok := sc["$ref"]; ok {
+		return true
+	}
+
+	for _, key := range []string{"allOf", "anyOf"} {
+		list, _ := sc[key].([]any)
+		for _, e := range list {
+			if m, ok := e.(Schema); ok && isRef(m) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
