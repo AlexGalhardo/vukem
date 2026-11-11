@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-11-11
+
+### Added
+
+- **BREAKING:** **ssg:** Replace the output directory atomically ([c81751d](https://github.com/AlexGalhardo/vukem/commit/c81751dd07e263ec4bc2c8c783677cf286a0d83a))
+- **release:** Tag changed drivers and contrib modules ([bdba789](https://github.com/AlexGalhardo/vukem/commit/bdba78966b2204ea25c47925ccdd07ac5d67f1c6))
+- **cli:** Add stub:publish ([14dfc63](https://github.com/AlexGalhardo/vukem/commit/14dfc63ba69a0420d2cee5e2f0b7dd01e805a343))
+- **cli:** Add upgrade and upgrade --check ([ce8eae9](https://github.com/AlexGalhardo/vukem/commit/ce8eae9544d0f7ee994c54754fa9605e28946b05))
+- **database:** Add the db console command ([11ba57e](https://github.com/AlexGalhardo/vukem/commit/11ba57ec2111dfb8b6b0bc42ff0c39198d5b6a22))
+- **BREAKING:** **config:** Treat a missing APP_ENV as production ([27d2b94](https://github.com/AlexGalhardo/vukem/commit/27d2b942a91683cb44dd9b367bb009ef474e1773))
+- **router:** Pin the middleware order, refuse duplicate providers, enrich route:list ([ee74bdf](https://github.com/AlexGalhardo/vukem/commit/ee74bdf1c3119dba2b08d1a8798981f4c44ffd16))
+- **cli:** Generate the config reference, suggest app commands, extend doctor ([c97efbc](https://github.com/AlexGalhardo/vukem/commit/c97efbca0d37c2b42a5bf7800ac5dda8a2e22e7e))
+- **router:** Say how to fix route and boot configuration errors ([8c83c00](https://github.com/AlexGalhardo/vukem/commit/8c83c00ba3892acc208bd54ad89407b9f55545bb))
+- **view:** Add typed views and the view:check command ([015b247](https://github.com/AlexGalhardo/vukem/commit/015b2477fcf0a73c7a78521dc37c667bce1e1086))
+- **web:** Show the production problem response on the debug page ([110ad35](https://github.com/AlexGalhardo/vukem/commit/110ad3562944959bd4b29387df137bb35fae0284))
+- **z:** Add Literal, Union, DiscriminatedUnion, Tuple, Lazy and struct combinators ([b42aca5](https://github.com/AlexGalhardo/vukem/commit/b42aca59ed10e88a6d3aa009a38de50a55704600))
+- **broadcast:** Add PresenceStore and the sse and presence conformance suites ([1bb5551](https://github.com/AlexGalhardo/vukem/commit/1bb555168d5705ae632fd3d7a296dae176465232))
+- **loadtest:** Add the load generator engine and the bench command ([158262c](https://github.com/AlexGalhardo/vukem/commit/158262c2af4ae5823a4afd5407e7040f08a23e8f))
+- **z:** Add cross-field rules, string formats, codecs and brand ([7ea256e](https://github.com/AlexGalhardo/vukem/commit/7ea256e57d890be6ec9d896a0026c602c36b98bf))
+- **orm:** Add joins, aggregates, subqueries, relation filters, nested loading, Upsert and Raw ([5def372](https://github.com/AlexGalhardo/vukem/commit/5def3728cdae0be3535499c6eced73c0686e56de))
+- **web:** Add structured issues to validation problems and WithMessage to z rules ([d5dd544](https://github.com/AlexGalhardo/vukem/commit/d5dd5449f190ba87766079c7abaa36ff8910429b))
+- **loadtest:** Add scenarios, stages, thresholds, baselines and bench:run ([95a92af](https://github.com/AlexGalhardo/vukem/commit/95a92afbe532357ac6369717cc7938c7ad25e550))
+- **loadtest:** Add the read-only live dashboard and the HTML report ([58bfd82](https://github.com/AlexGalhardo/vukem/commit/58bfd82b7082bfbfb033fe69759e93d63a066b87))
+- **orm:** Add savepoints, tx options, optimistic locking, typed columns and codegen:models ([c10771b](https://github.com/AlexGalhardo/vukem/commit/c10771bd5a3b8fee7b6bbfd3dbd42e859365ebb7))
+- **BREAKING:** **openapi:** Read validation constraints from z ([952ef5f](https://github.com/AlexGalhardo/vukem/commit/952ef5fa57fb3986950f48c777e0504d294397d3))
+- **schema:** Add Inspect, Rebuild and Column.Change, plus migrate:check, migrate:diff, db:pull ([8e3ff9a](https://github.com/AlexGalhardo/vukem/commit/8e3ff9a1827dec12b5ecdff1930cf7e0c42d5113))
+- **database:** Let a driver open and close its own connection ([02882a2](https://github.com/AlexGalhardo/vukem/commit/02882a2b5881dd02dbee1f8eda535fd0b0288742))
+- **site:** Serve a markdown twin of every docs page ([acecee2](https://github.com/AlexGalhardo/vukem/commit/acecee20247223bcbd747e3183b3c200cc26459c))
+- **cli:** Ship typed views in the html/template starters ([d540d3d](https://github.com/AlexGalhardo/vukem/commit/d540d3df5fe81513ef352ccc035a0a5614b7ed36))
+- **BREAKING:** **openapi:** Return { data, error, status } from the TypeScript client ([65bf3ce](https://github.com/AlexGalhardo/vukem/commit/65bf3cef68cebd644a54b1a313f5670ea265077a))
+- **cli:** Add codegen command, -style, -tanstack and -check, and regenerate on serve ([77d7e72](https://github.com/AlexGalhardo/vukem/commit/77d7e7273e60f9adafb8230e4448cb4861c028c3))
+- **inertia:** Add typed page components and openapi.TypeScriptTypes ([4ef4c39](https://github.com/AlexGalhardo/vukem/commit/4ef4c39714c2de2c6dabedb6d3cce62380e6a433))
+- **codegen:** Add codegen:pages and type the saas example's Inertia props ([79e6121](https://github.com/AlexGalhardo/vukem/commit/79e61212cf7e90b1112eab664dba974886a89325))
+- **web:** Map errors to responses by type and give every problem a default type ([ce12002](https://github.com/AlexGalhardo/vukem/commit/ce120022853d05dc6e9107df00e30c9fba5f2b18))
+- **cli:** Ship typed Inertia pages and page-props.ts in the starters ([1c497a2](https://github.com/AlexGalhardo/vukem/commit/1c497a2dafdd0c7158e84b97331e07e0bb997199))
+- **cli:** Regenerate the typed column file with the codegen command ([0add8bf](https://github.com/AlexGalhardo/vukem/commit/0add8bff12bcdb6836bccb619e645bf1970d8479))
+- **cli:** Type the Inertia pages that the installers add ([5b11739](https://github.com/AlexGalhardo/vukem/commit/5b117391d5790cfa4dd92463775daec40055283c))
+
+### Changed
+
+- **inertia:** Build the i18n catalog lazily and keep idle SSR connections ([0bac1ec](https://github.com/AlexGalhardo/vukem/commit/0bac1ec4e4bc95deeeeb73824bd02765c48d2802))
+- **broadcast:** Decode the published envelope once for all subscriptions ([42f2107](https://github.com/AlexGalhardo/vukem/commit/42f21071c543ae9c1fb4887bfbf210b09589b2f3))
+- **queue:** Bound the queue:failed listing with a LIMIT (default 100) ([c098e3f](https://github.com/AlexGalhardo/vukem/commit/c098e3f698b3d90a8d2dc4214c2025893a52a2c5))
+- **ratelimit:** Sweep a bounded batch of keys instead of the whole map ([632d7e0](https://github.com/AlexGalhardo/vukem/commit/632d7e04c04abed5ba982faa87688f38e25fdfa2))
+- **site:** Load the search dialog on first open ([3c6bea5](https://github.com/AlexGalhardo/vukem/commit/3c6bea5e57a4518e1c7be8b9274b6c631b347a4c))
+- **upload:** Share the file name sanitizer with disposition ([c920858](https://github.com/AlexGalhardo/vukem/commit/c92085821b7a811a45dc4a8a788b0efada52651a))
+- Move the SSR commands and Main to their theme files, split graphql coercion ([1087387](https://github.com/AlexGalhardo/vukem/commit/1087387be7f70434f912c03b7c74f9264311341f))
+- **BREAKING:** **z:** Make Slice and Map generic schemas and share the modifiers ([f639020](https://github.com/AlexGalhardo/vukem/commit/f63902061bd9da6757273b0d7d166f984eb5383c))
+- **graphql:** Bound the page size multiplier with an explicit check ([b38ea5f](https://github.com/AlexGalhardo/vukem/commit/b38ea5f3ddb20f918a93fbf9c3951bc83b4bdb6b))
+- **z:** Keep the parse context and Passthrough off the hot path ([45f9e4e](https://github.com/AlexGalhardo/vukem/commit/45f9e4e67bf7f44bb82a39afc4561fe1e3092d3d))
+
+### Fixed
+
+- **cli:** Pin contrib/stripe v0.5.2 in install:billing ([6b502d8](https://github.com/AlexGalhardo/vukem/commit/6b502d821f703dc0f24344c8134ce27aedd0640e))
+- **drivers:** Keep redis ttl, shut down otel on failed boot, clean s3 url keys ([8761f0d](https://github.com/AlexGalhardo/vukem/commit/8761f0dcab1a7062a7ce9156486d7faa2637dfa4))
+- **mongo:** Map duplicate key errors to ErrDuplicate with status 409 ([df6f770](https://github.com/AlexGalhardo/vukem/commit/df6f77072695d8f3ddcc9b8b8441a16ec434e761))
+- **contrib:** Fix stripe event error, kill engine process tree on windows, align x/net ([b9ec27d](https://github.com/AlexGalhardo/vukem/commit/b9ec27d50b4ff7b84c12287901a7d14af74b419c))
+- **devtools:** Bound SQL, bind arguments and mail subject per record ([47e53f5](https://github.com/AlexGalhardo/vukem/commit/47e53f5178bd68da4551c82bf0c093e0c5d83792))
+- **config:** Expand chained .env references and fix mail, tus and make:mail edge cases ([c172173](https://github.com/AlexGalhardo/vukem/commit/c172173be4beeb30568d4b6c8caed4796500a653))
+- **orm:** Bound pagination, session update, cache prefix and migration lock ([8a80470](https://github.com/AlexGalhardo/vukem/commit/8a80470a392641af490f3af29e8a1958aad47fd6))
+- **web:** Keep read errors, order form keys and tighten cross-origin and webhook handling ([15e357b](https://github.com/AlexGalhardo/vukem/commit/15e357b3bd7d0bcce807e0e0282dcf717f4c687e))
+- **boot:** Shut down started providers on failure and report hub subscribe errors ([2e76f9e](https://github.com/AlexGalhardo/vukem/commit/2e76f9e13f5ddaf957dab7f1e32a8ddb25628e08))
+- **graphql:** Bound query complexity for negative costs and null page sizes ([d20332a](https://github.com/AlexGalhardo/vukem/commit/d20332a1b23295251166aa565217434e11bbc709))
+- **graphql:** Mask scalar Parse errors, validate directive args, print string defaults ([ec94f2d](https://github.com/AlexGalhardo/vukem/commit/ec94f2d701b96b1a7dbc365957ec5a5e096fa06b))
+- **graphql:** Run loader batches with the operation context ([f650711](https://github.com/AlexGalhardo/vukem/commit/f650711a5e596b8c9324049127418b306ba1af1d))
+- **graphql:** Compare every pair of distinct fields when merging selections ([b7e90a7](https://github.com/AlexGalhardo/vukem/commit/b7e90a72d5852d9cf11a40abe6d89e051f80327e))
+- **social:** Require https and a matching issuer in OIDC discovery ([ff91584](https://github.com/AlexGalhardo/vukem/commit/ff9158413f7209ae3ee6fdd1c9fa89837536f098))
+- **auth:** Bound argon2id concurrency and tighten JWKS, typ and recovery codes ([c29b009](https://github.com/AlexGalhardo/vukem/commit/c29b009ed2bcb278c6991080935c985e96b45c41))
+- **site:** Canonical for old versions, scroll padding, reduced motion ([9428726](https://github.com/AlexGalhardo/vukem/commit/9428726dd23b6693c3d11a03bb2311c3d46ca8e9))
+- **httpclient:** Evict idle hosts, and share the GCRA math with ratelimit ([e5ee331](https://github.com/AlexGalhardo/vukem/commit/e5ee3319860e6e2e5e0f8dcfbaf354ab1d98b6ef))
+- **middleware:** Trust no peer when TrustedProxies is empty ([d81beba](https://github.com/AlexGalhardo/vukem/commit/d81beba4deb8a2392919c45ccd378973e3714f38))
+- **cli:** Keep the doctor APP_ENV check case-sensitive like the boot ([1565240](https://github.com/AlexGalhardo/vukem/commit/156524038c13be2c0ab728bb801a4371d1b63935))
+- **BREAKING:** **orm:** Skip trashed rows in Update, add UpdateOnly, branch on dialect capabilities ([f1fabaf](https://github.com/AlexGalhardo/vukem/commit/f1fabafae9066944c2832abc93535843faf29047))
+- **loadtest:** Mark the dashboard cookie Secure when it comes over TLS ([3b74189](https://github.com/AlexGalhardo/vukem/commit/3b741891eba33aeed4fd56606ff8b963779739fd))
+- **mysql:** Refuse clientFoundRows=false in the DSN ([5f22c57](https://github.com/AlexGalhardo/vukem/commit/5f22c5710812dfcd7858d4a7facfe531368cd303))
+- **openapi:** Keep route patterns and summaries inside the doc comment of a generated client ([6ae73fa](https://github.com/AlexGalhardo/vukem/commit/6ae73fae2be43b6b3b68b26482dff0fccd2739ac))
+- **codegen:** Refuse a models package name that is not a Go identifier ([9a6f128](https://github.com/AlexGalhardo/vukem/commit/9a6f1285f7e7983bd890bf1605ad6d519a164479))
+- **site:** Leave MDX comments out of the Markdown twin ([36914de](https://github.com/AlexGalhardo/vukem/commit/36914de54f096dc0bf1eb645cb2402d464c48309))
+- **web:** Validate APP_PROBLEM_BASE_URL at boot ([e8985f9](https://github.com/AlexGalhardo/vukem/commit/e8985f90d6be68b164e04a13c6bc0560ca070297))
+- **cli:** Run the serve codegen beside the app, with a timeout ([a66dc85](https://github.com/AlexGalhardo/vukem/commit/a66dc85a79c8e6591991c70887a98a61b0a1ad35))
+- **codegen:** Keep the G703 nolint valid on golangci-lint 2.14 and 2.15 ([e15c3fe](https://github.com/AlexGalhardo/vukem/commit/e15c3fe989c0440ea0dcedbd88b229d5e7c54bcd))
+
 ## [0.40.0] - 2026-11-10
 
 ### Added
@@ -1421,7 +1503,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/AlexGalhardo/vukem/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/AlexGalhardo/vukem/compare/v0.39.1...v0.40.0
 [0.39.1]: https://github.com/AlexGalhardo/vukem/compare/v0.39.0...v0.39.1
 [0.39.0]: https://github.com/AlexGalhardo/vukem/compare/v0.38.0...v0.39.0
