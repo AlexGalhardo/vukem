@@ -28,6 +28,7 @@ import (
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/internal/suggest"
 	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/ssg"
@@ -102,6 +103,17 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 	}
 
 	if cmd == nil {
+		var names []string
+		for _, c := range app.Commands() {
+			names = append(names, c.Name())
+		}
+
+		if s := suggest.Closest(name, names); s != "" {
+			fmt.Fprintf(app.stdout, "unknown command %q (did you mean %q?)\n", name, s)
+
+			return errUsage
+		}
+
 		fmt.Fprintf(app.stdout, "unknown command %q\n\n", name)
 		printCommands(app)
 

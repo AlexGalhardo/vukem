@@ -65,20 +65,28 @@ const (
 
 // Config is the core application configuration, loaded from the environment.
 type Config struct {
-	Name  string        `env:"APP_NAME"  default:"Vukem"`
-	Env   config.Env    `env:"APP_ENV"   default:"production"`
-	Debug bool          `env:"APP_DEBUG"`
-	URL   string        `env:"APP_URL"   default:"http://localhost:3000"`
-	Key   config.Secret `env:"APP_KEY"`
+	// Name is the application name, shown in logs, mail and pages.
+	Name string `env:"APP_NAME" default:"Vukem"`
+	// Env is development, test or production; any other value is a boot error, and unset or empty means production.
+	Env config.Env `env:"APP_ENV" default:"production"`
+	// Debug shows error details and the debug page; it must be false when APP_ENV is production.
+	Debug bool `env:"APP_DEBUG"`
+	// URL is the public origin of the app, used for absolute URLs.
+	URL string `env:"APP_URL" default:"http://localhost:3000"`
+	// Key is the secret key that signs and encrypts; see the APP_KEY section of docs/configuration.md.
+	Key config.Secret `env:"APP_KEY"`
 	// PreviousKeys are former APP_KEY values (comma-separated, same format)
 	// that still open what they sealed or signed after a key rotation:
 	// app.Crypt tokens (encrypted cookies and columns, queued mail), cookie
 	// sessions, the maintenance bypass and, through DerivePreviousKeys,
 	// signed URLs and social login state. New values always use APP_KEY.
-	PreviousKeys    config.Secret `env:"APP_PREVIOUS_KEYS"`
-	Host            string        `env:"HOST"              default:"localhost"`
-	Port            int           `env:"PORT"              default:"3000"`
-	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT"  default:"15s"`
+	PreviousKeys config.Secret `env:"APP_PREVIOUS_KEYS"`
+	// Host is the listen address (0.0.0.0 listens on all IPv4 interfaces).
+	Host string `env:"HOST" default:"localhost"`
+	// Port is the listen port, 0 to 65535; 0 picks a free port.
+	Port int `env:"PORT" default:"3000"`
+	// ShutdownTimeout is how long a graceful shutdown may take.
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" default:"15s"`
 	// H2C serves HTTP/2 without TLS (prior knowledge, for gRPC clients) in
 	// production too, behind a proxy that speaks h2c. It is always on
 	// outside production.
@@ -87,7 +95,8 @@ type Config struct {
 	// (ALPN h2) and HTTP/1.1, TLS 1.2 or later; the pair is reloaded when
 	// either file changes. Set both or neither. See WithTLSConfig.
 	TLSCertFile string `env:"TLS_CERT_FILE"`
-	TLSKeyFile  string `env:"TLS_KEY_FILE"`
+	// TLSKeyFile is the PEM private key that pairs with TLSCertFile.
+	TLSKeyFile string `env:"TLS_KEY_FILE"`
 	// TLSRedirectAddr (e.g. ":80") also listens for plain HTTP there and
 	// redirects every request (308) to APP_URL, which must be https. Without
 	// it a TLS server has no plaintext listener.
@@ -95,9 +104,11 @@ type Config struct {
 	// MaxHeaderBytes caps the request line plus headers the HTTP server
 	// reads (4096 to 1048576 bytes, Go's own default; outside is a boot
 	// error). Larger requests get 431.
-	MaxHeaderBytes int    `env:"HTTP_MAX_HEADER_BYTES" default:"65536"`
-	LogLevel       string `env:"LOG_LEVEL"             default:"info"`
-	LogFormat      string `env:"LOG_FORMAT"`
+	MaxHeaderBytes int `env:"HTTP_MAX_HEADER_BYTES" default:"65536"`
+	// LogLevel is debug, info, warn or error.
+	LogLevel string `env:"LOG_LEVEL" default:"info"`
+	// LogFormat is text or json; empty means json in production and text elsewhere.
+	LogFormat string `env:"LOG_FORMAT"`
 	// LogTruncateIP makes the request log write the /24 (IPv4) or /48
 	// (IPv6) network instead of the client address (data minimisation).
 	LogTruncateIP bool `env:"LOG_TRUNCATE_IP"`

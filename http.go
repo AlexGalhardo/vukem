@@ -275,10 +275,13 @@ func (a *App) healthHandler(c *web.Ctx) error {
 type SessionConfig struct {
 	// Driver is "cookie" (encrypted cookie, default) or "memory"; the
 	// database driver is installed by the database provider.
-	Driver      string        `env:"SESSION_DRIVER"       default:"cookie"`
-	Lifetime    time.Duration `env:"SESSION_LIFETIME"     default:"24h"`
+	Driver string `env:"SESSION_DRIVER" default:"cookie"`
+	// Lifetime is the absolute lifetime of a session.
+	Lifetime time.Duration `env:"SESSION_LIFETIME" default:"24h"`
+	// IdleTimeout ends a session after this much inactivity.
 	IdleTimeout time.Duration `env:"SESSION_IDLE_TIMEOUT" default:"2h"`
-	CookieName  string        `env:"SESSION_COOKIE"       default:"vukem_session"`
+	// CookieName is the session cookie name; __Host- is added when the cookie is Secure.
+	CookieName string `env:"SESSION_COOKIE" default:"vukem_session"`
 	// Secure defaults to true in production or when APP_URL is https.
 	Secure string `env:"SESSION_SECURE" default:"auto"`
 	// RecordClient keeps the user agent and client network with each

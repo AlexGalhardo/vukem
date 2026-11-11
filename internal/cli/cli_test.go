@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -280,6 +281,16 @@ var generated = []string{
 func runGenerators(t *testing.T, dir string) {
 	t.Helper()
 
+	runGeneratorsOutput(t, dir)
+}
+
+// runGeneratorsOutput runs every make:* invocation of the golden table in dir
+// and returns their combined stdout.
+func runGeneratorsOutput(t *testing.T, dir string) string {
+	t.Helper()
+
+	var all strings.Builder
+
 	for _, args := range [][]string{
 		{"make:model", "Post", "-m", "-f", "-c"},
 		{"make:controller", "CommentController", "--resource"},
@@ -306,8 +317,35 @@ func runGenerators(t *testing.T, dir string) {
 		{"make:listener", "UpdateStock", "--event", "OrderShipped", "--queued"},
 		{"make:job", "SendInvoiceJob"},
 	} {
-		if code, out, errOut := vukem(t, dir, args...); code != 0 {
+		code, out, errOut := vukem(t, dir, args...)
+		if code != 0 {
 			t.Fatalf("vukem %v = %d\n%s%s", args, code, out, errOut)
+		}
+
+		all.WriteString(out)
+	}
+
+	return all.String()
+}
+
+// TestGeneratorOutputPrefixes pins the output contract of the generators:
+// every unindented line starts with created, updated, next: or note:; an
+// indented line is the snippet that goes with a next: line.
+func TestGeneratorOutputPrefixes(t *testing.T) {
+	t.Parallel()
+
+	out := runGeneratorsOutput(t, project(t))
+
+	for line := range strings.Lines(out) {
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+
+		if !slices.ContainsFunc([]string{"created ", "updated ", "next: ", "note: "}, func(p string) bool {
+			return strings.HasPrefix(line, p)
+		}) {
+			t.Errorf("generator output line %q does not start with created, updated, next: or note:", line)
 		}
 	}
 }

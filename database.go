@@ -26,9 +26,12 @@ import (
 
 // DatabaseConfig is loaded from DB_* variables.
 type DatabaseConfig struct {
-	URL     string `env:"DATABASE_URL" default:"file:storage/database.sqlite"`
-	MaxOpen int    `env:"DB_MAX_OPEN"  default:"10"`
-	MaxIdle int    `env:"DB_MAX_IDLE"  default:"5"`
+	// URL says where the database is; the scheme picks the driver.
+	URL string `env:"DATABASE_URL" default:"file:storage/database.sqlite"`
+	// MaxOpen is the maximum number of open connections (on SQLite, the reader pool).
+	MaxOpen int `env:"DB_MAX_OPEN" default:"10"`
+	// MaxIdle is the number of idle connections kept ready.
+	MaxIdle int `env:"DB_MAX_IDLE" default:"5"`
 }
 
 // WithMigrations registers the application's migrations used by the migrate

@@ -132,6 +132,16 @@ tasks:
       - for: { var: MODULES }
         cmd: cd {{.ITEM}} && go mod tidy
 
+  config:docs:
+    desc: "Regenerate the environment variable table in docs/configuration.md"
+    cmds:
+      - go run ./internal/tools/configref
+
+  config:check:
+    desc: "Fail when docs/configuration.md does not list the config struct fields"
+    cmds:
+      - go run ./internal/tools/configref -check
+
   tidy:check:
     desc: Fail when any module's go.mod or go.sum is not tidy
     cmds:
@@ -205,6 +215,7 @@ tasks:
       - task: lint
       - task: vet
       - task: mod:check
+      - task: config:check
       - task: snippets:check
       - task: test
 
