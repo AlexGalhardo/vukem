@@ -93,7 +93,7 @@ func OpenSQL(ctx context.Context, name, dir, rawURL string) (*SQLDB, error) {
 		return nil, fmt.Errorf("studio: cannot open the database (%s): %w", Redact(rawURL), errNoURL(err, rawURL))
 	}
 
-	src := NewSQL(name, Redact(rawURL), db, nil)
+	src := NewSQL(name, Redact(rawURL), db, schemaCatalog{db})
 	src.memory = openURL == "file::memory:"
 
 	return src, nil
