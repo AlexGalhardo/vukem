@@ -100,8 +100,8 @@ func (sub *Subscription) forward(events <-chan sse.Event) {
 	defer sub.Close()
 
 	for ev := range events {
-		var env envelope
-		if json.Unmarshal([]byte(ev.Data), &env) != nil {
+		env, ok := sub.srv.decodeEnvelope(ev.Data)
+		if !ok {
 			continue
 		}
 
@@ -110,7 +110,7 @@ func (sub *Subscription) forward(events <-chan sse.Event) {
 		}
 
 		select {
-		case sub.out <- Message{Channel: env.Channel, Event: env.Event, Data: env.Data}:
+		case sub.out <- Message{Channel: env.Channel, Event: env.Event, Data: slices.Clone(env.Data)}:
 		case <-sub.done:
 			return
 		}
