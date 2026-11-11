@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/AlexGalhardo/vukem/internal/gcra"
 )
 
 // ErrCircuitOpen is returned by a [Breaker] transport while the host's
@@ -53,11 +56,13 @@ type throttle struct {
 	next  http.RoundTripper
 	limit Limit
 
-	mu sync.Mutex
-	// shortcut: entries are never evicted, fine for a fixed set of API
-	// hosts; add an LRU before throttling arbitrary user-supplied hosts.
+	mu    sync.Mutex
 	hosts map[string]*hostLimit
 }
+
+// maxHosts is how many per-host entries a throttle or breaker keeps before
+// it drops the idle ones.
+const maxHosts = 1024
 
 type hostLimit struct {
 	tat time.Time     // theoretical arrival time of the next request (GCRA)
@@ -67,6 +72,11 @@ type hostLimit struct {
 func (t *throttle) host(name string) *hostLimit {
 	h := t.hosts[name]
 	if h == nil {
+		if len(t.hosts) >= maxHosts {
+			now := time.Now()
+			maps.DeleteFunc(t.hosts, func(_ string, h *hostLimit) bool { return !h.tat.After(now) && len(h.sem) == 0 })
+		}
+
 		h = &hostLimit{}
 		if t.limit.InFlight > 0 {
 			h.sem = make(chan struct{}, t.limit.InFlight)
@@ -87,12 +97,8 @@ func (t *throttle) reserve(h *hostLimit) time.Duration {
 	interval := time.Duration(float64(time.Second) / t.limit.PerSecond)
 	now := time.Now()
 
-	if h.tat.Before(now) {
-		h.tat = now
-	}
-
-	allowAt := h.tat.Add(-time.Duration(max(t.limit.Burst, 1)-1) * interval)
-	h.tat = h.tat.Add(interval)
+	next, allowAt := gcra.Next(h.tat, now, interval, time.Duration(max(t.limit.Burst, 1))*interval)
+	h.tat = next
 
 	return allowAt.Sub(now)
 }
@@ -330,7 +336,7 @@ type breaker struct {
 	opts BreakerOptions
 
 	mu    sync.Mutex
-	hosts map[string]*circuit // shortcut: never evicted, like throttle.hosts
+	hosts map[string]*circuit
 }
 
 type circuit struct {
@@ -346,6 +352,13 @@ func (b *breaker) roundTrip(req *http.Request) (*http.Response, error) {
 
 	c := b.hosts[host]
 	if c == nil {
+		if len(b.hosts) >= maxHosts {
+			now := time.Now()
+			maps.DeleteFunc(b.hosts, func(_ string, c *circuit) bool {
+				return c.failures == 0 && !c.trial && !c.openUntil.After(now)
+			})
+		}
+
 		c = &circuit{}
 		b.hosts[host] = c
 	}

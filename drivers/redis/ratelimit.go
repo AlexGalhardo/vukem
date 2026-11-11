@@ -10,7 +10,9 @@ import (
 )
 
 // Limiter implements ratelimit.Limiter with GCRA in Redis, so every server
-// shares the same budget per key.
+// shares the same budget per key. The Lua script mirrors the arithmetic of
+// internal/gcra in the core module, which this module cannot import: keep
+// the two in step.
 type Limiter struct {
 	rdb      goredis.UniversalClient
 	prefix   string

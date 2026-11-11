@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/gcra"
 	"github.com/AlexGalhardo/vukem/internal/principal"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -123,18 +124,12 @@ func (m *Memory) Allow(_ context.Context, key string) (Result, error) {
 		m.prune(now)
 	}
 
-	tat := m.tat[key]
-	if tat.Before(now) {
-		tat = now
-	}
-
-	next := tat.Add(m.interval)
-	allowAt := next.Add(-m.tolerance)
+	next, allowAt := gcra.Next(m.tat[key], now, m.interval, m.tolerance)
 
 	if now.Before(allowAt) {
 		return Result{
 			Limit:      m.limit,
-			ResetAfter: tat.Sub(now),
+			ResetAfter: next.Add(-m.interval).Sub(now),
 			RetryAfter: allowAt.Sub(now),
 		}, nil
 	}
