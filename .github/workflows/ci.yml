@@ -93,7 +93,7 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npx tsc --noEmit --strict --target es2020 --module esnext --moduleResolution bundler shop.types.ts shop.zod.ts reserved.zod.ts
-          npx tsc --noEmit --strict --target es2022 --lib es2022,dom shop.client.ts reserved.client.ts
+          npx tsc --noEmit --strict --target es2022 --lib es2022,dom shop.client.ts reserved.client.ts shop.client.throw.ts shop.client.tanstack.ts shop.client.usage.ts
 
   markdown:
     name: Lint (Markdown)
