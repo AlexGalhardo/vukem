@@ -153,12 +153,12 @@ func (s *session) subscribe(channel string) {
 		return
 	}
 
-	// A presence channel lists its members before the subscription is kept:
-	// a failing store refuses it instead of sending an empty list.
+	// Here comes before "subscribed" so a store failure can refuse the
+	// subscription instead of answering with an empty member list.
 	members, err := sub.Here(s.ctx, channel)
 	if err != nil && !errors.Is(err, broadcast.ErrInvalidChannel) {
 		sub.Close()
-		s.fail(channel, err)
+		s.fail(channel, errs.New(http.StatusServiceUnavailable, http.StatusText(http.StatusServiceUnavailable)))
 
 		return
 	}
