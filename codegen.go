@@ -1,6 +1,7 @@
 package vukem
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -27,13 +28,17 @@ import (
 const defaultRoutesTS = "resources/js/routes.ts"
 
 func codegenRoutesCommand() Command {
-	var out *string
+	var (
+		out   *string
+		check *bool
+	)
 
 	return CommandFunc{
 		CommandName: "codegen:routes",
-		Desc:        "Generate typed frontend routes (resources/js/routes.ts; -o - prints to stdout)",
+		Desc:        "Generate typed frontend routes (resources/js/routes.ts; -o - prints to stdout; -check fails if stale)",
 		DefineFlags: func(fs *flag.FlagSet) {
 			out = fs.String("o", defaultRoutesTS, `write to this file ("-" for stdout)`)
+			check = fs.Bool("check", false, "write nothing; fail if the file is not up to date")
 		},
 		Fn: func(_ context.Context, app *App, _ []string) error {
 			if _, err := app.Router.Handler(); err != nil {
@@ -42,17 +47,16 @@ func codegenRoutesCommand() Command {
 
 			ts := routesTypeScript(app.Router.Routes())
 
+			if *check && *out == "-" {
+				return errors.New("codegen:routes: -check needs a file, not -o -")
+			}
+
 			if *out == "-" {
 				_, err := io.WriteString(app.stdout, ts)
 				return err
 			}
 
-			path := filepath.FromSlash(*out)
-			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-				return fmt.Errorf("codegen:routes: %w", err)
-			}
-
-			return os.WriteFile(path, []byte(ts), 0o600)
+			return writeGenerated("codegen:routes", *out, []byte(ts), *check)
 		},
 	}
 }
@@ -219,14 +223,27 @@ func openAPIDocument(app *App, prefix string) (*openapi.Document, error) {
 }
 
 func codegenClientCommand() Command {
-	var prefix string
-
-	var lang, out, pkg *string
+	var (
+		prefix         string
+		lang, out, pkg *string
+		style          *string
+		tanstack       *bool
+		check          *bool
+	)
 
 	return CommandFunc{
 		CommandName: "codegen:client",
-		Desc:        "Generate a typed API client from the OpenAPI document (-lang ts|go; -o - prints to stdout)",
+		Desc: "Generate a typed API client from the OpenAPI document " +
+			"(-lang ts|go; -style result|throw; -tanstack; -check; -o - prints to stdout)",
 		DefineFlags: func(fs *flag.FlagSet) {
+			style = fs.String("style", string(openapi.StyleResult),
+				"ts client style: result ({ data, error, status }) or throw (throws ApiError)")
+			tanstack = fs.Bool(
+				"tanstack",
+				false,
+				"ts: add createQueries, option objects for TanStack Query (style result)",
+			)
+			check = fs.Bool("check", false, "write nothing; fail if the file is not up to date")
 			lang = fs.String("lang", "ts", "client language: ts or go")
 			out = fs.String("o", "", `write to this file ("-" for stdout; default `+
 				defaultClientTS+" or "+defaultClientGo+")")
@@ -234,6 +251,14 @@ func codegenClientCommand() Command {
 			openAPIPrefixFlag(fs, &prefix)
 		},
 		Fn: func(_ context.Context, app *App, _ []string) error {
+			if *lang != "ts" && (*style != string(openapi.StyleResult) || *tanstack) {
+				return errors.New("codegen:client: -style applies to -lang ts only")
+			}
+
+			if *check && *out == "-" {
+				return errors.New("codegen:client: -check needs a file, not -o -")
+			}
+
 			doc, err := openAPIDocument(app, prefix)
 			if err != nil {
 				return err
@@ -246,7 +271,11 @@ func codegenClientCommand() Command {
 
 			switch *lang {
 			case "ts":
-				ts, err := openapi.TypeScriptClient(doc)
+				ts, err := openapi.TypeScriptClientWith(doc, openapi.ClientOptions{
+					Style:    openapi.ClientStyle(*style),
+					TanStack: *tanstack,
+					Args:     clientArgs(*style, *tanstack, prefix),
+				})
 				if err != nil {
 					return err
 				}
@@ -271,14 +300,160 @@ func codegenClientCommand() Command {
 				target = *out
 			}
 
-			path := filepath.FromSlash(target)
-			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-				return fmt.Errorf("codegen:client: %w", err)
-			}
-
-			return os.WriteFile(path, src, 0o600) //nolint:gosec // G703: path from the developer's own -o flag
+			return writeGenerated("codegen:client", target, src, *check)
 		},
 	}
+}
+
+// clientArgs is the text of the flags that differ from the defaults, in a fixed
+// order, as the header of a generated ts client records them. -package is not
+// recorded: it only applies to -lang go.
+func clientArgs(style string, tanstack bool, prefix string) string {
+	var args []string
+
+	if style != string(openapi.StyleResult) {
+		args = append(args, "-style", style)
+	}
+
+	if tanstack {
+		args = append(args, "-tanstack")
+	}
+
+	if prefix != "" {
+		args = append(args, "-prefix", prefix)
+	}
+
+	return strings.Join(args, " ")
+}
+
+// writeGenerated writes a generated file, creating its directory, and only
+// when the bytes differ, so a watcher does not see a change that is not one.
+// With check it writes nothing and fails when the file is stale.
+func writeGenerated(cmd, target string, src []byte, check bool) error {
+	path := filepath.FromSlash(target)
+
+	if cur, err := os.ReadFile(
+		path,
+	); err == nil &&
+		bytes.Equal(cur, src) {
+		return nil
+	}
+
+	if check {
+		return fmt.Errorf("%s: %s is stale: run \"vukem %s\"", cmd, target, cmd)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return fmt.Errorf("%s: %w", cmd, err)
+	}
+
+	if err := os.WriteFile(path, src, 0o600); err != nil { //nolint:gosec // G703: path from the developer's own -o flag
+		return fmt.Errorf("%s: %w", cmd, err)
+	}
+
+	return nil
+}
+
+// codegenTarget is a file the "codegen" command keeps up to date.
+type codegenTarget struct {
+	path    string
+	command func() Command
+	args    []string // always passed, before the ones the file header records
+}
+
+var codegenTargets = []codegenTarget{
+	{path: defaultRoutesTS, command: codegenRoutesCommand},
+	{path: defaultClientTS, command: codegenClientCommand},
+	{path: defaultClientGo, command: codegenClientCommand, args: []string{"-lang", "go"}},
+}
+
+// generatedHeader matches the first line of a generated file and captures the
+// command and the flags it ran with. Only flags are accepted: nothing else
+// from a file may reach a command line.
+var generatedHeader = regexp.MustCompile(
+	`^// Code generated by vukem (codegen:[a-z]+)((?: -[a-z]+(?: [^ ]+)?)*)\. DO NOT EDIT\.$`,
+)
+
+// generatedArgs parses the first line of a generated file.
+func generatedArgs(firstLine string) (command string, args []string, ok bool) {
+	m := generatedHeader.FindStringSubmatch(strings.TrimRight(firstLine, "\r"))
+	if m == nil {
+		return "", nil, false
+	}
+
+	return m[1], strings.Fields(m[2]), true
+}
+
+func codegenCommand() Command {
+	var check *bool
+
+	return CommandFunc{
+		CommandName: "codegen",
+		Desc:        "Regenerate the generated frontend and client files that exist (-check fails if any is stale)",
+		DefineFlags: func(fs *flag.FlagSet) {
+			check = fs.Bool("check", false, "write nothing; fail if a file is not up to date")
+		},
+		Fn: func(ctx context.Context, app *App, _ []string) error {
+			var errs []error
+
+			for _, t := range codegenTargets {
+				if err := runCodegenTarget(ctx, app, t, *check); err != nil {
+					errs = append(errs, err)
+				}
+			}
+
+			return errors.Join(errs...)
+		},
+	}
+}
+
+// runCodegenTarget regenerates one existing file with the flags its header
+// records. A file that is missing is skipped (the app does not use it); one
+// whose header is not the generator's is left alone and reported.
+func runCodegenTarget(ctx context.Context, app *App, t codegenTarget, check bool) error {
+	first, err := firstLineOf(filepath.FromSlash(t.path))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("codegen: %w", err)
+	}
+
+	cmd := t.command()
+
+	name, recorded, ok := generatedArgs(first)
+	if !ok || name != cmd.Name() {
+		return fmt.Errorf("codegen: %s has no %s header; remove it or run vukem %s", t.path, cmd.Name(), cmd.Name())
+	}
+
+	args := slices.Concat(t.args, recorded, []string{"-o", t.path})
+	if check {
+		args = append(args, "-check")
+	}
+
+	fs := flag.NewFlagSet(cmd.Name(), flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	cmd.Flags(fs)
+
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("codegen: %s: %w", t.path, err)
+	}
+
+	return cmd.Run(ctx, app, fs.Args())
+}
+
+func firstLineOf(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+
+	defer f.Close()
+
+	line, _ := bufio.NewReader(f).ReadString('\n')
+
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
 const defaultColsGo = "app/models/cols/cols_gen.go"

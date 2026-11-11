@@ -136,7 +136,11 @@ The generated file starts with the same types as [`codegen:types`](/docs/rest-ap
 | --- | --- |
 | `<Op>Params` | the path parameters of an operation (`TasksUpdateParams = { task: number }`) |
 | `ApiProblem` | an RFC 9457 problem details document |
-| `ApiError` | the error thrown for every non-2xx response |
+| `ApiResult<T, E>` | what every method resolves to: `{ data, error, status, headers, response }` |
+| `<Op>Error` | the union of the error responses an operation declares, one member per status, then every other status |
+| `HttpErrorStatus` | the error statuses the client narrows on |
+| `CallOptions` | the optional second argument of a method: `{ signal, headers }` |
+| `ApiError` | thrown with `throwHttpError`, by `-style throw` and by the TanStack helpers |
 | `ClientOptions` | the options of `createClient` |
 | `Client` | an interface with one method per operation, with a doc comment `METHOD /path: summary` (and `@deprecated` when the operation is) |
 | `createClient(options)` | returns a `Client` |
@@ -152,24 +156,26 @@ export interface Client {
   /**
    * DELETE /api/v1/tasks/{task}: Delete a task
    */
-  tasksDestroy(args: {
-    params: TasksDestroyParams;
-  }): Promise<TasksDestroyResponse>;
+  tasksDestroy(
+    args: { params: TasksDestroyParams },
+    options?: CallOptions,
+  ): Promise<ApiResult<TasksDestroyResponse, TasksDestroyError>>;
 
   /**
    * POST /api/v1/tasks: Create a task
    */
-  tasksStore(args: {
-    body: TasksStoreBody;
-  }): Promise<TasksStoreResponse>;
+  tasksStore(
+    args: { body: TasksStoreBody },
+    options?: CallOptions,
+  ): Promise<ApiResult<TasksStoreResponse, TasksStoreError>>;
 
   /**
    * PUT /api/v1/tasks/{task}: Replace a task
    */
-  tasksUpdate(args: {
-    params: TasksUpdateParams;
-    body: TasksUpdateBody;
-  }): Promise<TasksUpdateResponse>;
+  tasksUpdate(
+    args: { params: TasksUpdateParams; body: TasksUpdateBody },
+    options?: CallOptions,
+  ): Promise<ApiResult<TasksUpdateResponse, TasksUpdateError>>;
 }
 ```
 
@@ -200,12 +206,41 @@ export const api = createClient({
 | `fetch` | `globalThis.fetch` | a replacement `fetch` (tests, SSR, retries) |
 | `headers` | none | a `HeadersInit` object, or a function (sync or async) called per request |
 | `credentials` | `"same-origin"` | the `fetch` credentials mode |
+| `onRequest` | none | called with the final URL and the `RequestInit` before the request is sent; a `RequestInit` it returns is merged member by member over the one built (a returned `headers` replaces the whole set) |
+| `onResponse` | none | called with the `Response` before its body is read |
+| `throwHttpError` | `false` | throw `ApiError` on a non-2xx response instead of returning `error` |
 
 `Accept: application/json` is sent unless your headers set another `Accept`.
 
 ### Responses and errors
 
-A `204` resolves to `undefined`. A body whose `Content-Type` mentions `json` is parsed as JSON; any other body is returned as text. Every non-2xx response throws `ApiError`:
+A `204` resolves to `undefined` data. A body whose `Content-Type` mentions `json` is parsed as JSON; any other body is returned as text. Every method resolves to `{ data, error, status, headers, response }`: on a 2xx response `data` is the body and `error` is `null`; on any other status `data` is `null` and `error` is `{ status, value }`, where `value` is the problem body. Checking `error` narrows both:
+
+```ts title="resources/js/tasks.ts"
+const { data, error } = await api.tasksStore({ body: { title: "x" } });
+
+if (error) {
+  if (error.status === 422) {
+    // { title: ["The title field must be at least 3 characters."] }
+    console.log(error.value.errors);
+  }
+  return;
+}
+
+console.log(data.id); // data is the task here
+```
+
+Each method has an `<Op>Error` type with one member per 4xx or 5xx status the operation declares, in numeric order, then a last member for every other status (`value: ApiProblem | undefined`). That last member says `status: Exclude<HttpErrorStatus, 401 | 422>` rather than `number`: without the `Exclude`, comparing `error.status` with `422` would not narrow the declared member. A status outside `HttpErrorStatus` (a `418`, say) is still returned as it came; the type is an approximation there.
+
+A failed `fetch` (network down, abort) is not a result: the call rejects with the `TypeError` or `AbortError` `fetch` raised. An error response whose body cannot be read gives `value: undefined`.
+
+### The throw style
+
+Regenerate with `-style throw` to get the previous behavior: methods resolve to the data and every non-2xx response throws `ApiError`.
+
+```bash
+vukem codegen:client -style throw
+```
 
 ```ts title="resources/js/tasks.ts"
 import { ApiError } from "./api";
@@ -214,13 +249,14 @@ try {
   await api.tasksStore({ body: { title: "x" } });
 } catch (err) {
   if (err instanceof ApiError && err.status === 422) {
-    // { title: ["The title field must be at least 3 characters."] }
     console.log(err.errors);
   } else {
     throw err;
   }
 }
 ```
+
+A result-style client throws the same `ApiError` when you pass `throwHttpError: true` to `createClient`.
 
 | `ApiError` member | Value |
 | --- | --- |
@@ -231,6 +267,23 @@ try {
 | `name` | `"ApiError"` |
 
 A network failure is not an `ApiError`: `fetch` rejects with its own `TypeError`.
+
+### TanStack Query
+
+`vukem codegen:client -tanstack` appends `createQueries(client)`. It imports nothing, so the file still has no dependency; each entry is a plain object in the shape TanStack Query takes (`queryKey` and `queryFn` for `useQuery` and `queryOptions`, `mutationKey` and `mutationFn` for `useMutation`).
+
+```ts title="resources/js/tasks.tsx"
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { createClient, createQueries } from "./api";
+
+const q = createQueries(createClient());
+
+const tasks = useQuery(q.tasksIndex({ query: { page: 1 } }));
+const store = useMutation(q.tasksStore());
+store.mutate({ body: { title: "Write docs" } });
+```
+
+`queryFn` receives the `signal` TanStack Query gives it and passes it to the request, so an unmounted query cancels the call. Both functions throw `ApiError` on an HTTP error, which is what TanStack Query turns into its `error` state.
 
 ## Go client
 
@@ -362,7 +415,7 @@ func TestGeneratedClientIsCurrent(t *testing.T) {
 }
 ```
 
-For TypeScript, compare `openapi.TypeScriptClient(doc)` with `resources/js/api.ts` the same way, and type-check it with `tsc --strict` in CI. The framework's own CI keeps golden clients (`openapi/testdata/shop.client.ts` and `shop.client.go`), runs the generated Go client against a live app, and type-checks the TypeScript one with `tsc --strict`.
+For TypeScript, run `vukem codegen:client -check` (or `vukem codegen --check` for every generated file) in CI: it writes nothing and fails with `resources/js/api.ts is stale: run "vukem codegen:client"`. The header of each generated file records the flags it was made with, so `vukem codegen` regenerates it the same way, and `vukem serve` runs it after each build. Type-check the file with `tsc --strict` in CI. The framework's own CI keeps golden clients (`openapi/testdata/shop.client.ts` and `shop.client.go`), runs the generated Go client against a live app, and type-checks the TypeScript one with `tsc --strict`.
 
 ## Name collisions
 

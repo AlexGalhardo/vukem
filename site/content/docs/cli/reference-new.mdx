@@ -128,12 +128,14 @@ vukem serve [flags]
 | --- | --- | --- | --- |
 | `-poll` | duration | `500ms` | How often to check files for changes. Go [duration](https://pkg.go.dev/time#ParseDuration): `250ms`, `1s`. |
 | `-no-vite` | bool | `false` | Do not start the Vite dev server. |
+| `-no-codegen` | bool | `false` | Do not run `vukem codegen` after each successful build. |
 
 **Interactions**
 
 - Vite starts only when `vite.config.ts`, `.js` or `.mjs` exists. The package manager comes from `package.json`, then the lockfile.
 - `.templ` files make `go tool templ generate` run before each build.
 - `-no-vite` is useful when you run Vite in another terminal.
+- After each successful build it runs `vukem codegen`, which refreshes `routes.ts` and the API clients that exist; a failure is printed and the app still starts. `-no-codegen` skips it.
 
 **Environment**: your app's `.env` and process environment (`PORT`, `HOST`, `APP_ENV`, ...). `.env` is also watched.
 
