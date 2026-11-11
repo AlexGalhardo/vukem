@@ -53,8 +53,12 @@ func TestHasColumnDialects(t *testing.T) {
 		dialect database.Dialect
 		want    string
 	}{
-		{"postgres", database.Postgres, "table_schema = current_schema() AND table_name = $1 AND column_name = $2"},
-		{"mysql", database.MySQL, "table_schema = DATABASE() AND table_name = ? AND column_name = ?"},
+		{
+			"postgres",
+			database.Postgres,
+			"FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1",
+		},
+		{"mysql", database.MySQL, "FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?"},
 	}
 
 	for _, tt := range tests {

@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -45,6 +46,8 @@ type Column struct {
 	ref        *reference
 	refInline  bool
 	generated  string
+	change     bool // Change(): alter the existing column instead of adding it
+	indexed    bool // Index() was chained
 }
 
 type reference struct {
@@ -327,7 +330,12 @@ func (t *Table) Check(name, expr string) {
 	}
 
 	if t.alter && !t.s.caps().AlterConstraints {
-		t.fail(fmt.Errorf("schema: sqlite cannot add a check to existing table %s; add it in Create", t.name))
+		t.fail(
+			fmt.Errorf(
+				"schema: sqlite cannot add a check to existing table %s; add it in Create or use Schema.Rebuild",
+				t.name,
+			),
+		)
 		return
 	}
 
@@ -347,7 +355,7 @@ func (t *Table) DropCheck(name string) {
 	case !t.alter:
 		t.fail(fmt.Errorf("schema: DropCheck(%s) is alter only", name))
 	case !t.s.caps().AlterConstraints:
-		t.fail(fmt.Errorf("schema: sqlite cannot drop a check from existing table %s", t.name))
+		t.fail(fmt.Errorf("schema: sqlite cannot drop a check from existing table %s; use Schema.Rebuild", t.name))
 	default:
 		t.dropChk = append(t.dropChk, name)
 	}
@@ -417,9 +425,40 @@ func (c *Column) StoredAs(expr string) *Column {
 	case c.hasDefault:
 		c.t.fail(fmt.Errorf("schema: generated column %s cannot have a default", c.name))
 	case c.t.alter && c.t.s.caps().Family == "sqlite":
-		c.t.fail(fmt.Errorf("schema: sqlite cannot add a stored generated column to existing table %s", c.t.name))
+		c.t.fail(
+			fmt.Errorf(
+				"schema: sqlite cannot add a stored generated column to existing table %s; use Schema.Rebuild",
+				c.t.name,
+			),
+		)
 	default:
 		c.generated = expr
+	}
+
+	return c
+}
+
+// Change alters the existing column of the same name to this definition
+// (type, nullability, default) instead of adding a column. Alter only. On
+// PostgreSQL it emits one ALTER COLUMN statement per aspect (the type
+// conversion has no USING clause: when the database cannot convert, its
+// error comes back as it is and Schema.Raw covers the case); on MySQL one
+// MODIFY COLUMN with the whole definition; under a non-strict sql_mode,
+// turning a nullable column NOT NULL silently rewrites its NULLs to the
+// type's zero value instead of failing, so keep sql_mode strict (the
+// default since MySQL 5.7) or fill the NULLs first. SQLite has no ALTER COLUMN: use
+// Schema.Rebuild there. Unique, Index and Constrained cannot be combined
+// with Change: indexes and keys change with their own methods.
+func (c *Column) Change() *Column {
+	switch {
+	case !c.t.alter:
+		c.t.fail(errors.New("schema: Change is alter only"))
+	case c.kind == kindID:
+		c.t.fail(fmt.Errorf("schema: cannot change the primary key column %s", c.name))
+	case c.t.s.caps().Family == "sqlite":
+		c.t.fail(fmt.Errorf("schema: sqlite cannot change column %s of %s; use Schema.Rebuild", c.name, c.t.name))
+	default:
+		c.change = true
 	}
 
 	return c
@@ -443,7 +482,7 @@ func (c *Column) Default(v any) *Column {
 func (c *Column) Unique() *Column { c.unique = true; return c }
 
 // Index adds a single-column index.
-func (c *Column) Index() *Column { c.t.Index(c.name); return c }
+func (c *Column) Index() *Column { c.indexed = true; c.t.Index(c.name); return c }
 
 // Constrained adds a foreign key to table(id); the table defaults to the
 // column name without "_id" pluralised with the ORM's table naming

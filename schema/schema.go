@@ -44,6 +44,14 @@ type Schema struct {
 	ex     database.Executor
 	d      database.Dialect
 	record *[]string
+	model  *schemaModel // FindConflicts: replay on a model of the schema instead of running
+	// liveColumns and lost serve Destructive: while recording, Rebuild asks
+	// for the columns the table has and notes the ones it leaves out.
+	liveColumns func(table string) []string
+	lost        []string
+	// executed counts the statements that ran, for the error of a
+	// migration that fails half-way on a database without transactional DDL.
+	executed int
 }
 
 // New returns a Schema bound to ctx and ex.
@@ -79,6 +87,10 @@ func (s *Schema) Dialect() string { return s.d.Name() }
 func (s *Schema) SQLDialect() database.Dialect { return s.d }
 
 func (s *Schema) exec(stmt string, args ...any) error {
+	if s.model != nil {
+		return nil // Raw statements are opaque to the conflict check
+	}
+
 	if s.record != nil {
 		*s.record = append(*s.record, stmt)
 		return nil
@@ -87,6 +99,8 @@ func (s *Schema) exec(stmt string, args ...any) error {
 	if _, err := s.ex.ExecContext(s.ctx, stmt, args...); err != nil {
 		return fmt.Errorf("schema: %w\n%s", err, stmt)
 	}
+
+	s.executed++
 
 	return nil
 }
@@ -114,6 +128,22 @@ func (s *Schema) Create(table string, fn func(t *Table)) error {
 		return err
 	}
 
+	if s.model != nil {
+		s.model.create(table, t)
+		return nil
+	}
+
+	stmt := s.createTableSQL(t, table)
+	if err := s.exec(stmt); err != nil {
+		return err
+	}
+
+	return s.createIndexes(t)
+}
+
+// createTableSQL is the CREATE TABLE statement for the definition in t,
+// written under the table name ddlName.
+func (s *Schema) createTableSQL(t *Table, ddlName string) string {
 	defs := make([]string, 0, len(t.cols)+len(t.fks))
 	for _, c := range t.cols {
 		defs = append(defs, s.columnDef(c))
@@ -137,11 +167,7 @@ func (s *Schema) Create(table string, fn func(t *Table)) error {
 		defs = slices.Insert(defs, len(t.cols), "PRIMARY KEY ("+strings.Join(cols, ", ")+")")
 	}
 
-	if err := s.exec("CREATE TABLE " + s.q(table) + " (\n  " + strings.Join(defs, ",\n  ") + "\n)"); err != nil {
-		return err
-	}
-
-	return s.createIndexes(t)
+	return "CREATE TABLE " + s.q(ddlName) + " (\n  " + strings.Join(defs, ",\n  ") + "\n)"
 }
 
 // Table alters table: added columns, renames, drops and indexes.
@@ -157,7 +183,20 @@ func (s *Schema) Table(table string, fn func(t *Table)) error {
 		return t.err
 	}
 
+	if s.model != nil {
+		s.model.alter(table, t)
+		return nil
+	}
+
 	for _, c := range t.cols {
+		if c.change {
+			if err := s.changeColumn(table, c); err != nil {
+				return err
+			}
+
+			continue
+		}
+
 		if c.kind == kindID {
 			return fmt.Errorf("schema: cannot add a primary key column to existing table %s", table)
 		}
@@ -175,6 +214,26 @@ func (s *Schema) Table(table string, fn func(t *Table)) error {
 		}
 	}
 
+	if err := s.alterDrops(table, t); err != nil {
+		return err
+	}
+
+	if err := s.createIndexes(t); err != nil {
+		return err
+	}
+
+	for _, c := range t.checks {
+		if err := s.exec("ALTER TABLE " + s.q(table) + " ADD " + s.checkDef(c)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// alterDrops runs the check drops, renames, index drops and column drops of
+// an alter, in the order that keeps each valid.
+func (s *Schema) alterDrops(table string, t *Table) error {
 	// Drop checks before renames and column drops: a check that references
 	// a dropped column would otherwise block the drop.
 	for _, name := range t.dropChk {
@@ -208,12 +267,39 @@ func (s *Schema) Table(table string, fn func(t *Table)) error {
 		}
 	}
 
-	if err := s.createIndexes(t); err != nil {
-		return err
+	return nil
+}
+
+// changeColumn alters an existing column to the definition of c.
+func (s *Schema) changeColumn(table string, c *Column) error {
+	if c.unique || c.ref != nil || c.indexed || c.generated != "" {
+		return fmt.Errorf("schema: Change on %s.%s cannot be combined with Unique, Index, Constrained or StoredAs; "+
+			"change keys and indexes with their own methods", table, c.name)
 	}
 
-	for _, c := range t.checks {
-		if err := s.exec("ALTER TABLE " + s.q(table) + " ADD " + s.checkDef(c)); err != nil {
+	alter := "ALTER TABLE " + s.q(table)
+
+	if s.mysql() {
+		return s.exec(alter + " MODIFY COLUMN " + s.columnDef(c))
+	}
+
+	col := alter + " ALTER COLUMN " + s.q(c.name)
+	stmts := []string{col + " TYPE " + s.sqlType(c)}
+
+	if c.nullable {
+		stmts = append(stmts, col+" DROP NOT NULL")
+	} else {
+		stmts = append(stmts, col+" SET NOT NULL")
+	}
+
+	if c.hasDefault {
+		stmts = append(stmts, col+" SET DEFAULT "+s.defaultSQL(c))
+	} else {
+		stmts = append(stmts, col+" DROP DEFAULT")
+	}
+
+	for _, st := range stmts {
+		if err := s.exec(st); err != nil {
 			return err
 		}
 	}
@@ -226,6 +312,19 @@ func (s *Schema) checkDef(c check) string {
 }
 
 func (s *Schema) createIndexes(t *Table) error {
+	for _, stmt := range s.indexStmts(t) {
+		if err := s.exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// indexStmts are the CREATE INDEX statements of the indexes declared in t.
+func (s *Schema) indexStmts(t *Table) []string {
+	out := make([]string, 0, len(t.indexes))
+
 	for _, ix := range t.indexes {
 		kw := "CREATE INDEX "
 		if ix.unique {
@@ -247,18 +346,21 @@ func (s *Schema) createIndexes(t *Table) error {
 			stmt += " WHERE " + ix.where
 		}
 
-		if err := s.exec(stmt); err != nil {
-			return err
-		}
+		out = append(out, stmt)
 	}
 
-	return nil
+	return out
 }
 
 // Drop drops table.
 func (s *Schema) Drop(table string) error {
 	if err := checkIdent("table", table); err != nil {
 		return err
+	}
+
+	if s.model != nil {
+		s.model.drop(table, false)
+		return nil
 	}
 
 	return s.exec("DROP TABLE " + s.q(table) + s.cascade())
@@ -268,6 +370,11 @@ func (s *Schema) Drop(table string) error {
 func (s *Schema) DropIfExists(table string) error {
 	if err := checkIdent("table", table); err != nil {
 		return err
+	}
+
+	if s.model != nil {
+		s.model.drop(table, true)
+		return nil
 	}
 
 	return s.exec("DROP TABLE IF EXISTS " + s.q(table) + s.cascade())
@@ -289,6 +396,11 @@ func (s *Schema) Rename(from, to string) error {
 
 	if err := checkIdent("table", to); err != nil {
 		return err
+	}
+
+	if s.model != nil {
+		s.model.rename(from, to)
+		return nil
 	}
 
 	return s.exec("ALTER TABLE " + s.q(from) + " RENAME TO " + s.q(to))
@@ -315,6 +427,11 @@ func (s *Schema) Raw(sql string, args ...any) error {
 
 // HasTable reports whether table exists (false while recording).
 func (s *Schema) HasTable(table string) (bool, error) {
+	if s.model != nil {
+		_, ok := s.model.tables[table]
+		return ok, nil
+	}
+
 	if s.record != nil {
 		return false, nil
 	}
@@ -354,29 +471,25 @@ func (s *Schema) HasColumn(table, column string) (bool, error) {
 		return false, err
 	}
 
+	if s.model != nil {
+		mt, ok := s.model.tables[table]
+		return ok && has(mt.cols, column), nil
+	}
+
 	if s.record != nil {
 		return false, nil
 	}
 
-	var q string
-
-	switch s.caps().Family {
-	case "postgres":
-		q = "SELECT COUNT(*) FROM information_schema.columns " +
-			"WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2"
-	case "mysql":
-		q = "SELECT COUNT(*) FROM information_schema.columns " +
-			"WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?"
-	default:
-		q = "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?"
-	}
-
-	var n int
-	if err := s.ex.QueryRowContext(s.ctx, q, table, column).Scan(&n); err != nil {
+	t, ok, err := InspectTable(s.ctx, s.ex, table)
+	if err != nil {
 		return false, fmt.Errorf("schema: has column: %w", err)
 	}
 
-	return n > 0, nil
+	if !ok {
+		return false, nil
+	}
+
+	return slices.ContainsFunc(t.Columns, func(c ColumnInfo) bool { return c.Name == column }), nil
 }
 
 // ------------------------------------------------------------------ DDL

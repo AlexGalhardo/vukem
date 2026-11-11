@@ -1,0 +1,67 @@
+package migrations
+
+import "github.com/AlexGalhardo/vukem/schema"
+
+// Baseline of an existing database, written by db:pull.
+func m20261201000000Baseline() schema.Migration {
+	return schema.Migration{
+		ID: "20261201000000_baseline",
+		Up: func(s *schema.Schema) error {
+			if err := s.Create("tags", func(t *schema.Table) {
+				t.ID()
+				t.String("label", 255).Unique()
+			}); err != nil {
+				return err
+			}
+
+			if err := s.Create("users", func(t *schema.Table) {
+				t.ID()
+				t.String("email", 120).Unique()
+				t.Boolean("active").Default(true)
+				t.Timestamp("created_at").Nullable()
+				t.Timestamp("updated_at").Nullable()
+			}); err != nil {
+				return err
+			}
+
+			if err := s.Create("posts", func(t *schema.Table) {
+				t.ID()
+				t.ForeignID("user_id").Constrained("users").CascadeOnDelete()
+				t.String("title", 255)
+				t.Text("body").Nullable()
+				t.Index("title")
+			}); err != nil {
+				return err
+			}
+
+			if err := s.Create("post_tag", func(t *schema.Table) {
+				t.ForeignID("post_id").Constrained("posts").CascadeOnDelete()
+				t.ForeignID("tag_id").Constrained("tags").CascadeOnDelete()
+				t.Primary("post_id", "tag_id")
+			}); err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(s *schema.Schema) error {
+			if err := s.DropIfExists("post_tag"); err != nil {
+				return err
+			}
+
+			if err := s.DropIfExists("posts"); err != nil {
+				return err
+			}
+
+			if err := s.DropIfExists("users"); err != nil {
+				return err
+			}
+
+			if err := s.DropIfExists("tags"); err != nil {
+				return err
+			}
+
+			return nil
+		},
+	}
+}

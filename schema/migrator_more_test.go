@@ -510,3 +510,39 @@ func TestMigrateRefusesSingleConnectionPool(t *testing.T) {
 		t.Fatalf("Up() error = %v, want an at least 2 connections error", err)
 	}
 }
+
+func TestMigrateReportsPartialFailure(t *testing.T) {
+	t.Parallel()
+
+	db, err := database.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	m, err := NewMigrator(db, []Migration{{
+		ID:            "20261201090000_partial",
+		NoTransaction: true,
+		Up: func(s *Schema) error {
+			if err := s.Create("a", func(t *Table) { t.ID() }); err != nil {
+				return err
+			}
+
+			if err := s.Create("b", func(t *Table) { t.ID() }); err != nil {
+				return err
+			}
+
+			return s.Raw("THIS IS NOT SQL")
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = m.Up(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "failed after 2 statement(s)") ||
+		!strings.Contains(err.Error(), "20261201090000_partial") {
+		t.Fatalf("Up error = %v, want it to report 2 statements ran", err)
+	}
+}

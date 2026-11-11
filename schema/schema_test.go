@@ -516,3 +516,68 @@ func TestDropIndexOnMatchesCreatedName(t *testing.T) {
 		t.Error("DropIndexOn(bad name) = nil, want an error")
 	}
 }
+
+func TestChangeColumn(t *testing.T) {
+	t.Parallel()
+
+	change := func(t *Table) { t.String("name", 120).Nullable().Change() }
+
+	tests := []struct {
+		name string
+		d    database.Dialect
+		want []string
+	}{
+		{"postgres", database.Postgres, []string{
+			`ALTER TABLE "users" ALTER COLUMN "name" TYPE VARCHAR(120)`,
+			`ALTER TABLE "users" ALTER COLUMN "name" DROP NOT NULL`,
+			`ALTER TABLE "users" ALTER COLUMN "name" DROP DEFAULT`,
+		}},
+		{"mysql", database.MySQL, []string{"ALTER TABLE `users` MODIFY COLUMN `name` VARCHAR(120)"}},
+	}
+
+	for _, tt := range tests {
+		got, err := Record(tt.d, func(s *Schema) error { return s.Table("users", change) })
+		if err != nil || !cmp.Equal(got, tt.want) {
+			t.Errorf("%s: statements = %q, %v; want %q", tt.name, got, err, tt.want)
+		}
+	}
+
+	// A NOT NULL column with a default.
+	got, err := Record(database.Postgres, func(s *Schema) error {
+		return s.Table("users", func(t *Table) { t.Integer("age").Default(18).Change() })
+	})
+	if err != nil || len(got) != 3 || !strings.HasSuffix(got[1], "SET NOT NULL") ||
+		!strings.HasSuffix(got[2], "SET DEFAULT 18") {
+		t.Errorf("not null with default = %q, %v", got, err)
+	}
+}
+
+func TestChangeColumnErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		d    database.Dialect
+		fn   func(s *Schema) error
+		want string
+	}{
+		{"outside alter", database.Postgres, func(s *Schema) error {
+			return s.Create("users", func(t *Table) { t.String("name").Change() })
+		}, "Change is alter only"},
+		{"the id", database.Postgres, func(s *Schema) error {
+			return s.Table("users", func(t *Table) { t.ID().Change() })
+		}, "primary key column"},
+		{"sqlite", database.SQLite, func(s *Schema) error {
+			return s.Table("users", func(t *Table) { t.String("name").Change() })
+		}, "sqlite cannot change column name of users; use Schema.Rebuild"},
+		{"with unique", database.Postgres, func(s *Schema) error {
+			return s.Table("users", func(t *Table) { t.String("name").Unique().Change() })
+		}, "cannot be combined"},
+	}
+
+	for _, tt := range tests {
+		if _, err := Record(tt.d, tt.fn); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: err = %v, want %q", tt.name, err, tt.want)
+		}
+	}
+}
