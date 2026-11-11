@@ -684,6 +684,10 @@ Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `Del
 
 `drivers/redis` provides cache, session and queue stores, a shared rate limiter, locks and pub/sub; it works with Redis 7+ and Valkey 8+. See [subsystems.md](subsystems.md#redis).
 
+## Studio
+
+`vukem studio` opens vukem-studio, a read-only browser for the project's database (experimental, its own module `contrib/studio`). It listens on `127.0.0.1` only, behind a session token printed in the start URL, and refuses a production environment unless `--allow-production` is given. See [cli.md](cli.md) for the command and its flags.
+
 ## Not supported yet
 
 Checked against the code at v0.40.0. Until one of these lands, the workaround is raw SQL (`WhereRaw`, `db.QueryContext`, `s.Raw`).

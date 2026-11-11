@@ -47,6 +47,7 @@ go run ./internal/tools/release -modules -push      # test with GOWORK=off, tag,
 - The tool tests every module to tag with `GOWORK=off`, creates no tag when one fails, and pushes **one tag per `git push`**. Never `git push origin --tags`: GitHub creates no push event when more than three tags go up in a single push.
 - Module tags (`<dir>/vX.Y.Z`) do not trigger `release.yml`, so there is no run to wait for after a push.
 - When `contrib/stripe` is tagged the tool rewrites `stripeVersion` in `internal/cli/billing.go`; commit it through a PR (`TestStripeVersionIsLatestTag` fails until then).
+- When `contrib/studio` is tagged, bump `studioVersion` in `internal/cli/studio.go` by hand to the new tag and commit it through a PR (`TestStudioVersionIsLatestTag` fails until then; until the first tag it skips, and `vukem studio` without `--bin` cannot install).
 
 ## 5. Recover a tag that published nothing
 
