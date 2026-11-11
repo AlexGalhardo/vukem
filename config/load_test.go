@@ -78,7 +78,7 @@ func TestLoadSourceTestEnvSkipsLocal(t *testing.T) {
 	}
 }
 
-func TestLoadSourceDefaultsToDevelopmentAndMissingFiles(t *testing.T) {
+func TestLoadSourceDefaultsToProductionAndMissingFiles(t *testing.T) {
 	t.Parallel()
 
 	src, err := LoadSource(fstest.MapFS{}, fakeEnv(map[string]string{"ONLY_PROCESS": "1"}), nil)
@@ -90,8 +90,8 @@ func TestLoadSourceDefaultsToDevelopmentAndMissingFiles(t *testing.T) {
 		t.Errorf("Get(ONLY_PROCESS) = %q, want process-only variable", got)
 	}
 
-	if src.Env() != Development {
-		t.Errorf("Env() = %q, want development", src.Env())
+	if src.Env() != Production {
+		t.Errorf("Env() = %q, want production", src.Env())
 	}
 
 	if _, ok := src.Lookup("NOPE"); ok {
@@ -382,5 +382,40 @@ func TestLoadSourceBoundsExpansionSize(t *testing.T) {
 
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("LoadSource() took %v, want a fast refusal", d)
+	}
+}
+
+// An APP_ENV nobody set is production, so a deploy that forgets it gets the
+// production defaults (Secure cookies, no dev tooling) instead of the
+// development ones.
+func TestSecurity_A05_MissingAppEnvIsProduction(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		".env.production":  {Data: []byte("FROM_PROD=1")},
+		".env.development": {Data: []byte("FROM_DEV=1")},
+	}
+
+	for name, env := range map[string]map[string]string{"absent": nil, "empty": {"APP_ENV": ""}} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			src, err := LoadSource(fsys, fakeEnv(env), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if src.Env() != Production || src.EnvSet() {
+				t.Errorf("Env() = %q, EnvSet() = %v, want production and not set", src.Env(), src.EnvSet())
+			}
+
+			if got := src.Get("FROM_PROD"); got != "1" {
+				t.Errorf("FROM_PROD = %q, want .env.production to be read", got)
+			}
+
+			if got := src.Get("FROM_DEV"); got != "" {
+				t.Errorf("FROM_DEV = %q, want .env.development ignored", got)
+			}
+		})
 	}
 }

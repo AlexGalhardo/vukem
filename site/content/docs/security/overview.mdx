@@ -209,7 +209,7 @@ The environment variables that change your app's security posture:
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `APP_ENV` | `development` | `production` turns on the strict boot checks |
+| `APP_ENV` | `production` | `production` turns on the strict boot checks; unset means `production` |
 | `APP_DEBUG` | `false` | shows error details; refused in production |
 | `APP_KEY` | none | master secret, at least 32 bytes; every derived key depends on it |
 | `APP_PREVIOUS_KEYS` | none | old keys still accepted during a [key rotation](/docs/security/encryption) |

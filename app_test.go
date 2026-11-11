@@ -1417,3 +1417,26 @@ func TestBootFailureUnwindIsFinal(t *testing.T) {
 		t.Errorf("provider calls after Shutdown (-want +got):\n%s", diff)
 	}
 }
+
+// A deploy that forgets APP_ENV gets the production rules, not the
+// development ones.
+func TestSecurity_A05_MissingAppEnvBootsAsProduction(t *testing.T) {
+	t.Parallel()
+
+	app, err := New(
+		WithSource(config.MapSource(map[string]string{"APP_KEY": testKey, "APP_URL": "https://app.example.com"})),
+		WithLogger(discardLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() with a key and no APP_ENV = %v", err)
+	}
+
+	if !app.Config.IsProduction() {
+		t.Errorf("Config.Env = %q, want production", app.Config.Env)
+	}
+
+	_, err = New(WithSource(config.MapSource(map[string]string{})), WithLogger(discardLogger()))
+	if err == nil || !strings.Contains(err.Error(), "APP_KEY is not set") {
+		t.Fatalf("New() without APP_KEY or APP_ENV = %v, want the missing APP_KEY error", err)
+	}
+}

@@ -264,7 +264,7 @@ Vukem reads its settings from the process environment first, then from `.env` fi
 | --- | --- | --- |
 | `APP_KEY` | none | **Required in production.** `base64:` plus at least 32 random bytes; signs and encrypts sessions, cookies, signed URLs and queued mail. Changing it invalidates them; rotate with `APP_PREVIOUS_KEYS` |
 | `APP_URL` | `http://localhost:3000` | the public origin, such as `https://blog.example.com` |
-| `APP_ENV` | `development` (`production` in the image) | `development`, `test` or `production`; anything else stops the boot |
+| `APP_ENV` | `production` (also in the image) | `development`, `test` or `production`; anything else stops the boot |
 | `APP_DEBUG` | `false` | must stay `false` in production |
 | `HOST` | `localhost` (`0.0.0.0` in the image) | the address the HTTP server listens on |
 | `PORT` | `3000` | the listening port; platforms inject their own |

@@ -235,7 +235,10 @@ func TestNewProjectEndToEnd(t *testing.T) {
 	}
 
 	project := filepath.Join(dir, "blog")
-	if env := read(t, project, ".env"); !strings.Contains(env, "APP_KEY=base64:") {
+	// The generated .env names the environment: an unset APP_ENV means
+	// production, so local runs depend on this line.
+	if env := read(t, project, ".env"); !strings.Contains(env, "APP_KEY=base64:") ||
+		!strings.Contains(env, "APP_ENV=development") {
 		t.Errorf(".env = %q", env)
 	}
 
@@ -250,8 +253,8 @@ func TestNewProjectEndToEnd(t *testing.T) {
 
 	requireGovulncheckTool(t, project)
 
-	// APP_ENV=production in .env (not the process) must keep the
-	// embedded views even with a resources/ folder on disk.
+	// An unset APP_ENV, or APP_ENV=production in .env (not the process),
+	// must keep the embedded views even with a resources/ folder on disk.
 	envTest := filepath.Join(project, "resources", "env_test.go")
 	if err := os.WriteFile(envTest, []byte(resourcesEnvTest), 0o600); err != nil {
 		t.Fatal(err)
@@ -686,16 +689,30 @@ func TestDotEnvProductionUsesEmbeddedViews(t *testing.T) {
 	t.Setenv("APP_ENV", "")
 	_ = os.Unsetenv("APP_ENV")
 
-	if _, err := fs.Stat(Views(), "home.html"); err == nil {
-		t.Fatal("development: Views() has home.html, want the empty resources/views on disk")
+	embedded := func() bool {
+		_, err := fs.Stat(Views(), "home.html")
+		return err == nil
+	}
+
+	// An unset APP_ENV is production: the embedded views, whatever is on disk.
+	if !embedded() {
+		t.Fatal("APP_ENV unset: Views() has no home.html, want the embedded views")
+	}
+
+	if err := os.WriteFile(".env", []byte("APP_ENV=development"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if embedded() {
+		t.Fatal("APP_ENV=development in .env: Views() has home.html, want the empty resources/views on disk")
 	}
 
 	if err := os.WriteFile(".env", []byte("APP_ENV=production"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := fs.Stat(Views(), "home.html"); err != nil {
-		t.Fatalf("APP_ENV=production in .env: %v, want the embedded views", err)
+	if !embedded() {
+		t.Fatal("APP_ENV=production in .env: Views() has no home.html, want the embedded views")
 	}
 }
 `

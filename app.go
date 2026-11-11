@@ -66,7 +66,7 @@ const (
 // Config is the core application configuration, loaded from the environment.
 type Config struct {
 	Name  string        `env:"APP_NAME"  default:"Vukem"`
-	Env   config.Env    `env:"APP_ENV"   default:"development"`
+	Env   config.Env    `env:"APP_ENV"   default:"production"`
 	Debug bool          `env:"APP_DEBUG"`
 	URL   string        `env:"APP_URL"   default:"http://localhost:3000"`
 	Key   config.Secret `env:"APP_KEY"`
