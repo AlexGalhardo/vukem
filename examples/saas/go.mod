@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/examples/saas
 go 1.27.4
 
 require (
-	github.com/AlexGalhardo/vukem v0.40.0
+	github.com/AlexGalhardo/vukem v0.41.0
 	github.com/AlexGalhardo/vukem/contrib/stripe v0.0.0
 )
 
