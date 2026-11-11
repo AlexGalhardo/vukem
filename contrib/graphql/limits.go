@@ -200,7 +200,12 @@ func (w *limitWalker) multiplier(f *field, fd *fieldType) int {
 		}
 	}
 
-	return int(min(best, maxMultiplier))
+	// An explicit bound check, not min(): CodeQL does not see min as one.
+	if best > maxMultiplier {
+		return maxMultiplier
+	}
+
+	return int(best)
 }
 
 // argValue returns the value the query gives argument name of f, and
