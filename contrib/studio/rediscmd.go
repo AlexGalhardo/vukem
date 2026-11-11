@@ -76,7 +76,7 @@ func parseRedisLine(line string) ([]string, error) {
 // checkRedisArgs decides whether the console may run args. It is an
 // allow-list: a command that is not on it, new or unknown, is refused.
 func checkRedisArgs(args []string, write bool) error {
-	cmd := strings.ToUpper(args[0])
+	cmd := asciiUpper(args[0])
 
 	switch {
 	case slices.Contains(redisReadCommands, cmd):
@@ -105,7 +105,7 @@ func checkRedisSubcommand(cmd string, args []string) error {
 		return nil
 	}
 
-	if len(args) < 2 || !slices.Contains(allowed, strings.ToUpper(args[1])) {
+	if len(args) < 2 || !slices.Contains(allowed, asciiUpper(args[1])) {
 		return fmt.Errorf(
 			"studio: %s %s is not allowed (only %s)",
 			cmd,
@@ -122,5 +122,18 @@ func subcommandOf(args []string) string {
 		return ""
 	}
 
-	return strings.ToUpper(args[1])
+	return asciiUpper(args[1])
+}
+
+// asciiUpper upper-cases s for the allow list. The server reads command names
+// in ASCII only, so a name with another character ("ınfo", which Unicode
+// upper-cases to INFO) never matches a listed command.
+func asciiUpper(s string) string {
+	for i := range len(s) {
+		if s[i] >= 0x80 {
+			return s
+		}
+	}
+
+	return strings.ToUpper(s)
 }
