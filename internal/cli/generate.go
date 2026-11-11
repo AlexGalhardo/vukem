@@ -163,6 +163,7 @@ func generate(env *Env, stub, rel string, data stubData, force bool) error {
 // an install:* scaffold can be the first to create. A package the starter
 // ships already has one, so those entries never fire there.
 var packageDocs = map[string]string{
+	"app/benchmarks":      "Package benchmarks holds the load-test scenarios run by vukem bench.",
 	"app/commands":        "Package commands holds the application's own CLI commands.",
 	"app/controllers":     "Package controllers holds the HTTP handlers.",
 	"app/events":          "Package events holds the application's event types.",
@@ -786,6 +787,51 @@ func makeCommand(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 
 		return register(env, "bootstrap/commands.go", "Commands", "commands."+d.Name+"()", d.Module+"/app/commands")
 	}
+}
+
+// benchRegistry is bootstrap/bench.go in a project that predates make:bench; the starter ships the same file.
+const benchRegistry = `package bootstrap
+
+import vukem "github.com/AlexGalhardo/vukem"
+
+// Bench lists the load-test scenarios; vukem make:bench appends here.
+func Bench() []vukem.BenchScenario {
+	return []vukem.BenchScenario{}
+}
+`
+
+func makeBench(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	run := simple(set, "scenario name", "bench.go.tmpl", "app/benchmarks/%s.go", "")
+
+	return func(ctx context.Context, env *Env, args []string) error {
+		if err := run(ctx, env, args); err != nil {
+			return err
+		}
+
+		d, err := newStubData(env, className(args[0], ""))
+		if err != nil {
+			return err
+		}
+
+		if !exists(env, "bootstrap/bench.go") {
+			if err := create(env, "bootstrap/bench.go", []byte(benchRegistry), false); err != nil {
+				return err
+			}
+
+			hintWithBench(env)
+		}
+
+		return register(env, "bootstrap/bench.go", "Bench", "benchmarks."+d.Name+"()", d.Module+"/app/benchmarks")
+	}
+}
+
+// hintWithBench tells a project that predates make:bench to pass the scenarios to vukem.New.
+func hintWithBench(env *Env) {
+	if src, err := os.ReadFile(env.path("bootstrap/app.go")); err == nil && bytes.Contains(src, []byte("WithBench")) {
+		return
+	}
+
+	fmt.Fprintln(env.Stdout, "next: add vukem.WithBench(Bench()...), to the options of vukem.New in bootstrap/app.go")
 }
 
 func makeProvider(set *flag.FlagSet) func(context.Context, *Env, []string) error {

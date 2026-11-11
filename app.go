@@ -346,6 +346,8 @@ type App struct {
 	queryObs   []database.QueryObserver
 	migrations []schema.Migration
 	seeders    []AppSeeder
+	// benchScenarios are the load-test scenarios of bench:run (WithBench).
+	benchScenarios []BenchScenario
 
 	mu     sync.Mutex
 	booted bool
@@ -395,58 +397,59 @@ func readConfigFile(name string) ([]byte, error) {
 type Option func(*options) error
 
 type options struct {
-	source        *config.Source
-	fsys          fs.FS
-	getenv        func(string) (string, bool)
-	envDefaults   map[string]string
-	readFile      func(string) ([]byte, error)
-	logger        *slog.Logger
-	logOut        io.Writer
-	kind          Kind
-	providers     []Provider
-	runners       []namedRunner
-	healthChecks  []namedHealthCheck
-	version       string
-	name          string
-	fuzzAuth      func(context.Context, *App) (FuzzAuth, error)
-	proxies       []*net.IPNet
-	routes        []func(r *router.Router, app *App) error
-	bootRoutes    []func(r *router.Router, app *App) error
-	views         fs.FS
-	viewFuncs     template.FuncMap
-	viewPages     []view.Decl
-	tlsConfig     *tls.Config
-	reactEmails   fs.FS
-	vite          fs.FS
-	inertia       *inertia.Config
-	lang          fs.FS
-	now           func() time.Time
-	migrations    []schema.Migration
-	seeders       []AppSeeder
-	mailTransport mail.Transport
-	listeners     []events.Registration
-	jobs          []queue.Registration
-	jobFuncs      []func(*App) []queue.Registration
-	queueDriver   queue.Driver
-	cacheStore    cache.Store
-	sessionStore  session.Store
-	queueFunc     func(*App) (queue.Driver, error)
-	cacheFunc     func(*App) (cache.Store, error)
-	sessionFunc   func(*App) (session.Store, error)
-	rateLimiters  ratelimit.Factory
-	openAPI       *openapi.Info
-	eventsFake    *events.Fake
-	schedules     []func(*schedule.Schedule, *App)
-	drivers       []database.Driver
-	queryObs      []database.QueryObserver
-	stdout        io.Writer
-	stderr        io.Writer
-	stdin         io.Reader
-	ready         chan<- string
-	noHTTP        bool
-	devtools      bool
-	telegram      []func(*telegram.Config)
-	flags         []flags.AnyFlag
+	source         *config.Source
+	fsys           fs.FS
+	getenv         func(string) (string, bool)
+	envDefaults    map[string]string
+	readFile       func(string) ([]byte, error)
+	logger         *slog.Logger
+	logOut         io.Writer
+	kind           Kind
+	providers      []Provider
+	runners        []namedRunner
+	healthChecks   []namedHealthCheck
+	version        string
+	name           string
+	fuzzAuth       func(context.Context, *App) (FuzzAuth, error)
+	proxies        []*net.IPNet
+	routes         []func(r *router.Router, app *App) error
+	bootRoutes     []func(r *router.Router, app *App) error
+	views          fs.FS
+	viewFuncs      template.FuncMap
+	viewPages      []view.Decl
+	tlsConfig      *tls.Config
+	reactEmails    fs.FS
+	vite           fs.FS
+	inertia        *inertia.Config
+	lang           fs.FS
+	now            func() time.Time
+	migrations     []schema.Migration
+	seeders        []AppSeeder
+	benchScenarios []BenchScenario
+	mailTransport  mail.Transport
+	listeners      []events.Registration
+	jobs           []queue.Registration
+	jobFuncs       []func(*App) []queue.Registration
+	queueDriver    queue.Driver
+	cacheStore     cache.Store
+	sessionStore   session.Store
+	queueFunc      func(*App) (queue.Driver, error)
+	cacheFunc      func(*App) (cache.Store, error)
+	sessionFunc    func(*App) (session.Store, error)
+	rateLimiters   ratelimit.Factory
+	openAPI        *openapi.Info
+	eventsFake     *events.Fake
+	schedules      []func(*schedule.Schedule, *App)
+	drivers        []database.Driver
+	queryObs       []database.QueryObserver
+	stdout         io.Writer
+	stderr         io.Writer
+	stdin          io.Reader
+	ready          chan<- string
+	noHTTP         bool
+	devtools       bool
+	telegram       []func(*telegram.Config)
+	flags          []flags.AnyFlag
 }
 
 // New builds an App: it loads and validates configuration and registers
@@ -545,13 +548,14 @@ func New(opts ...Option) (*App, error) {
 		now:       now,
 		proxies:   proxies,
 
-		migrations:  o.migrations,
-		seeders:     o.seeders,
-		jobs:        o.jobs,
-		jobFuncs:    o.jobFuncs,
-		queueDriver: o.queueDriver,
-		cacheStore:  o.cacheStore,
-		sessStore:   o.sessionStore,
+		migrations:     o.migrations,
+		seeders:        o.seeders,
+		benchScenarios: o.benchScenarios,
+		jobs:           o.jobs,
+		jobFuncs:       o.jobFuncs,
+		queueDriver:    o.queueDriver,
+		cacheStore:     o.cacheStore,
+		sessStore:      o.sessionStore,
 
 		queueDriverFunc: o.queueFunc,
 		cacheStoreFunc:  o.cacheFunc,

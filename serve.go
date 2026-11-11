@@ -283,7 +283,8 @@ func (s *HTTPServer) Run(ctx context.Context) error {
 type BuildFunc func(opts ...Option) (*App, error)
 
 // RunMain is the testable body of main: it builds the app with the given
-// environment and runs the command in args (default "serve").
+// environment and runs the command in args (default "serve"). A command can fail with an [*ExitError], which carries
+// the exit code Main uses (bench:run uses 3 and 4): a caller that runs RunMain itself must read the code from it.
 func RunMain(ctx context.Context, args []string, getenv func(string) (string, bool), build BuildFunc,
 	opts ...Option,
 ) error {
@@ -294,6 +295,11 @@ func RunMain(ctx context.Context, args []string, getenv func(string) (string, bo
 
 	if cmd == keyGenerateName {
 		return runKeyGenerate(rest, opts)
+	}
+
+	// Like key:generate, bench:run is resolved before build: it builds the app itself, on its own database.
+	if cmd == benchRunName {
+		return runBench(ctx, rest, getenv, build, opts)
 	}
 
 	base := []Option{WithEnv(osDirFS("."), getenv)}
@@ -327,15 +333,10 @@ func Main(build BuildFunc) int {
 	ctx, stop := signalContext()
 	defer stop()
 
-	if err := RunMain(ctx, osArgs(), lookupEnv, build); err != nil {
-		if errors.Is(err, errUsage) {
-			return 2
-		}
-
+	err := RunMain(ctx, osArgs(), lookupEnv, build)
+	if err != nil && !errors.Is(err, errUsage) {
 		fmt.Fprintln(stderr(), err)
-
-		return 1
 	}
 
-	return 0
+	return exitCodeOf(err)
 }

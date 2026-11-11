@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"math/bits"
 	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -87,6 +89,8 @@ type Runner struct {
 
 	parent    context.Context
 	reqCtx    context.Context
+	genCtx    context.Context
+	reqCancel context.CancelFunc
 	genCancel context.CancelFunc
 	timer     *time.Timer
 
@@ -105,7 +109,30 @@ type Runner struct {
 	rateCh   chan struct{}
 	dropped  atomic.Uint64
 	inflight atomic.Int64
+
+	// newWork makes the function a worker runs for every arrival (open model) or turn of its loop (closed model).
+	newWork func(worker int) workFn
+	// stages, when set, drive the number of virtual users or the arrival rate.
+	stages    []Stage
+	scenarios []string
+
+	iterations, iterFailed, panics atomic.Uint64
+	firstPanic                     atomic.Pointer[string]
 }
+
+// notePanic keeps the first panic message of the run, cut short: it is shown in the report.
+func (r *Runner) notePanic(scenario string, v any) {
+	msg := fmt.Sprint(v)
+	if len(msg) > 200 {
+		msg = msg[:200] + "..."
+	}
+
+	note := "scenario " + strconv.Quote(scenario) + " panicked: " + msg
+	r.firstPanic.CompareAndSwap(nil, &note)
+}
+
+// workFn does the work of one arrival or loop turn; seq numbers them from 0, and scheduled is zero in the closed model.
+type workFn func(seq uint64, scheduled time.Time)
 
 type job struct {
 	seq       uint64
@@ -114,7 +141,8 @@ type job struct {
 
 // Start validates cfg and the target of the first request, then starts the run. The run ends when Duration elapses,
 // Requests were sent, ctx is cancelled or Stop is called. Cancelling ctx aborts the requests in flight and drops
-// their results; the end of Duration or Stop lets them finish.
+// their results; the end of Duration or Stop lets them finish. The Targeter is called once for seq 0 here and the
+// answer is reused for the first request.
 func Start(ctx context.Context, cfg Config, t Targeter) (*Runner, error) {
 	if t == nil {
 		return nil, errors.New("loadtest: no targeter")
@@ -126,12 +154,27 @@ func Start(ctx context.Context, cfg Config, t Targeter) (*Runner, error) {
 
 	cfg = cfg.withDefaults()
 
+	first := t(0)
+
+	r, err := newRunner(ctx, cfg, first)
+	if err != nil {
+		return nil, err
+	}
+
+	r.t = t
+	r.newWork = func(int) workFn { return r.exec }
+	r.launch()
+
+	return r, nil
+}
+
+// newRunner validates the target and builds a run that is not started. cfg is checked and has its defaults.
+func newRunner(ctx context.Context, cfg Config, first Request) (*Runner, error) {
 	// A run with only a request count still has an end in time.
 	if cfg.Duration == 0 {
 		cfg.Duration = maxDuration
 	}
 
-	first := t(0)
 	if _, err := parseTarget(first.URL, cfg.AllowRemote); err != nil {
 		return nil, err
 	}
@@ -139,26 +182,36 @@ func Start(ctx context.Context, cfg Config, t Targeter) (*Runner, error) {
 	reqCtx, reqCancel := context.WithCancel(ctx)
 	genCtx, genCancel := context.WithCancel(reqCtx)
 
-	r := &Runner{
-		cfg: cfg, open: cfg.Rate.Freq > 0, target: first, t: t, c: newClient(&cfg, cfg.UserAgent), now: cfg.Now,
-		parent: ctx, reqCtx: reqCtx, genCancel: genCancel,
+	return &Runner{
+		cfg: cfg, open: cfg.Rate.Freq > 0, target: first, c: newClient(&cfg, cfg.UserAgent), now: cfg.Now,
+		parent: ctx, reqCtx: reqCtx, genCtx: genCtx, reqCancel: reqCancel, genCancel: genCancel,
 		results: make(chan Result, resultBuffer), done: make(chan struct{}), rateCh: make(chan struct{}, 1),
 		abandon: make(chan struct{}),
-	}
+	}, nil
+}
+
+// launch starts the workers and the goroutine that closes Results when they are done.
+func (r *Runner) launch() {
 	r.begin = r.now()
 
-	context.AfterFunc(genCtx, r.markGenerationEnd)
+	context.AfterFunc(r.genCtx, r.markGenerationEnd)
 
-	if cfg.Duration > 0 {
-		r.timer = time.AfterFunc(cfg.Duration, genCancel)
+	if r.cfg.Duration > 0 {
+		r.timer = time.AfterFunc(r.cfg.Duration, r.genCancel)
 	}
 
-	if r.open {
-		rate := cfg.Rate
-		r.rate.Store(&rate)
-		r.startOpen(genCtx)
-	} else {
-		r.startClosed(genCtx)
+	switch {
+	case r.open:
+		if r.rate.Load() == nil {
+			rate := r.cfg.Rate
+			r.rate.Store(&rate)
+		}
+
+		r.startOpen()
+	case len(r.stages) > 0:
+		r.startClosedStages()
+	default:
+		r.startClosed()
 	}
 
 	go func() {
@@ -175,13 +228,11 @@ func Start(ctx context.Context, cfg Config, t Targeter) (*Runner, error) {
 			r.c.http.CloseIdleConnections()
 		}
 
-		genCancel()
-		reqCancel()
+		r.genCancel()
+		r.reqCancel()
 		close(r.results)
 		close(r.done)
 	}()
-
-	return r, nil
 }
 
 // Results delivers every Result and is closed when the run ends.
@@ -233,14 +284,19 @@ func (r *Runner) SetRate(rate Rate) error {
 		return err
 	}
 
+	r.setRate(rate)
+
+	return nil
+}
+
+// setRate applies a rate without validation; a zero Freq pauses the arrivals (stages use it).
+func (r *Runner) setRate(rate Rate) {
 	r.rate.Store(&rate)
 
 	select {
 	case r.rateCh <- struct{}{}:
 	default:
 	}
-
-	return nil
 }
 
 func (r *Runner) exec(seq uint64, scheduled time.Time) {
@@ -252,7 +308,12 @@ func (r *Runner) exec(seq uint64, scheduled time.Time) {
 
 	res := r.c.do(r.reqCtx, req, seq, scheduled, r.now)
 
-	// A cancelled run aborts its requests; reporting each as a failure would bury the real numbers.
+	r.publish(res)
+}
+
+// publish delivers a result. A cancelled run aborts its requests, and reporting each as a failure would bury the
+// real numbers, so those are dropped.
+func (r *Runner) publish(res Result) {
 	if res.Err == "canceled" && r.reqCtx.Err() != nil {
 		return
 	}
@@ -269,30 +330,46 @@ func (r *Runner) exec(seq uint64, scheduled time.Time) {
 	}
 }
 
-func (r *Runner) startClosed(genCtx context.Context) {
+func (r *Runner) startClosed() {
 	var next atomic.Uint64
 
-	for range r.cfg.Concurrency {
-		r.wg.Go(func() {
-			for genCtx.Err() == nil {
-				seq := next.Add(1) - 1
-				if r.cfg.Requests > 0 && seq >= r.cfg.Requests {
-					return
-				}
-
-				r.exec(seq, time.Time{})
-			}
-		})
+	for i := range r.cfg.Concurrency {
+		r.wg.Go(func() { r.userLoop(i, &next, nil) })
 	}
 }
 
-func (r *Runner) startOpen(genCtx context.Context) {
+// userLoop is one virtual user: it takes the next sequence number, works, and repeats until the run stops, the
+// request count is reached or stop is closed.
+func (r *Runner) userLoop(worker int, next *atomic.Uint64, stop <-chan struct{}) {
+	work := r.newWork(worker)
+
+	for r.genCtx.Err() == nil {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+
+		seq := next.Add(1) - 1
+		if r.cfg.Requests > 0 && seq >= r.cfg.Requests {
+			return
+		}
+
+		work(seq, time.Time{})
+	}
+}
+
+func (r *Runner) startOpen() {
 	// Queued plus running jobs never exceed MaxWorkers, so the send in dispatch never blocks.
 	jobs := make(chan job, r.cfg.MaxWorkers)
 
 	r.wg.Add(1)
 
-	go r.dispatch(genCtx, jobs)
+	go r.dispatch(jobs)
+
+	if len(r.stages) > 0 {
+		r.wg.Go(r.rampRate)
+	}
 }
 
 // dueTime returns the instant of the n-th arrival after start at the given rate. It is computed from start, never
@@ -309,7 +386,9 @@ func dueTime(start time.Time, rate Rate, n uint64) time.Time {
 // dispatch is the pacer of the open model: it hands each arrival, at its scheduled instant, to a worker, and when
 // it is behind the clock it fires without sleeping until it catches up. An arrival that finds MaxWorkers requests in
 // flight is counted as dropped, not queued: a queue would hide saturation.
-func (r *Runner) dispatch(genCtx context.Context, jobs chan job) {
+func (r *Runner) dispatch(jobs chan job) {
+	genCtx := r.genCtx
+
 	defer r.wg.Done()
 	defer close(jobs)
 
@@ -324,6 +403,18 @@ func (r *Runner) dispatch(genCtx context.Context, jobs chan job) {
 	workers := 0
 
 	for genCtx.Err() == nil && (r.cfg.Requests == 0 || seq < r.cfg.Requests) {
+		// A rate of zero pauses the arrivals until the next change.
+		if rate.Freq == 0 {
+			select {
+			case <-r.rateCh:
+				rate, start, n = r.changeRate(rate, start, n)
+
+				continue
+			case <-genCtx.Done():
+				return
+			}
+		}
+
 		due := dueTime(start, rate, n)
 
 		if wait := due.Sub(r.now()); wait > 0 {
@@ -354,7 +445,7 @@ func (r *Runner) dispatch(genCtx context.Context, jobs chan job) {
 
 				r.wg.Add(1)
 
-				go r.worker(jobs)
+				go r.worker(jobs, workers-1)
 			}
 		}
 
@@ -368,6 +459,11 @@ func (r *Runner) dispatch(genCtx context.Context, jobs chan job) {
 func (r *Runner) changeRate(old Rate, start time.Time, n uint64) (Rate, time.Time, uint64) {
 	next := *r.rate.Load()
 
+	// From a pause, or before the first arrival, the schedule starts now.
+	if old.Freq == 0 {
+		return next, r.now(), 0
+	}
+
 	if n == 0 {
 		return next, start, 0
 	}
@@ -375,11 +471,13 @@ func (r *Runner) changeRate(old Rate, start time.Time, n uint64) (Rate, time.Tim
 	return next, dueTime(start, old, n-1), 1
 }
 
-func (r *Runner) worker(jobs <-chan job) {
+func (r *Runner) worker(jobs <-chan job, index int) {
 	defer r.wg.Done()
 
+	work := r.newWork(index)
+
 	for j := range jobs {
-		r.exec(j.seq, j.scheduled)
+		work(j.seq, j.scheduled)
 		r.inflight.Add(-1)
 	}
 }

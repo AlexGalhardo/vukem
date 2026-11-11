@@ -20,6 +20,7 @@ func New(opts ...vukem.Option) (*vukem.App, error) {
 		vukem.WithProviders(Providers()...),
 		vukem.WithMigrations(migrations.All()),
 		vukem.WithSeeders(seeders.All()...),
+		vukem.WithBench(Bench()...),
 		vukem.WithListeners(listeners.All()...),
 		vukem.WithJobsFunc(jobs.All),
 		vukem.WithSchedule(routes.Schedule),

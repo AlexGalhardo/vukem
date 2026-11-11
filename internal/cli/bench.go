@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -34,6 +36,15 @@ type benchOptions struct {
 	headers, allowRemote                 repeatFlag
 	noKeepAlive, http2, asJSON, quiet    bool
 	out                                  string
+
+	// Gates, for a URL and for the project's scenarios.
+	threshold            repeatFlag
+	save, compare, toler string
+
+	// Flags that only the project's scenarios (bench:run in the app binary) understand: the CLI forwards them.
+	scenario                     repeatFlag
+	model, stages, url, database string
+	seed, list, yes              bool
 }
 
 // benchCmd load tests a URL with the loadtest engine.
@@ -57,10 +68,62 @@ func benchCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	set.BoolVar(&o.asJSON, "json", false, "print the summary as JSON instead of text")
 	set.StringVar(&o.out, "o", "", "also write the JSON summary to file")
 	set.BoolVar(&o.quiet, "quiet", false, "no progress line while running")
+	set.Var(&o.threshold, "threshold", "fail (exit 3) unless the expression holds, such as p95<200ms (repeatable)")
+	set.StringVar(&o.save, "save", "", "write the JSON summary to a file")
+	set.StringVar(&o.compare, "compare", "", "fail (exit 4) on regression against a saved summary")
+	set.StringVar(&o.toler, "tolerance", "10%", "allowed regression for -compare")
+	set.Var(&o.scenario, "scenario", "project scenarios: run only this scenario (repeatable)")
+	set.StringVar(&o.model, "model", "closed", "project scenarios: open or closed")
+	set.StringVar(&o.stages, "stages", "", "project scenarios: ramp, such as \"30s:50,2m:50,30s:0\"")
+	set.StringVar(&o.url, "url", "", "project scenarios: attack an already running app instead of booting one")
+	set.StringVar(&o.database, "database-url", "", "project scenarios: database for the in-process app")
+	set.BoolVar(&o.seed, "seed", false, "project scenarios: run the registered seeders after migrating")
+	set.BoolVar(&o.list, "list", false, "project scenarios: list them and exit")
+	set.BoolVar(&o.yes, "yes", false, "project scenarios: confirm a -database-url that is not a temporary SQLite file")
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		explicit := map[string]bool{}
 		set.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+
+		// No URL: run the scenarios of the project, which only its app binary can load.
+		if len(args) == 0 {
+			urlOnly := []string{
+				"n",
+				"m",
+				"H",
+				"body",
+				"body-file",
+				"connections",
+				"no-keepalive",
+				"http2",
+				"o",
+				"quiet",
+			}
+			if name := firstSet(explicit, urlOnly...); name != "" {
+				return usagef("-%s needs a URL: bench:run in the project does not take it", name)
+			}
+
+			return delegate(ctx, env, append([]string{"bench:run"}, forwardedFlags(set)...))
+		}
+
+		if name := firstSet(
+			explicit,
+			"scenario",
+			"model",
+			"stages",
+			"url",
+			"database-url",
+			"seed",
+			"list",
+			"yes",
+		); name != "" {
+			return usagef("-%s is for the project's scenarios: run vukem bench without a URL", name)
+		}
+
+		gate, err := o.gate(env)
+		if err != nil {
+			return err
+		}
 
 		cfg, req, err := o.build(env, args, explicit)
 		if err != nil {
@@ -85,12 +148,110 @@ func benchCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}
 		}
 
+		report := loadtest.WriteText
 		if o.asJSON {
-			return loadtest.WriteJSON(env.Stdout, sum)
+			report = loadtest.WriteJSON
 		}
 
-		return loadtest.WriteText(env.Stdout, sum)
+		if err := report(env.Stdout, sum); err != nil {
+			return err
+		}
+
+		return gateError(gate.Apply(env.Stderr, sum))
 	}
+}
+
+// codeError is an error that makes the CLI exit with a code of its own, after having printed its own message.
+type codeError struct {
+	code int
+	err  error
+}
+
+func (e *codeError) Error() string { return e.err.Error() }
+
+func (e *codeError) Unwrap() error { return e.err }
+
+// gateError maps a failed gate to the exit codes of bench: 3 for a threshold, 4 for a regression.
+func gateError(err error) error {
+	switch {
+	case errors.Is(err, loadtest.ErrThresholds):
+		return &codeError{code: 3, err: err}
+	case errors.Is(err, loadtest.ErrRegression):
+		return &codeError{code: 4, err: err}
+	}
+
+	return err
+}
+
+// gate builds the thresholds, the baseline file and the tolerance from the flags.
+func (o *benchOptions) gate(env *Env) (loadtest.Gate, error) {
+	g := loadtest.Gate{Tolerance: loadtest.DefaultTolerance()}
+
+	for _, e := range o.threshold {
+		t, err := loadtest.ParseThreshold(e)
+		if err != nil {
+			return g, usagef("%v", err)
+		}
+
+		g.Thresholds = append(g.Thresholds, t)
+	}
+
+	tol, err := loadtest.ParseTolerance(o.toler)
+	if err != nil {
+		return g, usagef("-tolerance: %v", err)
+	}
+
+	g.Tolerance = tol
+
+	if o.save != "" {
+		g.Save = projectPath(env, o.save)
+	}
+
+	if o.compare != "" {
+		g.Compare = projectPath(env, o.compare)
+	}
+
+	return g, nil
+}
+
+// projectPath resolves a path relative to the project directory; an absolute path stays as it is.
+func projectPath(env *Env, p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+
+	return env.path(p)
+}
+
+// firstSet returns the first of names that was set explicitly.
+func firstSet(explicit map[string]bool, names ...string) string {
+	for _, n := range names {
+		if explicit[n] {
+			return n
+		}
+	}
+
+	return ""
+}
+
+// forwardedFlags rebuilds the flags the user typed, to hand them to bench:run in the app binary. A repeated flag is
+// forwarded once per value.
+func forwardedFlags(set *flag.FlagSet) []string {
+	var out []string
+
+	set.Visit(func(f *flag.Flag) {
+		if r, ok := f.Value.(*repeatFlag); ok {
+			for _, v := range *r {
+				out = append(out, "-"+f.Name+"="+v)
+			}
+
+			return
+		}
+
+		out = append(out, "-"+f.Name+"="+f.Value.String())
+	})
+
+	return out
 }
 
 func (o *benchOptions) interactive(env *Env) bool { return env.Interactive && !o.quiet }
@@ -106,7 +267,9 @@ func (o *benchOptions) build(
 	}
 
 	if !strings.HasPrefix(args[0], "http://") && !strings.HasPrefix(args[0], "https://") {
-		return loadtest.Config{}, loadtest.Request{}, usagef("bench needs a URL (scenarios arrive with plans/079)")
+		return loadtest.Config{}, loadtest.Request{}, usagef(
+			"bench needs an http:// or https:// URL, or no argument to run the project's scenarios",
+		)
 	}
 
 	if explicit["c"] && o.rate != "" {

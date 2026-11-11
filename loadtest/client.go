@@ -145,6 +145,16 @@ func span(from, to time.Time) time.Duration {
 // do sends one request and measures it. A zero scheduled means the closed model: the request is due when it is sent.
 // The target is checked here, for every request, because a Targeter may change the host.
 func (c *client) do(ctx context.Context, req Request, seq uint64, scheduled time.Time, now func() time.Time) Result {
+	res, _ := c.doBody(ctx, req, seq, scheduled, now, 0)
+
+	return res
+}
+
+// doBody is do that also keeps up to keep bytes of the response body (the rest is read and discarded). The Response
+// is nil when keep is 0 or the request failed before a response.
+func (c *client) doBody(
+	ctx context.Context, req Request, seq uint64, scheduled time.Time, now func() time.Time, keep int,
+) (Result, *Response) {
 	res := Result{Seq: seq, Name: req.Name, Sent: now(), BytesOut: int64(len(req.Body))}
 	if scheduled.IsZero() {
 		scheduled = res.Sent
@@ -152,11 +162,13 @@ func (c *client) do(ctx context.Context, req Request, seq uint64, scheduled time
 
 	res.Scheduled = scheduled
 
-	finish := func() Result {
+	var out *Response
+
+	finish := func() (Result, *Response) {
 		end := now()
 		res.Duration, res.Service = end.Sub(scheduled), end.Sub(res.Sent)
 
-		return res
+		return res, out
 	}
 
 	u, err := parseTarget(req.URL, c.allow)
@@ -201,12 +213,15 @@ func (c *client) do(ctx context.Context, req Request, seq uint64, scheduled time
 	if err == nil {
 		res.Status = resp.StatusCode
 
-		var n int64
+		var kept []byte
 
-		n, err = io.Copy(io.Discard, resp.Body)
-		res.BytesIn = n
+		kept, res.BytesIn, err = readBody(resp.Body, keep)
 
 		_ = resp.Body.Close()
+
+		if keep > 0 {
+			out = &Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: kept}
+		}
 	}
 
 	if err != nil {
@@ -227,6 +242,30 @@ func (c *client) do(ctx context.Context, req Request, seq uint64, scheduled time
 	tr.mu.Unlock()
 
 	return finish()
+}
+
+// readBody reads the whole body, keeping its first keep bytes. It returns the bytes kept and the total read.
+func readBody(r io.Reader, keep int) ([]byte, int64, error) {
+	if keep <= 0 {
+		n, err := io.Copy(io.Discard, r)
+
+		return nil, n, err
+	}
+
+	var buf bytes.Buffer
+
+	n, err := io.CopyN(&buf, r, int64(keep))
+	if errors.Is(err, io.EOF) {
+		return buf.Bytes(), n, nil
+	}
+
+	if err != nil {
+		return buf.Bytes(), n, err
+	}
+
+	rest, err := io.Copy(io.Discard, r)
+
+	return buf.Bytes(), n + rest, err
 }
 
 // classify reduces a transport error to a short class. The message itself never reaches a report: it can hold the URL.

@@ -23,7 +23,11 @@ func WriteJSON(w io.Writer, s Summary) error {
 func WriteText(w io.Writer, s Summary) error {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "vukem bench  %s %s\n", s.Method, s.Target)
+	if len(s.Scenarios) > 0 {
+		fmt.Fprintf(&b, "vukem bench  %s  %s\n", strings.Join(s.Scenarios, ", "), s.Target)
+	} else {
+		fmt.Fprintf(&b, "vukem bench  %s %s\n", s.Method, s.Target)
+	}
 	fmt.Fprintf(&b, "  model      %s\n", modelLine(s))
 	fmt.Fprintf(&b, "  duration   %.2fs\n", s.Elapsed.Seconds())
 
@@ -103,6 +107,10 @@ func droppedNote(dropped uint64) string {
 func modelLine(s Summary) string {
 	if s.Model == "open" {
 		return fmt.Sprintf("open, %s (max %d workers)", s.Rate, s.MaxWorkers)
+	}
+
+	if s.Concurrency == 0 {
+		return "closed, ramping virtual users"
 	}
 
 	return fmt.Sprintf("closed, %d workers", s.Concurrency)

@@ -7,7 +7,7 @@ Usage:
   serve                        Run the app (HTTP, scheduler) and restart it when Go files change
   build                        Build assets (Vite) and a production binary in bin/
   version                      Print the vukem version
-  bench <url>                  Load test a URL and report throughput and latency percentiles
+  bench [url]                  Load test a URL or the project's scenarios (throughput, latency percentiles, thresholds)
   doctor                       Report the optional tools the project uses (Betterleaks) and project checks
   upgrade                      Compare the project with this CLI: framework version and starter files (--check writes nothing)
  install
@@ -32,6 +32,7 @@ Usage:
   make:middleware <Name>       Create an HTTP middleware
   make:request <Name>          Create a validated request struct
   make:command <Name>          Create an app command and register it
+  make:bench <Name>            Create a load-test scenario and register it
   make:provider <Name>         Create a provider and register it
   make:resource <Name>         Create an API resource (JSON transformer) for a model
   make:factory <Name>          Create a model factory (fake data for tests and seeders)

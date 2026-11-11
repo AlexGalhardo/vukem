@@ -78,6 +78,11 @@ type Summary struct {
 	Arrivals uint64 `json:"arrivals"`
 	// Warnings are conditions that make the numbers misleading.
 	Warnings []string `json:"warnings,omitempty"`
+	// Iterations counts the scenario iterations that ran, IterationsFailed those whose function returned an error or
+	// panicked. Scenarios lists the scenarios of a scenario run.
+	Iterations       uint64   `json:"iterations,omitempty"`
+	IterationsFailed uint64   `json:"iterations_failed,omitempty"`
+	Scenarios        []string `json:"scenarios,omitempty"`
 	// Status counts responses by code, and "error" for requests without one.
 	Status    map[string]uint64      `json:"status"`
 	Errors    map[string]uint64      `json:"errors,omitempty"`
@@ -98,6 +103,8 @@ type Metrics struct {
 	sent, received    int64
 	status, errs      map[string]uint64
 	names             map[string]*nameMetrics
+	// keepNames keeps the per-name breakdown even for a single name: a scenario run is filtered by it.
+	keepNames bool
 }
 
 // Add records one Result.
@@ -194,7 +201,7 @@ func (m *Metrics) Summary(elapsed time.Duration, dropped uint64) Summary {
 	}
 
 	// One name repeats the totals; the breakdown only helps when there are several.
-	if len(m.names) > 1 {
+	if len(m.names) > 1 || (m.keepNames && len(m.names) > 0) {
 		s.ByName = make(map[string]NameSummary, len(m.names))
 
 		for k, n := range m.names {
@@ -212,6 +219,8 @@ func (m *Metrics) Summary(elapsed time.Duration, dropped uint64) Summary {
 // Summarize snapshots m with the identity of this run. Call it once the run has ended (Results is closed) for the
 // final report, or while it runs for a live one.
 func (r *Runner) Summarize(m *Metrics) Summary {
+	m.keepNames = len(r.scenarios) > 0
+
 	s := m.Summary(r.Elapsed(), r.Dropped())
 	s.Target, s.Method = sanitizedTarget(r.target.URL), r.target.Method
 
@@ -219,14 +228,36 @@ func (r *Runner) Summarize(m *Metrics) Summary {
 		s.RPS = float64(s.HTTPReqs) / w.Seconds()
 	}
 
-	if s.Method == "" {
+	if s.Method == "" && len(r.scenarios) == 0 {
 		s.Method = "GET"
 	}
 
-	if r.open {
+	switch {
+	case r.open && len(r.stages) > 0:
+		s.Model, s.Rate, s.MaxWorkers = "open", "stages", r.cfg.MaxWorkers
+	case r.open:
 		s.Model, s.Rate, s.MaxWorkers = "open", r.rate.Load().String(), r.cfg.MaxWorkers
-	} else {
+	case len(r.stages) > 0:
+		s.Model, s.Concurrency = "closed", 0
+	default:
 		s.Model, s.Concurrency = "closed", r.cfg.Concurrency
+	}
+
+	if len(r.scenarios) > 0 {
+		s.Scenarios = r.scenarios
+		s.Iterations, s.IterationsFailed = r.iterations.Load(), r.iterFailed.Load()
+	}
+
+	if p := r.panics.Load(); p > 0 {
+		if s.Errors == nil {
+			s.Errors = map[string]uint64{}
+		}
+
+		s.Errors["panic"] = p
+
+		if note := r.firstPanic.Load(); note != nil {
+			s.Warnings = append(s.Warnings, *note+" (the first of "+strconv.FormatUint(p, 10)+")")
+		}
 	}
 
 	s.Interrupted = r.parent.Err() != nil
