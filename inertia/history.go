@@ -1,6 +1,7 @@
 package inertia
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"maps"
@@ -124,14 +125,21 @@ func Precognitive[T any](schema z.Schema[T], h web.HandlerFunc) web.HandlerFunc 
 		}
 
 		fields := map[string][]string{}
+		issues := []errs.Issue{}
+
 		if verr != nil {
 			fields = verr.Fields
+			issues = slices.Clone(verr.List())
 		}
 
 		if only := splitHeader(c.Header(HeaderPrecognitionValidateOnly)); only != nil {
-			maps.DeleteFunc(fields, func(f string, _ []string) bool {
-				return !slices.ContainsFunc(only, func(o string) bool { return f == o || strings.HasPrefix(f, o+".") })
-			})
+			wanted := func(f string) bool {
+				return slices.ContainsFunc(only, func(o string) bool { return f == o || strings.HasPrefix(f, o+".") })
+			}
+
+			maps.DeleteFunc(fields, func(f string, _ []string) bool { return !wanted(f) })
+			// The root problem is "_" in fields, so it is in issues.
+			issues = slices.DeleteFunc(issues, func(i errs.Issue) bool { return !wanted(cmp.Or(i.Path, "_")) })
 		}
 
 		if len(fields) == 0 {
@@ -141,6 +149,10 @@ func Precognitive[T any](schema z.Schema[T], h web.HandlerFunc) web.HandlerFunc 
 
 		first := fields[slices.Sorted(maps.Keys(fields))[0]]
 
-		return c.JSON(http.StatusUnprocessableEntity, map[string]any{"message": first[0], "errors": fields})
+		// issues is additive: the client protocol reads message and errors.
+		return c.JSON(
+			http.StatusUnprocessableEntity,
+			map[string]any{"message": first[0], "errors": fields, "issues": issues},
+		)
 	}
 }

@@ -261,7 +261,7 @@ func tsResult(op *clientOp) string {
 
 // tsClientRuntime sticks to fetch, Headers, URLSearchParams and ES2017
 // library calls: no dependencies, browsers and Node 18+.
-const tsClientRuntime = `/** ApiProblem is an RFC 9457 problem details document; errors maps each invalid field to its messages, code is the machine-readable code set with errs.HTTPError.WithExtension, and other extension members are typed unknown. */
+const tsClientRuntime = `/** ApiProblem is an RFC 9457 problem details document; errors maps each invalid field to its messages, issues lists each problem with its code, message key and params, code is the machine-readable code set with errs.HTTPError.WithExtension, and other extension members are typed unknown. */
 export type ApiProblem = {
   type?: string;
   title?: string;
@@ -271,6 +271,7 @@ export type ApiProblem = {
   request_id?: string;
   code?: string;
   errors?: Record<string, string[]>;
+  issues?: { path: string; code: string; key?: string; message: string; params?: Record<string, unknown>; on?: string }[];
   [extension: string]: unknown;
 };
 

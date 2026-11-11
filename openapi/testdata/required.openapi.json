@@ -111,6 +111,35 @@
   },
   "components": {
     "schemas": {
+      "Issue": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "on": {
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
       "Problem": {
         "properties": {
           "detail": {
@@ -127,6 +156,12 @@
           },
           "instance": {
             "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "type": "array"
           },
           "request_id": {
             "type": "string"
@@ -273,7 +308,7 @@
         }
       },
       "ValidationError": {
-        "description": "Validation failed; errors maps each field to its messages",
+        "description": "Validation failed; errors maps each field to its messages and issues lists each problem with its code, key and params",
         "content": {
           "application/problem+json": {
             "schema": {

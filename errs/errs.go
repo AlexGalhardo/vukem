@@ -152,9 +152,91 @@ var (
 	ErrInternal             = &HTTPError{Status: http.StatusInternalServerError}
 )
 
+// Issue is one validation problem with its machine-readable parts: what a
+// client needs to translate the message, highlight the kind of error or
+// build its own text.
+type Issue struct {
+	// Path is the dotted path to the value ("author.email", "tags.2"); empty
+	// for the root value.
+	Path string `json:"path"`
+	// Code is a stable machine-readable code ("too_small", "custom").
+	Code string `json:"code"`
+	// Key is the message key ("too_small.string"); empty for a custom message.
+	Key string `json:"key,omitempty"`
+	// Message is the human-readable message, already localized.
+	Message string `json:"message"`
+	// Params holds the values the message uses ({"min": 3}); never request
+	// input.
+	Params map[string]any `json:"params,omitempty"`
+	// On is where the invalid value came from: "body", "query" or "params";
+	// empty when the source is not known.
+	On string `json:"on,omitempty"`
+}
+
 // ValidationError reports invalid input, keyed by field path.
 type ValidationError struct {
 	Fields map[string][]string
+	// Issues lists the problems added with AddIssue, with their code, key and
+	// params. It may be empty, or miss the messages added with Add; use
+	// [ValidationError.List] to read them all.
+	Issues []Issue
+}
+
+// rootField is the key of Fields for a problem with the root value.
+const rootField = "_"
+
+// AddIssue appends i to Issues and its message to Fields (under "_" when the
+// path is empty) and returns e for chaining.
+func (e *ValidationError) AddIssue(i Issue) *ValidationError {
+	e.Append(fieldOf(i.Path), i.Message)
+	e.Issues = append(e.Issues, i)
+
+	return e
+}
+
+// List returns Issues followed by one issue with the code "custom" for each
+// message of Fields that has none (an error built with Add or Append, or both
+// kinds of call mixed), ordered by field name, so the result is stable and
+// agrees with Fields.
+func (e *ValidationError) List() []Issue {
+	covered := map[[2]string]int{}
+
+	for _, i := range e.Issues {
+		covered[[2]string{fieldOf(i.Path), i.Message}]++
+	}
+
+	list := slices.Clone(e.Issues)
+
+	for _, field := range slices.Sorted(maps.Keys(e.Fields)) {
+		for _, msg := range e.Fields[field] {
+			if k := [2]string{field, msg}; covered[k] > 0 {
+				covered[k]--
+				continue
+			}
+
+			path := field
+			if path == rootField {
+				path = ""
+			}
+
+			list = append(list, Issue{Path: path, Code: "custom", Message: msg})
+		}
+	}
+
+	if list == nil {
+		list = []Issue{}
+	}
+
+	return list
+}
+
+// fieldOf is the key of Fields for an issue path.
+func fieldOf(path string) string {
+	if path == "" {
+		return rootField
+	}
+
+	return path
 }
 
 // NewValidation returns an empty ValidationError.

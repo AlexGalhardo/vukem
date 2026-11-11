@@ -11,7 +11,8 @@ import (
 
 // Parse reads the request input (JSON, form or multipart body merged over
 // the query string) and parses it with schema. Validation issues become an
-// *errs.ValidationError, so returning the error from a handler yields a 422
+// *errs.ValidationError (their origin, "on", is "body" even though the query
+// string is merged in), so returning the error from a handler yields a 422
 // problem+json, an HTMX fragment or a redirect back with flashed errors.
 // The request context only localizes and logs issues: z schemas take no
 // context, so Refine and Custom callbacks see no cancellation or trace and
@@ -28,7 +29,7 @@ func Parse[T any](c *Ctx, schema z.Schema[T]) (T, error) {
 		return zero, err
 	}
 
-	return parseWith(c.Context(), c.Log(), schema, input)
+	return parseWith(c.Context(), c.Log(), schema, input, "body")
 }
 
 // Bind parses the request input into T using the schema derived from T's
@@ -37,7 +38,7 @@ func Bind[T any](c *Ctx) (T, error) { return Parse(c, z.For[T]()) }
 
 // ParseQuery parses only the query string.
 func ParseQuery[T any](c *Ctx, schema z.Schema[T]) (T, error) {
-	return parseWith(c.Context(), c.Log(), schema, c.QueryInput())
+	return parseWith(c.Context(), c.Log(), schema, c.QueryInput(), "query")
 }
 
 // ParseParams parses the named path parameters ({id}, {slug}...).
@@ -49,7 +50,7 @@ func ParseParams[T any](c *Ctx, schema z.Schema[T], names ...string) (T, error) 
 		}
 	}
 
-	v, err := parseWith(c.Context(), c.Log(), schema, input)
+	v, err := parseWith(c.Context(), c.Log(), schema, input, "params")
 
 	// Malformed path parameters name no resource.
 	if _, invalid := err.(*errs.ValidationError); invalid { //nolint:errorlint // returned unwrapped by parseWith
@@ -64,7 +65,7 @@ func ParseParams[T any](c *Ctx, schema z.Schema[T], names ...string) (T, error) 
 // ValidationError (see WithIssueLocalizer) and the raw errors of failed
 // Refine/Custom checks are logged, never sent to the client.
 func ParseMap[T any](c *Ctx, schema z.Schema[T], input map[string]any) (T, error) {
-	return parseWith(c.Context(), c.Log(), schema, input)
+	return parseWith(c.Context(), c.Log(), schema, input, "")
 }
 
 // ParseInput validates an already assembled input map (validation errors
@@ -73,16 +74,19 @@ func ParseMap[T any](c *Ctx, schema z.Schema[T], input map[string]any) (T, error
 // context.Background(), so no request context propagates. Prefer ParseMap
 // inside a handler.
 func ParseInput[T any](schema z.Schema[T], input map[string]any) (T, error) {
-	return parseWith(context.Background(), nil, schema, input)
+	return parseWith(context.Background(), nil, schema, input, "")
 }
 
-func parseWith[T any](ctx context.Context, log *slog.Logger, schema z.Schema[T], input any) (T, error) {
+// parseWith parses input with schema; on names where the input came from
+// ("body", "query", "params", or "" when unknown) and is stamped on every
+// issue of the validation error.
+func parseWith[T any](ctx context.Context, log *slog.Logger, schema z.Schema[T], input any, on string) (T, error) {
 	v, err := schema.Parse(input)
 	if err == nil {
 		return v, nil
 	}
 
-	if verr := issuesValidation(ctx, log, err); verr != nil {
+	if verr := issuesValidation(ctx, log, err, on); verr != nil {
 		return v, verr
 	}
 
@@ -93,8 +97,9 @@ func parseWith[T any](ctx context.Context, log *slog.Logger, schema z.Schema[T],
 // localized *errs.ValidationError, or returns nil. Errors wrapped with
 // another status (errs.Wrap(500, issues) for internal data) stay as they
 // are. The raw errors of plain Refine/Custom failures go to log (nil: not
-// logged), never to the client.
-func issuesValidation(ctx context.Context, log *slog.Logger, err error) *errs.ValidationError {
+// logged), never to the client. Each issue is copied without its Err and
+// marked as coming from on.
+func issuesValidation(ctx context.Context, log *slog.Logger, err error, on string) *errs.ValidationError {
 	if errs.Status(err) != http.StatusUnprocessableEntity {
 		return nil
 	}
@@ -116,7 +121,15 @@ func issuesValidation(ctx context.Context, log *slog.Logger, err error) *errs.Va
 		is = localize(is)
 	}
 
-	return &errs.ValidationError{Fields: is.Fields()}
+	verr := &errs.ValidationError{Fields: is.Fields(), Issues: make([]errs.Issue, 0, len(is))}
+
+	for _, i := range is {
+		verr.Issues = append(verr.Issues, errs.Issue{
+			Path: i.Path, Code: i.Code, Key: i.Key, Message: i.Message, Params: i.Params, On: on,
+		})
+	}
+
+	return verr
 }
 
 // JSONWith writes v as JSON after checking it against schema when

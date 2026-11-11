@@ -3,6 +3,7 @@ package orm
 import (
 	"context"
 	"reflect"
+	"strings"
 
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/errs"
@@ -98,7 +99,10 @@ func Validate(ctx context.Context, ex database.Executor, rules ...Rule) error {
 		}
 
 		if !ok {
-			verr = verr.Add(r.field, r.localized(ctx))
+			verr = verr.AddIssue(errs.Issue{
+				Path: r.field, Code: "custom", Key: strings.TrimPrefix(r.key, "validation."),
+				Message: r.localized(ctx),
+			})
 		}
 	}
 

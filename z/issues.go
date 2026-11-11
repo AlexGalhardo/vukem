@@ -156,6 +156,10 @@ func FieldError(path, message string) error {
 // params, and its Message is fallback with {field} and params filled in.
 // [Issues.Localize] rebuilds the message from the template for key, so with
 // package i18n a key "confirmed" is looked up as "validation.confirmed".
+//
+// params reach the client in the issues member of a 422: put in them only
+// values the app chose (a limit, a name), never what the user sent, and never
+// an error or anything that holds one.
 func FieldErrorKey(path, key, fallback string, params map[string]any) error {
 	return &fieldError{path: path, message: fallback, key: key, params: cloneParams(params)}
 }

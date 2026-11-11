@@ -507,6 +507,7 @@ func TestErrorHandlerErrorPage(t *testing.T) {
 		{"field errors on a GET", verr, get, false, []ErrorPage{{
 			Status: 422, Title: "Validation failed", Detail: "1 field(s) are invalid.",
 			Errors: map[string][]string{"title": {"required"}},
+			Issues: []errs.Issue{{Path: "title", Code: "custom", Message: "required"}},
 		}}},
 		{"5xx wrapping field errors hides them", errs.Wrap(500, verr), nil, false, []ErrorPage{
 			{Status: 500, Title: "Internal Server Error"},
@@ -760,4 +761,244 @@ func TestSecurity_A10_ServerErrorHidesWrappedValidation(t *testing.T) {
 			t.Errorf("response = %d Location %q, want 500 without redirect", rec.Code, rec.Header().Get("Location"))
 		}
 	})
+}
+
+// problemIssues decodes the "issues" member of a problem body.
+func problemIssues(t *testing.T, body []byte) []map[string]any {
+	t.Helper()
+
+	var p struct {
+		Issues []map[string]any `json:"issues"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		t.Fatal(err)
+	}
+
+	return p.Issues
+}
+
+func TestProblemIssues(t *testing.T) {
+	t.Parallel()
+
+	jsonReq := func(r *http.Request) { r.Header.Set("Accept", "application/json") }
+
+	t.Run("structured issues next to the unchanged errors", func(t *testing.T) {
+		t.Parallel()
+
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/posts?x=1",
+			strings.NewReader(`{"title":"ab"}`))
+		r.Header.Set("Accept", "application/json")
+		r.Header.Set("Content-Type", "application/json")
+
+		rec := httptest.NewRecorder()
+		schema := z.Struct[struct {
+			Title string `json:"title"`
+		}](z.Shape{"title": z.String().Min(3)})
+
+		NewCtx(rec, r, &Services{Log: slog.New(slog.DiscardHandler)}).Serve(func(c *Ctx) error {
+			_, err := Parse(c, schema)
+			return err
+		})
+
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+
+		wantErrors := map[string]any{"title": []any{"The title field must be at least 3 characters."}}
+		if diff := cmp.Diff(wantErrors, got["errors"]); diff != "" {
+			t.Errorf("errors changed (-want +got):\n%s", diff)
+		}
+
+		wantIssues := []any{map[string]any{
+			"path": "title", "code": "too_small", "key": "too_small.string", "on": "body",
+			"message": "The title field must be at least 3 characters.", "params": map[string]any{"min": float64(3)},
+		}}
+		if diff := cmp.Diff(wantIssues, got["issues"]); diff != "" {
+			t.Errorf("issues (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("origin follows the helper", func(t *testing.T) {
+		t.Parallel()
+
+		schema := z.Struct[struct {
+			Q string `json:"q"`
+		}](z.Shape{"q": z.String().Min(3)})
+
+		tests := map[string]struct {
+			parse func(c *Ctx) error
+			want  string
+		}{
+			"body":  {func(c *Ctx) error { _, err := Parse(c, schema); return err }, "body"},
+			"query": {func(c *Ctx) error { _, err := ParseQuery(c, schema); return err }, "query"},
+			"map": {func(c *Ctx) error {
+				_, err := ParseMap(c, schema, map[string]any{"q": "a"})
+				return err
+			}, ""},
+		}
+
+		for name, tt := range tests {
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/s?q=a", strings.NewReader(`{"q":"a"}`))
+			r.Header.Set("Accept", "application/json")
+			r.Header.Set("Content-Type", "application/json")
+
+			rec := httptest.NewRecorder()
+			NewCtx(rec, r, &Services{Log: slog.New(slog.DiscardHandler)}).Serve(tt.parse)
+
+			issues := problemIssues(t, rec.Body.Bytes())
+			if len(issues) != 1 {
+				t.Fatalf("%s: issues = %v", name, issues)
+			}
+
+			if got, _ := issues[0]["on"].(string); got != tt.want {
+				t.Errorf("%s: on = %q, want %q", name, got, tt.want)
+			}
+		}
+	})
+
+	t.Run("an error built by hand gets derived issues", func(t *testing.T) {
+		t.Parallel()
+
+		rec, _ := runError(t, errs.NewValidation().Add("email", "taken"), jsonReq, nil)
+
+		want := []map[string]any{{"path": "email", "code": "custom", "message": "taken"}}
+		if diff := cmp.Diff(want, problemIssues(t, rec.Body.Bytes())); diff != "" {
+			t.Errorf("issues (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("not on other statuses", func(t *testing.T) {
+		t.Parallel()
+
+		for _, err := range []error{
+			errs.ErrNotFound,
+			errs.Wrap(http.StatusInternalServerError, errs.NewValidation().Add("email", "taken")),
+			errs.Wrap(http.StatusInternalServerError, z.Issues{{Path: "x", Code: "custom", Message: "m"}}),
+		} {
+			rec, _ := runError(t, err, jsonReq, nil)
+
+			var got map[string]any
+			if jerr := json.Unmarshal(rec.Body.Bytes(), &got); jerr != nil {
+				t.Fatal(jerr)
+			}
+
+			if _, ok := got["issues"]; ok {
+				t.Errorf("%v: a %d response has issues: %v", err, rec.Code, got)
+			}
+
+			if _, ok := got["errors"]; ok {
+				t.Errorf("%v: a %d response has errors: %v", err, rec.Code, got)
+			}
+		}
+	})
+
+	t.Run("an extension cannot take the member", func(t *testing.T) {
+		t.Parallel()
+
+		err := errs.New(http.StatusConflict, "Taken.").WithExtension("issues", "forged")
+		rec, _ := runError(t, err, jsonReq, nil)
+
+		if strings.Contains(rec.Body.String(), "forged") {
+			t.Errorf("body = %s, want the reserved member ignored", rec.Body.String())
+		}
+	})
+
+	t.Run("every validation 422 has issues", func(t *testing.T) {
+		t.Parallel()
+
+		rec, _ := runError(t, errs.NewValidation().Add("a", "x").Add("b", "y"), jsonReq, nil)
+		if rec.Code != http.StatusUnprocessableEntity || len(problemIssues(t, rec.Body.Bytes())) != 2 {
+			t.Errorf("response = %d %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("params that do not serialize still answer 422", func(t *testing.T) {
+		t.Parallel()
+
+		err := errs.NewValidation().AddIssue(errs.Issue{
+			Path: "x", Code: "custom", Message: "bad", Params: map[string]any{"fn": func() {}},
+		})
+		rec, _ := runError(t, err, jsonReq, nil)
+
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422", rec.Code)
+		}
+
+		issues := problemIssues(t, rec.Body.Bytes())
+		if len(issues) != 1 || issues[0]["message"] != "bad" || issues[0]["params"] != nil {
+			t.Errorf("issues = %v, want the issue without its params", issues)
+		}
+	})
+}
+
+// A Refine or Custom callback may return an error that names a table, a
+// host or a secret. The structured member keeps it out like the old one.
+func TestSecurity_A10_ValidationIssuesHideCallbackErrors(t *testing.T) {
+	t.Parallel()
+
+	schema := z.Struct[struct {
+		Email string `json:"email"`
+	}](z.Shape{"email": z.String().Refine(func(string) error {
+		return errors.New(`pq: relation "users" does not exist`)
+	})})
+
+	r := httptest.NewRequestWithContext(
+		t.Context(),
+		http.MethodPost,
+		"/signup",
+		strings.NewReader(`{"email":"a@b.co"}`),
+	)
+	r.Header.Set("Accept", "application/json")
+	r.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	NewCtx(rec, r, &Services{Log: slog.New(slog.DiscardHandler)}).Serve(func(c *Ctx) error {
+		_, err := Parse(c, schema)
+		return err
+	})
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); strings.Contains(body, "pq:") || strings.Contains(body, "relation") {
+		t.Fatalf("the callback error reached the client: %s", body)
+	}
+
+	issues := problemIssues(t, rec.Body.Bytes())
+	if len(issues) != 1 || issues[0]["code"] != "custom" || issues[0]["key"] != "invalid" ||
+		issues[0]["message"] != "The email field is invalid." {
+		t.Errorf("issues = %v", issues)
+	}
+}
+
+// A problem that cannot be encoded must still answer with its status, never
+// with an empty 200.
+func TestProblemEncodeFailureStillAnswersTheStatus(t *testing.T) {
+	t.Parallel()
+
+	s := &Services{ProblemDecorator: func(_ *Ctx, p *Problem) {
+		p.Extensions = map[string]any{"bad": func() {}}
+	}}
+
+	rec, logs := runError(t, errs.ErrNotFound, func(r *http.Request) { r.Header.Set("Accept", "application/json") }, s)
+
+	if rec.Code != http.StatusNotFound || rec.Header().Get("Content-Type") != "application/problem+json" {
+		t.Fatalf("response = %d %q, want a 404 problem", rec.Code, rec.Header().Get("Content-Type"))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body %q: %v", rec.Body.String(), err)
+	}
+
+	want := map[string]any{"type": "about:blank", "title": "Not Found", "status": float64(404)}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("fallback body (-want +got):\n%s", diff)
+	}
+
+	if !strings.Contains(logs, "encode problem") {
+		t.Errorf("the encode failure was not logged: %q", logs)
+	}
 }

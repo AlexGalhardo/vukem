@@ -173,6 +173,7 @@ func TestEndToEnd(t *testing.T) {
 		AssertHXTrigger("note-created")
 
 	jc.PostJSON("/notes", map[string]any{"body": ""}).AssertJSONValidationErrors("body")
+	jc.PostJSON("/notes", map[string]any{"body": ""}).AssertJSONValidationIssue("body", "too_small")
 	jc.GetJSON("/notes/99").AssertProblem(http.StatusNotFound)
 	jc.GetJSON("/notes/abc").AssertNotFound()
 	jc.GetJSON("/secret").AssertForbidden()
@@ -273,6 +274,9 @@ func TestAssertionsReportFailures(t *testing.T) {
 		`has -1 entries, want 3`:     func(tb *fakeTB) { app.Client(tb).GetJSON("/notes/99").AssertJSONCount("title", 3) },
 		"JSON body differs":          func(tb *fakeTB) { app.Client(tb).GetJSON("/notes/99").AssertJSON(map[string]any{}) },
 		"want application/problem":   func(tb *fakeTB) { app.Client(tb).Get("/notes").AssertProblem(200) },
+		`no validation issue "custom" at "body"`: func(tb *fakeTB) {
+			app.Client(tb).PostJSON("/notes", map[string]any{"body": ""}).AssertJSONValidationIssue("body", "custom")
+		},
 		`no validation error for "x"`: func(tb *fakeTB) {
 			app.Client(tb).PostJSON("/notes", map[string]any{}).AssertJSONValidationErrors("x")
 		},

@@ -602,6 +602,27 @@ func (r *Response) AssertJSONValidationErrors(fields ...string) *Response {
 	return r
 }
 
+// AssertJSONValidationIssue asserts a 422 problem whose issues member lists a
+// problem at path with the given code ("too_small", "invalid_string",
+// "custom"): the structured side of [Response.AssertJSONValidationErrors].
+func (r *Response) AssertJSONValidationIssue(path, code string) *Response {
+	r.t.Helper()
+	r.AssertProblem(http.StatusUnprocessableEntity)
+
+	issues, _ := r.JSONPath("issues")
+	list, _ := issues.([]any)
+
+	for _, item := range list {
+		if m, ok := item.(map[string]any); ok && m["path"] == path && m["code"] == code {
+			return r
+		}
+	}
+
+	r.fail("no validation issue %q at %q (got %v)", code, path, issues)
+
+	return r
+}
+
 // AssertHXTrigger asserts the response triggers a client event: HX-Trigger
 // is a JSON object holding event, or a comma-separated list of event names
 // ("saved, refresh") that includes it.

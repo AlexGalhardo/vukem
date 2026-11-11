@@ -113,6 +113,9 @@ type ErrorPage struct {
 	// Errors holds the field errors of a 4xx validation error (all
 	// messages per field); nil otherwise.
 	Errors map[string][]string
+	// Issues lists the same problems with their code, message key and
+	// parameters (a 4xx validation error); nil otherwise.
+	Issues []errs.Issue
 }
 
 // Ctx is the per-request context. It must not be used after the handler

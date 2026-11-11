@@ -57,6 +57,29 @@ func (s NumberSchema[N]) with(check numCheck[N]) NumberSchema[N] {
 	return s
 }
 
+// WithMessage sets the message of the rule declared just before it, as
+// [StringSchema.WithMessage] does: placeholders work, the issue keeps its
+// code and params but loses its key, and it wins over Message. It panics when
+// no rule precedes it.
+func (s NumberSchema[N]) WithMessage(message string) NumberSchema[N] {
+	if len(s.checks) == 0 {
+		panic("z: WithMessage needs a rule before it")
+	}
+
+	// The rule is wrapped, so a schema that never uses WithMessage pays
+	// nothing for it.
+	s.checks = slices.Clone(s.checks)
+	last := s.checks[len(s.checks)-1]
+	s.checks[len(s.checks)-1] = func(o *opts[N], c *pctx, path string, v N) {
+		n := len(c.issues)
+
+		last(o, c, path, v)
+		useMessage(c, n, path, message)
+	}
+
+	return s
+}
+
 // GoType implements AnySchema.
 func (NumberSchema[N]) GoType() reflect.Type { return reflect.TypeFor[N]() }
 

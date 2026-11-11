@@ -411,7 +411,7 @@ func addErrorResponses(doc *Document, s *Schemas) {
 
 		if refs["ValidationError"] {
 			doc.Components.Responses["ValidationError"] = Response{
-				Description: "Validation failed; errors maps each field to its messages",
+				Description: "Validation failed; errors maps each field to its messages and issues lists each problem with its code, key and params",
 				Content:     map[string]MediaType{problemJ: {Schema: problem}},
 			}
 		}

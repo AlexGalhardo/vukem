@@ -3,6 +3,8 @@ package z
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -447,5 +449,36 @@ func TestSecurity_A10_RefineErrorTextNotLeaked(t *testing.T) {
 				t.Errorf("Localize = %q, Error() = %q; want a translated message and no raw text", loc[0].Message, err)
 			}
 		})
+	}
+}
+
+// TestMessageKeys_DocumentedInValidationDocs fails when a built-in message key
+// is missing from the key table of docs/validation.md: the keys are a contract
+// with clients, so the page cannot fall behind the code.
+func TestMessageKeys_DocumentedInValidationDocs(t *testing.T) {
+	t.Parallel()
+
+	page := filepath.Join("..", "docs", "validation.md")
+
+	b, err := os.ReadFile(page)
+	if err != nil {
+		t.Fatalf("read %s: %v", page, err)
+	}
+
+	documented := map[string]bool{}
+
+	for line := range strings.SplitSeq(string(b), "\n") {
+		if !strings.HasPrefix(line, "| `") {
+			continue
+		}
+
+		cell, _, _ := strings.Cut(strings.TrimPrefix(line, "| "), " |")
+		documented[strings.Trim(cell, "`")] = true
+	}
+
+	for key := range defaultMessages {
+		if !documented[key] {
+			t.Errorf("message key %q is not in the key table of %s", key, page)
+		}
 	}
 }

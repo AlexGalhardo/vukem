@@ -414,3 +414,117 @@ func TestModifierMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestWithMessage(t *testing.T) {
+	t.Parallel()
+
+	re := regexp.MustCompile(`^[a-z]+$`)
+
+	t.Run("each message goes to its own rule", func(t *testing.T) {
+		t.Parallel()
+
+		s := String().Min(3).WithMessage("Too short.").Regex(re).WithMessage("Bad format.")
+
+		_, err := s.Parse("a1")
+
+		is, _ := AsIssues(err)
+		if len(is) != 2 || is[0].Message != "Too short." || is[1].Message != "Bad format." {
+			t.Fatalf("issues = %+v", is)
+		}
+
+		// The code and the params stay, the key does not (a custom text is
+		// not translated).
+		if is[0].Code != CodeTooSmall || is[0].Params["min"] != 3 || is[0].Key != "" ||
+			is[1].Code != CodeInvalidString {
+			t.Errorf("issue 0 = %+v", is[0])
+		}
+
+		if _, err := s.Parse("abc"); err != nil {
+			t.Errorf("Parse(valid) = %v", err)
+		}
+	})
+
+	t.Run("it wins over Message", func(t *testing.T) {
+		t.Parallel()
+
+		s := String().Message(CodeTooSmall, "from the schema").Min(3).WithMessage("from the rule")
+
+		_, err := s.Parse("a")
+		if is, _ := AsIssues(err); len(is) != 1 || is[0].Message != "from the rule" {
+			t.Errorf("issues = %+v", is)
+		}
+	})
+
+	t.Run("it panics without a rule", func(t *testing.T) {
+		t.Parallel()
+
+		mustPanic(t, "String().WithMessage", func() { String().WithMessage("x") })
+		mustPanic(t, "Int().WithMessage", func() { Int().WithMessage("x") })
+		mustPanic(t, "after a pre-step only", func() { String().Trim().WithMessage("x") })
+	})
+
+	t.Run("placeholders", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := Int().Min(5).WithMessage("{field} must be at least {min}").Parse(json.Number("1"))
+		if is, _ := AsIssues(err); len(is) != 1 || is[0].Message != "value must be at least 5" {
+			t.Errorf("issues = %+v", is)
+		}
+
+		type form struct {
+			Age int `json:"age"`
+		}
+
+		_, err = Struct[form](Shape{"age": Int().Min(18).WithMessage("The {field} must be {min} or more.")}).
+			Parse(map[string]any{"age": json.Number("3")})
+		if is, _ := AsIssues(err); len(is) != 1 || is[0].Message != "The age must be 18 or more." {
+			t.Errorf("issues = %+v", is)
+		}
+	})
+
+	t.Run("the original is not changed", func(t *testing.T) {
+		t.Parallel()
+
+		a := String().Min(3)
+		b := a.WithMessage("x")
+
+		_, errA := a.Parse("a")
+		_, errB := b.Parse("a")
+
+		isA, _ := AsIssues(errA)
+		isB, _ := AsIssues(errB)
+
+		if isA[0].Message == "x" || isB[0].Message != "x" {
+			t.Errorf("a = %q, b = %q", isA[0].Message, isB[0].Message)
+		}
+
+		// Two schemas derived from one share no message.
+		c := a.Max(5).WithMessage("c")
+		d := a.Max(5).WithMessage("d")
+
+		_, errC := c.Parse("abcdefg")
+		_, errD := d.Parse("abcdefg")
+
+		isC, _ := AsIssues(errC)
+		isD, _ := AsIssues(errD)
+
+		if isC[0].Message != "c" || isD[0].Message != "d" {
+			t.Errorf("c = %q, d = %q", isC[0].Message, isD[0].Message)
+		}
+	})
+
+	t.Run("with Bail", func(t *testing.T) {
+		t.Parallel()
+
+		type form struct {
+			A string `json:"a"`
+		}
+
+		s := Struct[form](Shape{"a": String().Min(5).WithMessage("short").Email().WithMessage("not an email")}).Bail()
+
+		_, err := s.Parse(map[string]any{"a": "x"})
+		if is, _ := AsIssues(err); len(is) != 1 || is[0].Message != "short" {
+			t.Errorf("issues = %+v", is)
+		}
+	})
+}
