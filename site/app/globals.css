@@ -454,6 +454,7 @@ body {
    and a soft fade at the edges that tells there is more to scroll. */
 .scroll-slim {
   mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem, #000 calc(100% - 2rem), transparent 100%);
+  scroll-padding-block: 1.25rem 2rem;
 }
 /* Chromium ignores ::-webkit-scrollbar (and draws arrows) once the standard properties are set,
    so only browsers without the pseudo-elements (Firefox) get them. */
@@ -484,4 +485,15 @@ body {
 .scroll-slim:hover::-webkit-scrollbar-thumb,
 .scroll-slim:focus-within::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--faint) 55%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

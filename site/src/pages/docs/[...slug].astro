@@ -1,6 +1,6 @@
 ---
 import Base from "../../layouts/Base.astro";
-import { getDoc, getEveryDoc } from "@/lib/content";
+import { currentEquivalent, getDoc, getEveryDoc } from "@/lib/content";
 import { docMetadata } from "@/components/doc-article";
 import { renderDoc } from "../../prerender";
 export function getStaticPaths() {
@@ -19,6 +19,6 @@ const meta = docMetadata(doc);
 const html = await renderDoc(doc);
 ---
 
-<Base title={meta.title} description={meta.description} canonical={doc.href} progress>
+<Base title={meta.title} description={meta.description} canonical={(currentEquivalent(doc) ?? doc).href} progress>
   <Fragment set:html={html} />
 </Base>
