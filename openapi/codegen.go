@@ -3,6 +3,8 @@ package openapi
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -63,6 +65,63 @@ func TypeScript(d *Document, zod bool) (string, error) {
 	out := strings.TrimRight(b.String(), "\n") + "\n"
 
 	return out, checkDeclarations(out)
+}
+
+// TypeScriptTypes returns TypeScript declarations for Go types outside an
+// OpenAPI document: one exported type per named struct reached, then one
+// alias per entry of roots (name to type), sorted by name. Fields the server
+// always sends are required, so a field with omitempty or omitzero is
+// optional. A struct without fields is Record<string, never>. There is no
+// header: the caller writes its own.
+func TypeScriptTypes(roots map[string]reflect.Type) (string, error) {
+	s := NewSchemas()
+	s.outputs = map[reflect.Type]bool{}
+
+	rootSchemas := make(map[string]Schema, len(roots))
+	for name, t := range roots {
+		rootSchemas[name] = s.For(t)
+	}
+
+	// The schemas hold typed slices and maps; the generator reads the plain
+	// JSON form a document has.
+	raw, err := json.Marshal(map[string]any{"components": s.Components(), "roots": rootSchemas})
+	if err != nil {
+		return "", err
+	}
+
+	var plain struct {
+		Components map[string]map[string]any `json:"components"`
+		Roots      map[string]map[string]any `json:"roots"`
+	}
+
+	if err := json.Unmarshal(raw, &plain); err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+
+	for _, name := range slices.Sorted(maps.Keys(plain.Components)) {
+		fmt.Fprintf(&b, "export type %s = %s;\n\n", componentName(name), tsType(plain.Components[name], ""))
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(plain.Roots)) {
+		fmt.Fprintf(&b, "export type %s = %s;\n\n", name, rootType(plain.Roots[name]))
+	}
+
+	out := strings.TrimRight(b.String(), "\n") + "\n"
+
+	return out, checkDeclarations(out)
+}
+
+// rootType is tsType, except that an object without properties is empty, not
+// open.
+func rootType(s map[string]any) string {
+	if slices.Equal(typeList(s["type"]), []string{"object"}) && len(asMap(s["properties"])) == 0 &&
+		asMap(s["additionalProperties"]) == nil {
+		return "Record<string, never>"
+	}
+
+	return tsType(s, "")
 }
 
 var declRe = regexp.MustCompile(`(?m)^(?:export )?(?:type|const|class|interface|function) ([A-Za-z_$][A-Za-z0-9_$]*)`)

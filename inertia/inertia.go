@@ -27,6 +27,7 @@ import (
 	"html/template"
 	"maps"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -96,6 +97,17 @@ type Config struct {
 	// ignore it. The client must render such pages with createApp, not
 	// hydrate them. nil: an empty mount element.
 	ClientShell func(p *Page) Shell
+	// Pages lists the typed pages (Component.Info) for codegen:pages. It
+	// does not change rendering. A component listed twice is an error.
+	Pages []PageInfo
+	// SharedType is a struct describing every shared prop (Config.Shared and
+	// Share), for codegen:pages. When set the adapter fails closed: New
+	// rejects a Config.Shared key that is not a field of it, and a page that
+	// would send a key shared with Share that is not one fails with a 500
+	// instead of leaking an untyped prop; the response does not name the
+	// key. A dotted key is checked by its first segment. nil leaves
+	// SharedProps open.
+	SharedType reflect.Type
 }
 
 // Shell is the markup of a client-rendered page before the app mounts. The
@@ -108,7 +120,16 @@ type Shell struct {
 // Inertia is the adapter; build it with New.
 type Inertia struct {
 	cfg Config
+	// sharedKeys is the keys SharedType allows (and "errors"); nil when
+	// SharedType is not set.
+	sharedKeys map[string]bool
 }
+
+// Pages returns Config.Pages.
+func (in *Inertia) Pages() []PageInfo { return slices.Clone(in.cfg.Pages) }
+
+// SharedType returns Config.SharedType.
+func (in *Inertia) SharedType() reflect.Type { return in.cfg.SharedType }
 
 // Page is the Inertia page object.
 type Page struct {
@@ -168,7 +189,67 @@ func New(cfg Config) (*Inertia, error) {
 		cfg.SSR = cfg.SSR.withDefaults()
 	}
 
-	return &Inertia{cfg: cfg}, nil
+	in := &Inertia{cfg: cfg}
+
+	if err := in.checkTyped(); err != nil {
+		return nil, err
+	}
+
+	return in, nil
+}
+
+// checkTyped validates Pages and SharedType, and Config.Shared against it.
+func (in *Inertia) checkTyped() error {
+	seen := map[string]bool{}
+
+	for _, p := range in.cfg.Pages {
+		if p.Component == "" {
+			return errors.New("inertia: a page in Config.Pages has no component name")
+		}
+
+		if seen[p.Component] {
+			return fmt.Errorf("inertia: component %q is listed twice in Config.Pages", p.Component)
+		}
+
+		seen[p.Component] = true
+
+		if _, err := p.Shape(); err != nil {
+			return err
+		}
+	}
+
+	if in.cfg.SharedType == nil {
+		return nil
+	}
+
+	plan, err := analyze(in.cfg.SharedType)
+	if err != nil {
+		return fmt.Errorf("inertia: SharedType: %w", err)
+	}
+
+	in.sharedKeys = map[string]bool{"errors": true}
+	for _, f := range plan.fields {
+		in.sharedKeys[f.key] = true
+	}
+
+	for key := range in.cfg.Shared {
+		if err := in.checkShared(key); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// checkShared fails closed on a shared key SharedType does not declare. A
+// dotted key shares a nested prop, so its first segment is the key.
+func (in *Inertia) checkShared(key string) error {
+	top, _, _ := strings.Cut(key, ".")
+	if in.sharedKeys == nil || in.sharedKeys[top] {
+		return nil
+	}
+
+	return fmt.Errorf("inertia: shared prop %q is not a field of Config.SharedType", key)
 }
 
 // Version returns the current asset version.
@@ -351,6 +432,12 @@ func (st *state) page(c *web.Ctx, component string, props Props) (*Page, error) 
 	}
 
 	maps.Copy(shared, st.shared)
+
+	for key := range st.shared {
+		if err := st.in.checkShared(key); err != nil {
+			return nil, errs.Wrap(http.StatusInternalServerError, err)
+		}
+	}
 
 	all := maps.Clone(shared)
 	maps.Copy(all, props)
