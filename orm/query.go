@@ -929,14 +929,20 @@ func (q Query[T]) Paginate(ctx context.Context, page, perPage int) (Page[T], err
 		return Page[T]{}, err
 	}
 
+	last := max(int((total+int64(perPage)-1)/int64(perPage)), 1)
+
+	// Past the last page there is nothing to read: skip the query so a huge
+	// page cannot overflow the offset or make the database scan to it.
+	if page > last {
+		return Page[T]{Items: []T{}, Total: total, Page: page, PerPage: perPage, LastPage: last}, nil
+	}
+
 	items, err := q.Limit(perPage).Offset((page - 1) * perPage).Get(ctx)
 	if err != nil {
 		return Page[T]{}, err
 	}
 
-	last := int((total + int64(perPage) - 1) / int64(perPage))
-
-	return Page[T]{Items: items, Total: total, Page: page, PerPage: perPage, LastPage: max(last, 1)}, nil
+	return Page[T]{Items: items, Total: total, Page: page, PerPage: perPage, LastPage: last}, nil
 }
 
 // scanner maps result columns to struct fields once per query. Encrypted

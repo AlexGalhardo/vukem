@@ -290,8 +290,12 @@ func (d *Database) Delete(ctx context.Context, keys ...string) error {
 // characters instead of using LIKE, which SQLite and MySQL match without
 // regard to case and which would need escaping for % and _.
 func (d *Database) DeletePrefix(ctx context.Context, prefix string) error {
-	_, err := d.db.ExecContext(ctx, d.q(`DELETE FROM {t} WHERE substr({k}, 1, ?) = ?`),
-		utf8.RuneCountInString(prefix), prefix)
+	n := utf8.RuneCountInString(prefix)
+	if d.mysql() {
+		n = len(prefix) // VARBINARY key: substr counts bytes
+	}
+
+	_, err := d.db.ExecContext(ctx, d.q(`DELETE FROM {t} WHERE substr({k}, 1, ?) = ?`), n, prefix)
 
 	return err
 }

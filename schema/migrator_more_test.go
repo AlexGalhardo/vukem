@@ -462,6 +462,8 @@ func TestMigrationLockFailsClosed(t *testing.T) {
 
 	for _, dl := range []database.Dialect{database.Postgres, database.MySQL} {
 		db, _ := serverDialectDB(t, dl)
+		// A single-connection pool is refused before the lock is tried.
+		db.SQL().SetMaxOpenConns(2)
 		m, _ := NewMigrator(db, migrations())
 
 		runs := map[string]func() error{
@@ -480,5 +482,31 @@ func TestMigrationLockFailsClosed(t *testing.T) {
 		if tables := tableNames(t, db); len(tables) != 0 {
 			t.Errorf("%s: tables created without the lock: %v", dl.Name(), tables)
 		}
+	}
+}
+
+func TestMigrateRefusesSingleConnectionPool(t *testing.T) {
+	t.Parallel()
+
+	sqlite, err := database.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlite.Close() })
+
+	sqlite.SQL().SetMaxOpenConns(1)
+
+	// The Postgres dialect makes Up take the advisory lock; SQLite would
+	// reject that statement, so the error below also proves the check runs
+	// before any lock SQL.
+	db := database.FromSQL(sqlite.SQL(), database.Postgres)
+
+	m, err := NewMigrator(db, []Migration{{ID: "1_a", Up: func(*Schema) error { return nil }}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.Up(t.Context()); err == nil || !strings.Contains(err.Error(), "at least 2 connections") {
+		t.Fatalf("Up() error = %v, want an at least 2 connections error", err)
 	}
 }
