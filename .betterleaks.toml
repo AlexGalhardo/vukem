@@ -26,6 +26,7 @@ regexTarget = "secret"
 regexes = [
 	'''^correct horse''',
 	'''^(hunter2|s3cret|secret|password|pass|pw|test|guess|wrong|short|app|vukem|lumek|not used)$''',
+	'''^p%40ss$''',
 	'''(?i)^(a brand new|another long|wrong|not my) password$''',
 	'''testPassword''',
 	'''\.\.\.$''',
