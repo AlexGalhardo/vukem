@@ -110,6 +110,11 @@ func RequireSSR(ctx context.Context) {
 	}
 }
 
+// ssrIdleConns keeps one idle connection per concurrent render: every SSR
+// request goes to the same host, where the default of 2 forces a new
+// connection for each burst.
+const ssrIdleConns = 32
+
 func (c *SSRConfig) withDefaults() *SSRConfig {
 	out := *c
 	if out.URL == "" {
@@ -124,6 +129,12 @@ func (c *SSRConfig) withDefaults() *SSRConfig {
 
 	if out.Client == nil {
 		out.Client = &http.Client{Timeout: out.Timeout}
+		// A replaced DefaultTransport of another type keeps its own pooling.
+		if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+			tr := dt.Clone()
+			tr.MaxIdleConnsPerHost = ssrIdleConns
+			out.Client.Transport = tr
+		}
 	}
 
 	if out.CacheTTL <= 0 {
