@@ -174,29 +174,33 @@ func multiply(a, b int) int {
 	return a * b
 }
 
-// multiplier reads a page-size argument (first, last, limit) so list
-// fields cost their requested size. An argument the query leaves out (or
-// passes as a variable the request does not set) costs its SDL default,
-// which is what the resolver receives.
+// multiplier reads the page-size arguments (first, last, limit) so list
+// fields cost their requested size; the largest one counts. An argument the
+// query leaves out (or passes as a variable the request does not set) costs
+// its SDL default, which is what the resolver receives. An explicit null also
+// reaches the resolver as nil, which may mean "no page size", so it costs the
+// worst case (fail closed).
 func (w *limitWalker) multiplier(f *field, fd *fieldType) int {
+	const maxMultiplier = 1 << 20
+
+	best := int64(1)
+
 	for _, name := range []string{"first", "last", "limit"} {
 		v, ok := w.argValue(f, name)
 		if !ok {
 			if def := fd.argMap[name]; def != nil && def.hasDefault {
 				v = def.defValue
 			}
+		} else if v == nil {
+			return maxMultiplier
 		}
 
-		if n, ok := toInt(v); ok && n > 1 {
-			if n > 1<<20 {
-				return 1 << 20
-			}
-
-			return int(n)
+		if n, ok := toInt(v); ok {
+			best = max(best, n)
 		}
 	}
 
-	return 1
+	return int(min(best, maxMultiplier))
 }
 
 // argValue returns the value the query gives argument name of f, and

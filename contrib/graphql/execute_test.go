@@ -533,6 +533,12 @@ func TestNewErrors(t *testing.T) {
 		})}, `graphql: binding Query.a: Go argument "x" is not an argument of the field`},
 		{"double binding", `type Query { a: Int }`, []Option{q, q}, `graphql: Query.a is bound more than once`},
 		{
+			"negative cost",
+			`type Query { a: Int }`,
+			[]Option{Query("a", func(context.Context, NoArgs) (int, error) { return 1, nil }, Cost(-5))},
+			`graphql: binding Query.a: Cost(-5) must not be negative`,
+		},
+		{
 			"unknown scalar",
 			`type Query { a: Int }`,
 			[]Option{q, Scalar("Nope", ScalarFuncs{})},
