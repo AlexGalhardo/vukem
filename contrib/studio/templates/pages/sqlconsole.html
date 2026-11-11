@@ -1,0 +1,16 @@
+{{define "title"}}Console - vukem-studio{{end}}
+{{define "content"}}
+<h1 class="mb-4 text-2xl font-semibold">{{.Source}} / console</h1>
+<form method="post" data-console class="card mb-4">
+	<textarea class="input h-40" name="sql" aria-label="SQL statement" spellcheck="false">{{.SQL}}</textarea>
+	<div class="flex flex-wrap items-center gap-4">
+		<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="explain" value="1"{{if .Explain}} checked{{end}}> Explain</label>
+		{{if .CanWrite}}<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="write" value="1"{{if .WriteMode}} checked{{end}}> Write mode (commits on success)</label>{{end}}
+		<button class="btn btn-default">Run (Ctrl+Enter)</button>
+	</div>
+	<p class="text-sm text-muted-foreground">One statement. {{if .CanWrite}}Read-only unless write mode is on.{{else}}Read-only: writes are refused by the database.{{end}}</p>
+</form>
+{{if .Error}}<div class="card mb-4" role="alert"><p class="text-sm break-words">{{.Error}}</p></div>{{end}}
+{{if .Result}}{{template "partials/table" (dict "Head" .Result.Columns "Rows" .ResultRows)}}
+<p class="mt-2 text-sm text-muted-foreground">{{len .Result.Rows}} rows in {{.Result.Elapsed}}{{if .Result.Truncate}}; the result is cut at 1000 rows{{end}}</p>{{end}}
+{{end}}

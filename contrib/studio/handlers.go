@@ -19,6 +19,7 @@ func (s *Studio) routes() {
 	s.mux.HandleFunc("GET /{$}", s.overview)
 	s.mux.Handle("GET /assets/{file...}", s.assets())
 	s.view("GET /s/{source}", s.sourcePage)
+	s.sqlRoutes()
 	s.view("GET /s/{source}/c/{collection}", s.documentsPage)
 	s.mux.HandleFunc("GET /s/{source}/c/{collection}/d/{id}", s.documentPage)
 	s.mux.HandleFunc("GET /s/{source}/c/{collection}/export", s.exportDocuments)
@@ -78,7 +79,8 @@ func (s *Studio) fail(w http.ResponseWriter, r *http.Request, err error) {
 		status = http.StatusUnprocessableEntity
 	}
 
-	s.cfg.Log.WarnContext(r.Context(), "studio request failed", "path", r.URL.Path, "status", status)
+	s.cfg.Log.WarnContext(r.Context(), "studio request failed", "path", r.URL.Path, "status", status,
+		"cause", errors.Unwrap(err))
 	s.page(w, r, status, "error", map[string]any{"Message": err.Error()})
 }
 
@@ -111,6 +113,8 @@ func (s *Studio) sourcePage(w http.ResponseWriter, r *http.Request) {
 		)
 	case RedisSource:
 		s.keysPage(w, r, src)
+	case SQLSource:
+		s.tablesPage(w, r, src)
 	default:
 		http.NotFound(w, r)
 	}
