@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 )
 
 func envValues(t *testing.T, dir string) map[string]string {
@@ -259,9 +260,7 @@ func TestWriteFileAtomic(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := os.Symlink(target, link); err != nil {
-			t.Skipf("symlinks unavailable: %v", err) // Windows without developer mode
-		}
+		testutil.Symlink(t, target, link)
 
 		if err := writeFileAtomic(link, []byte("new")); err != nil {
 			t.Fatal(err)

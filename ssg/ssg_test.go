@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/ssg"
 )
 
@@ -199,9 +200,7 @@ func TestSecurity_A01_SSGRejectsTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.Symlink(outside, link); err != nil {
-		t.Skip("symlinks are not available: " + err.Error())
-	}
+	testutil.Symlink(t, outside, link)
 
 	_, err = ssg.Generate(t.Context(), h, []ssg.Page{{Path: "/linked"}}, ssg.Options{OutDir: dir})
 	if err == nil || !errors.Is(err, ssg.ErrEscape) {
@@ -373,13 +372,13 @@ func TestSecurity_A01_SSGDoesNotCreateDirectoriesThroughLinks(t *testing.T) {
 func linkDir(t *testing.T, target, link string) {
 	t.Helper()
 
-	err := os.Symlink(target, link)
-	if err == nil {
+	if runtime.GOOS != "windows" {
+		testutil.Symlink(t, target, link)
 		return
 	}
 
-	if runtime.GOOS != "windows" {
-		t.Skip("symlinks are not available: " + err.Error())
+	if err := os.Symlink(target, link); err == nil {
+		return
 	}
 
 	cmd := exec.CommandContext(t.Context(), "cmd", "/c", "mklink", "/J", link, target)
@@ -638,9 +637,7 @@ func TestSecurity_A01_SSGRefusesSymlinkOutDir(t *testing.T) {
 	}
 
 	dist := filepath.Join(parent, "dist")
-	if err := os.Symlink(target, dist); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	testutil.Symlink(t, target, dist)
 
 	_, err := ssg.Generate(t.Context(), staticHandler(&body), []ssg.Page{{Path: "/a"}}, ssg.Options{OutDir: dist})
 	if !errors.Is(err, ssg.ErrEscape) {

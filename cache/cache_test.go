@@ -41,7 +41,7 @@ func TestDatabaseConformance(t *testing.T) {
 	cachetest.Run(t, store)
 
 	_ = store.Set(t.Context(), "old", []byte("1"), time.Millisecond)
-	time.Sleep(5 * time.Millisecond) //nolint:forbidigo // real expiry
+	cache.SetNow(store, func() time.Time { return time.Now().Add(time.Minute) })
 
 	if n, err := store.Prune(t.Context()); err != nil || n != 1 {
 		t.Fatalf("Prune = %d %v", n, err)
@@ -355,7 +355,7 @@ func TestDatabasePrunesInBatches(t *testing.T) {
 
 	_ = store.Set(ctx, "live", []byte("1"), time.Hour)
 
-	time.Sleep(5 * time.Millisecond) //nolint:forbidigo // real expiry
+	cache.SetNow(store, func() time.Time { return time.Now().Add(time.Minute) })
 
 	if n, err := store.Prune(ctx); err != nil || n != 5 {
 		t.Fatalf("Prune = %d %v, want 5", n, err)

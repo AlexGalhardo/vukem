@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/signed"
 	"github.com/AlexGalhardo/vukem/storage"
 	"github.com/AlexGalhardo/vukem/storage/storagetest"
@@ -59,9 +60,7 @@ func TestSecurity_A01_StorageTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.Symlink(outside, filepath.Join(dir, "link.txt")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err) // Windows without developer mode
-	}
+	testutil.Symlink(t, outside, filepath.Join(dir, "link.txt"))
 
 	if _, err := storage.Get(t.Context(), d, "link.txt"); err == nil {
 		t.Fatal("followed a symlink out of the disk")
