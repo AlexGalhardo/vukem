@@ -133,6 +133,7 @@ func Run(t *testing.T, db *database.DB) {
 	run("QueryFeatures", testQueryFeatures)
 	run("Upsert", testUpsert)
 	run("SchemaAlter", testAlter)
+	run("Inspect", testInspect)
 	run("Queue", testQueue)
 	run("BulkLocksChecks", testBulkLocksChecks)
 	run("PartialIndexRebind", testPartialIndexRebind)
@@ -145,7 +146,7 @@ func clean(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
 	s := schema.New(ctx, db)
-	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks", "dbt_conflict", "dbt_upserts", "dbt_trash_upserts", "dbt_versioned", "dbt_qbook_tag", "dbt_qreviews", "dbt_qtags", "dbt_qbooks", "dbt_qauthors"} {
+	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks", "dbt_conflict", "dbt_upserts", "dbt_trash_upserts", "dbt_versioned", "dbt_inspect_members", "dbt_inspect", "dbt_inspect_owners", "dbt_qbook_tag", "dbt_qreviews", "dbt_qtags", "dbt_qbooks", "dbt_qauthors"} {
 		if err := s.DropIfExists(table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -544,6 +545,27 @@ func testAlter(ctx context.Context, t *testing.T, db *database.DB) {
 
 	if has, err := s.HasTable("dbt_renamed"); err != nil || !has {
 		t.Fatalf("renamed: has=%v err=%v", has, err)
+	}
+
+	// Column.Change: widen a column and make it nullable (not on SQLite,
+	// which rebuilds the table instead).
+	if database.MustCapabilities(db.Dialect()).Family != "sqlite" {
+		if err := s.Table("dbt_renamed", func(t *schema.Table) {
+			t.String("sku", 60).Nullable().Change()
+		}); err != nil {
+			t.Fatalf("Change: %v", err)
+		}
+
+		info, _, err := schema.InspectTable(ctx, db, "dbt_renamed")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, c := range info.Columns {
+			if c.Name == "sku" && (c.Length != 60 || !c.Nullable) {
+				t.Errorf("sku after Change = %+v, want varchar(60) nullable", c)
+			}
+		}
 	}
 
 	if err := s.Drop("dbt_renamed"); err != nil {
