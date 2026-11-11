@@ -92,6 +92,10 @@ Machine: AMD Ryzen 7 5700X3D (8 cores, 16 threads), 32 GB RAM, Windows 11 Pro 10
 - **JSON** is on par: `c.JSON` is `json.Marshal` plus a write. The extra allocation is the `Ctx`.
 - **ORM.** `Find` (1.7×) goes through `First`: it builds and renumbers the SQL, validates the columns against the model, maps columns to fields with reflection once per query and allocates a destination per field. `Create` adds hooks, timestamps and `RETURNING`. On 100 rows the per-query cost is amortised: `Get` is within noise of hand-written `Scan` code and allocates less, because the result slice is presized from `Limit`.
 
+## Rate limit prune
+
+`ratelimit.Memory` used to sweep the whole key map on every 1024th call while holding the mutex every request waits for. With 500,000 expired keys the slowest `Allow` of 4096 calls took 118.9 ms. It now sweeps at most 256 keys every 64 calls, walking a FIFO queue of keys as a cursor, so the slowest call took 1.07 ms (`BenchmarkAllowPruneWorstCase`, `-count 6`, median of the per-run maximum). The queue costs one string header per key: 116 B to 144 B of heap per live key at 500,000 keys (+24 %, append growth included). The maintainer accepted that cost for the bounded pause.
+
 ## Fixes made in B.5.3
 
 | Change | Effect |

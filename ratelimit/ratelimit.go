@@ -55,7 +55,16 @@ type Memory struct {
 	mu    sync.Mutex
 	tat   map[string]time.Time // theoretical arrival time per key
 	calls int
+	// queue is the sweep cursor: every key of tat appears once in
+	// queue[head:], so prune visits keys in a fixed order.
+	queue []string
+	head  int
 }
+
+const (
+	pruneEvery = 64  // calls between sweeps
+	pruneBatch = 256 // entries examined per sweep, held under the mutex
+)
 
 // NewMemory allows limit requests per window for each key. A window of
 // zero or less is one second.
@@ -110,7 +119,7 @@ func (m *Memory) Allow(_ context.Context, key string) (Result, error) {
 	now := m.now()
 
 	m.calls++
-	if m.calls%1024 == 0 {
+	if m.calls%pruneEvery == 0 {
 		m.prune(now)
 	}
 
@@ -130,6 +139,10 @@ func (m *Memory) Allow(_ context.Context, key string) (Result, error) {
 		}, nil
 	}
 
+	if _, ok := m.tat[key]; !ok {
+		m.queue = append(m.queue, key)
+	}
+
 	m.tat[key] = next
 	remaining := int(now.Sub(allowAt) / m.interval)
 
@@ -141,12 +154,26 @@ func (m *Memory) Allow(_ context.Context, key string) (Result, error) {
 	}, nil
 }
 
-// prune drops keys whose bucket is full again, bounding memory.
+// prune examines at most pruneBatch keys from the cursor and drops those
+// whose bucket is full again, so a sweep never holds the mutex for the
+// whole map; every key is visited within len(queue)/pruneBatch sweeps.
 func (m *Memory) prune(now time.Time) {
-	for k, t := range m.tat {
-		if !t.After(now) {
+	for range min(pruneBatch, len(m.queue)-m.head) {
+		k := m.queue[m.head]
+		m.head++
+
+		if t, ok := m.tat[k]; !ok || !t.After(now) {
 			delete(m.tat, k)
+			continue
 		}
+
+		m.queue = append(m.queue, k)
+	}
+
+	// shortcut: compacting copies the live tail, O(len) once per half-consumed queue; upgrade to a ring if that shows up.
+	if m.head > len(m.queue)/2 {
+		m.queue = append(m.queue[:0], m.queue[m.head:]...)
+		m.head = 0
 	}
 }
 

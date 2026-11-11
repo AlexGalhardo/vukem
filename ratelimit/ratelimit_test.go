@@ -105,7 +105,11 @@ func TestMemoryPrunesFullBuckets(t *testing.T) {
 		}
 
 		time.Sleep(2 * time.Second)
-		_, _ = m.Allow(t.Context(), "last") // 1024th call prunes
+
+		// Each sweep examines pruneBatch keys; the stale ones go within a bounded number of calls.
+		for range pruneEvery * (1023/pruneBatch + 2) {
+			_, _ = m.Allow(t.Context(), "last")
+		}
 
 		if n := len(m.tat); n != 1 {
 			t.Fatalf("keys after prune = %d", n)
@@ -373,5 +377,66 @@ func TestMemoryBurstClampsInputs(t *testing.T) {
 
 	if res, _ := m.Allow(t.Context(), "a"); res.Allowed {
 		t.Fatal("second allowed")
+	}
+}
+
+// BenchmarkAllowPruneWorstCase reports the slowest Allow of 4096 calls over
+// a map full of expired keys: the call that sweeps holds the mutex every
+// other request waits for.
+func BenchmarkAllowPruneWorstCase(b *testing.B) {
+	const stale = 500_000
+
+	ctx := context.Background()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	var worst time.Duration
+
+	for range b.N {
+		b.StopTimer()
+
+		m := NewMemory(10, time.Second)
+		m.now = func() time.Time { return now }
+
+		for i := range stale {
+			_, _ = m.Allow(ctx, "k"+strconv.Itoa(i))
+		}
+
+		now = now.Add(time.Hour)
+
+		b.StartTimer()
+
+		for range 4096 {
+			start := time.Now()
+
+			_, _ = m.Allow(ctx, "live")
+
+			worst = max(worst, time.Since(start))
+		}
+	}
+
+	b.ReportMetric(float64(worst.Nanoseconds()), "max-ns/call")
+}
+
+func TestMemoryPruneBoundsTheMap(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	m := NewMemory(10, time.Second)
+	m.now = func() time.Time { return now }
+
+	for i := range 10_000 {
+		_, _ = m.Allow(ctx, "k"+strconv.Itoa(i))
+	}
+
+	now = now.Add(time.Hour)
+
+	for range 10_000 {
+		_, _ = m.Allow(ctx, "live")
+	}
+
+	if n := len(m.tat); n >= 1000 {
+		t.Errorf("len(tat) = %d after the keys expired, want < 1000", n)
 	}
 }
