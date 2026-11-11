@@ -1,13 +1,61 @@
 import { Link } from "@/components/link";
 import { Logo } from "@/components/logo";
 import { MobileNav } from "@/components/mobile-nav";
-import { SearchDialog } from "@/components/search-dialog";
+import { useEffect, useState, lazy, Suspense } from "react";
+import { Search } from "lucide-react";
+import { useIsMac } from "@/components/use-mounted";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { Providers } from "@/components/providers";
 import type { NavGroup } from "@/lib/content";
 import { t } from "@/lib/ui-text";
 import { site } from "@/lib/site";
+
+// The dialog and its fuzzy matcher load on the first open, not with the header.
+const SearchDialog = lazy(() => import("@/components/search-dialog").then((m) => ({ default: m.SearchDialog })));
+
+function SearchLauncher() {
+  const isMac = useIsMac();
+  const [opened, setOpened] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setOpened(true);
+        setOpen((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Search documentation"
+        onClick={() => {
+          setOpened(true);
+          setOpen(true);
+        }}
+        className="flex h-8 items-center gap-2 rounded-lg text-sm text-faint transition-colors hover:text-fg max-sm:w-8 max-sm:justify-center sm:w-64 sm:border sm:border-border sm:bg-subtle sm:pr-1.5 sm:pl-2.5 sm:hover:border-border-strong"
+      >
+        <Search aria-hidden className="size-4 shrink-0" />
+        <span className="hidden flex-1 text-left sm:inline">Search…</span>
+        <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-sans text-[0.6875rem] font-medium text-faint sm:inline">
+          {isMac ? "⌘K" : "Ctrl K"}
+        </kbd>
+      </button>
+      {opened ? (
+        <Suspense fallback={null}>
+          <SearchDialog open={open} onOpenChange={setOpen} />
+        </Suspense>
+      ) : null}
+    </>
+  );
+}
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -28,7 +76,7 @@ export function Header({ groupsByVersion }: { groupsByVersion: Record<string, Na
           <Logo />
         </div>
         <div className="flex flex-1 justify-end sm:justify-center">
-          <SearchDialog />
+          <SearchLauncher />
         </div>
         <div className="flex items-center justify-end gap-1 sm:gap-2">
           <a

@@ -5,7 +5,6 @@ import { Dialog } from "@base-ui/react/dialog";
 import { CornerDownLeft, FileText, Hash, Search } from "lucide-react";
 import type { SearchEntry } from "@/lib/search";
 import { withTrailingSlash } from "@/lib/trailing-slash";
-import { useIsMac } from "@/components/use-mounted";
 
 type Result = SearchEntry & { score: number };
 
@@ -64,9 +63,7 @@ function Highlight({ text, tokens }: { text: string; tokens: string[] }) {
   );
 }
 
-export function SearchDialog() {
-  const isMac = useIsMac();
-  const [open, setOpen] = useState(false);
+export function SearchDialog({ open, onOpenChange: setOpen }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState<SearchEntry[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -85,25 +82,17 @@ export function SearchDialog() {
   const onOpenChange = useCallback(
     (next: boolean) => {
       setOpen(next);
-      if (next) load();
-      else {
+      if (!next) {
         setQuery("");
         setActive(0);
       }
     },
-    [load],
+    [setOpen],
   );
 
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        onOpenChange(!open);
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onOpenChange]);
+    if (open) load();
+  }, [open, load]);
 
   const raw = query.trim().toLowerCase();
   const tokens = useMemo(() => raw.split(/\s+/).filter(Boolean), [raw]);
@@ -155,16 +144,6 @@ export function SearchDialog() {
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger
-        aria-label="Search documentation"
-        className="flex h-8 items-center gap-2 rounded-lg text-sm text-faint transition-colors hover:text-fg max-sm:w-8 max-sm:justify-center sm:w-64 sm:border sm:border-border sm:bg-subtle sm:pr-1.5 sm:pl-2.5 sm:hover:border-border-strong"
-      >
-        <Search aria-hidden className="size-4 shrink-0" />
-        <span className="hidden flex-1 text-left sm:inline">Search…</span>
-        <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-sans text-[0.6875rem] font-medium text-faint sm:inline">
-          {isMac ? "⌘K" : "Ctrl K"}
-        </kbd>
-      </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px] transition-opacity data-ending-style:opacity-0 data-starting-style:opacity-0 dark:bg-black/60" />
         <Dialog.Popup
