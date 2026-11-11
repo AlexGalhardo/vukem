@@ -52,40 +52,40 @@ func (s BoolSchema) parseAny(c *pctx, path string, in any, present bool) (any, b
 }
 
 // Optional allows the key to be absent.
-func (s BoolSchema) Optional() BoolSchema { s.o = s.o.clone(); s.o.optional = true; return s }
+func (s BoolSchema) Optional() BoolSchema { s.o = s.o.withOptional(); return s }
 
 // Nullable allows null.
-func (s BoolSchema) Nullable() BoolSchema { s.o = s.o.clone(); s.o.nullable = true; return s }
+func (s BoolSchema) Nullable() BoolSchema { s.o = s.o.withNullable(); return s }
 
 // Default uses v when the key is absent.
 func (s BoolSchema) Default(v bool) BoolSchema {
-	s.o = s.o.clone()
-	s.o.hasDef, s.o.def = true, v
+	s.o = s.o.withDefault(v)
 	return s
 }
 
 // Refine adds a custom check.
 func (s BoolSchema) Refine(fn func(bool) error) BoolSchema {
-	s.o = s.o.clone()
-	s.o.refines = append(s.o.refines, fn)
+	s.o = s.o.withRefine(fn)
 
 	return s
 }
 
 // Message overrides the message for an issue code.
 func (s BoolSchema) Message(code, message string) BoolSchema {
-	s.o = s.o.clone()
-	if s.o.messages == nil {
-		s.o.messages = map[string]string{}
-	}
+	s.o = s.o.withMessage(code, message)
 
-	s.o.messages[code] = message
+	return s
+}
+
+// Transform maps the parsed value.
+func (s BoolSchema) Transform(fn func(bool) bool) BoolSchema {
+	s.o = s.o.withTransform(fn)
 
 	return s
 }
 
 // Describe sets a description used by schema exports.
-func (s BoolSchema) Describe(text string) BoolSchema { s.o = s.o.clone(); s.o.desc = text; return s }
+func (s BoolSchema) Describe(text string) BoolSchema { s.o = s.o.withDescribe(text); return s }
 
 // Parse implements Schema.
 func (s BoolSchema) Parse(in any) (bool, error) { return parseRoot[bool](s, in) }
@@ -175,41 +175,41 @@ func (s TimeSchema) After(t time.Time) TimeSchema { s.o = s.o.clone(); s.after =
 func (s TimeSchema) Before(t time.Time) TimeSchema { s.o = s.o.clone(); s.before = &t; return s }
 
 // Optional allows the key to be absent.
-func (s TimeSchema) Optional() TimeSchema { s.o = s.o.clone(); s.o.optional = true; return s }
+func (s TimeSchema) Optional() TimeSchema { s.o = s.o.withOptional(); return s }
 
 // Nullable allows null.
-func (s TimeSchema) Nullable() TimeSchema { s.o = s.o.clone(); s.o.nullable = true; return s }
+func (s TimeSchema) Nullable() TimeSchema { s.o = s.o.withNullable(); return s }
 
 // Default uses v when the key is absent.
 func (s TimeSchema) Default(v time.Time) TimeSchema {
-	s.o = s.o.clone()
-	s.o.hasDef, s.o.def = true, v
+	s.o = s.o.withDefault(v)
 
 	return s
 }
 
 // Refine adds a custom check.
 func (s TimeSchema) Refine(fn func(time.Time) error) TimeSchema {
-	s.o = s.o.clone()
-	s.o.refines = append(s.o.refines, fn)
+	s.o = s.o.withRefine(fn)
 
 	return s
 }
 
 // Message overrides the message for an issue code.
 func (s TimeSchema) Message(code, message string) TimeSchema {
-	s.o = s.o.clone()
-	if s.o.messages == nil {
-		s.o.messages = map[string]string{}
-	}
+	s.o = s.o.withMessage(code, message)
 
-	s.o.messages[code] = message
+	return s
+}
+
+// Transform maps the parsed value, e.g. to UTC.
+func (s TimeSchema) Transform(fn func(time.Time) time.Time) TimeSchema {
+	s.o = s.o.withTransform(fn)
 
 	return s
 }
 
 // Describe sets a description used by schema exports.
-func (s TimeSchema) Describe(text string) TimeSchema { s.o = s.o.clone(); s.o.desc = text; return s }
+func (s TimeSchema) Describe(text string) TimeSchema { s.o = s.o.withDescribe(text); return s }
 
 // Parse implements Schema.
 func (s TimeSchema) Parse(in any) (time.Time, error) { return parseRoot[time.Time](s, in) }
@@ -276,42 +276,41 @@ func (s EnumSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any
 }
 
 // Optional allows the key to be absent.
-func (s EnumSchema[T]) Optional() EnumSchema[T] { s.o = s.o.clone(); s.o.optional = true; return s }
+func (s EnumSchema[T]) Optional() EnumSchema[T] { s.o = s.o.withOptional(); return s }
 
 // Nullable allows null.
-func (s EnumSchema[T]) Nullable() EnumSchema[T] { s.o = s.o.clone(); s.o.nullable = true; return s }
+func (s EnumSchema[T]) Nullable() EnumSchema[T] { s.o = s.o.withNullable(); return s }
 
 // Default uses v when the key is absent.
 func (s EnumSchema[T]) Default(v T) EnumSchema[T] {
-	s.o = s.o.clone()
-	s.o.hasDef, s.o.def = true, v
+	s.o = s.o.withDefault(v)
 	return s
 }
 
 // Refine adds a custom check.
 func (s EnumSchema[T]) Refine(fn func(T) error) EnumSchema[T] {
-	s.o = s.o.clone()
-	s.o.refines = append(s.o.refines, fn)
+	s.o = s.o.withRefine(fn)
 
 	return s
 }
 
 // Message overrides the message for an issue code.
 func (s EnumSchema[T]) Message(code, message string) EnumSchema[T] {
-	s.o = s.o.clone()
-	if s.o.messages == nil {
-		s.o.messages = map[string]string{}
-	}
+	s.o = s.o.withMessage(code, message)
 
-	s.o.messages[code] = message
+	return s
+}
+
+// Transform maps the parsed value.
+func (s EnumSchema[T]) Transform(fn func(T) T) EnumSchema[T] {
+	s.o = s.o.withTransform(fn)
 
 	return s
 }
 
 // Describe sets a description used by schema exports.
 func (s EnumSchema[T]) Describe(text string) EnumSchema[T] {
-	s.o = s.o.clone()
-	s.o.desc = text
+	s.o = s.o.withDescribe(text)
 	return s
 }
 

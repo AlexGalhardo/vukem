@@ -13,7 +13,7 @@ func listFromRules(t reflect.Type, rs ruleSet, optional bool, depth int) (AnySch
 		return nil, err
 	}
 
-	s := Slice(elem)
+	s := newSliceCore(elem)
 
 	for _, r := range rs.rules {
 		name, arg, _ := strings.Cut(r, "=")
@@ -27,14 +27,14 @@ func listFromRules(t reflect.Type, rs ruleSet, optional bool, depth int) (AnySch
 
 			switch name {
 			case "min":
-				s = s.Min(n)
+				s.min = n
 			case "max":
-				s = s.Max(n)
+				s.max = n
 			default:
-				s = s.Len(n)
+				s.length = n
 			}
 		case "unique":
-			s = s.Unique()
+			s.unique = true
 		default:
 			return nil, unknownRuleError(r, scopeList)
 		}
@@ -43,10 +43,10 @@ func listFromRules(t reflect.Type, rs ruleSet, optional bool, depth int) (AnySch
 	// required means present and not null, as in OpenAPI; an empty list
 	// passes. Non-empty lists use min=1.
 	if optional {
-		s = s.Optional()
+		s.o.optional = true
 	}
 
-	return s, nil
+	return sliceAny{core: s}, nil
 }
 
 func mapFromRules(t reflect.Type, rs ruleSet, optional bool, depth int) (AnySchema, error) {
@@ -63,7 +63,7 @@ func mapFromRules(t reflect.Type, rs ruleSet, optional bool, depth int) (AnySche
 		return nil, err
 	}
 
-	s := Map(val)
+	s := newMapCore(val)
 
 	for _, r := range rs.rules {
 		name, arg, _ := strings.Cut(r, "=")
@@ -76,9 +76,9 @@ func mapFromRules(t reflect.Type, rs ruleSet, optional bool, depth int) (AnySche
 			}
 
 			if name == "min" {
-				s = s.Min(n)
+				s.min = n
 			} else {
-				s = s.Max(n)
+				s.max = n
 			}
 		default:
 			return nil, unknownRuleError(r, scopeMap)
@@ -86,8 +86,8 @@ func mapFromRules(t reflect.Type, rs ruleSet, optional bool, depth int) (AnySche
 	}
 
 	if optional {
-		s = s.Optional()
+		s.o.optional = true
 	}
 
-	return s, nil
+	return mapAny{core: s}, nil
 }

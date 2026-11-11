@@ -2,6 +2,7 @@ package z
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -10,10 +11,10 @@ import (
 
 // ---------------------------------------------------------------- Slice
 
-// SliceSchema parses arrays into []E where E is the element schema's type.
-// From forms, a single value is accepted as a one-element list.
-type SliceSchema struct {
-	o      opts[any]
+// sliceCore parses lists into a slice of the element schema's type;
+// SliceSchema wraps it with static typing and sliceAny serves the tag path.
+type sliceCore struct {
+	o      opts[any] // message overrides for the issues the core reports
 	elem   AnySchema
 	min    int
 	max    int
@@ -21,38 +22,35 @@ type SliceSchema struct {
 	unique bool
 }
 
-// Slice returns a schema for a list whose elements match elem.
-func Slice(elem AnySchema) SliceSchema { return SliceSchema{elem: elem, min: -1, max: -1, length: -1} }
+func newSliceCore(elem AnySchema) sliceCore {
+	return sliceCore{elem: elem, min: -1, max: -1, length: -1}
+}
 
-// GoType implements AnySchema.
-func (s SliceSchema) GoType() reflect.Type { return reflect.SliceOf(s.elem.GoType()) }
+func (c sliceCore) goType() reflect.Type { return reflect.SliceOf(c.elem.GoType()) }
 
-func (s SliceSchema) optional() bool { return s.o.optional || s.o.hasDef }
+// parse reads a list and its items; the result is a slice of goType.
+func (c sliceCore) parse(p *pctx, path string, in any) (reflect.Value, bool) {
+	items, ok := c.listItems(p, path, in)
+	if !ok {
+		return reflect.Value{}, false
+	}
 
-func (s SliceSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
-	return parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (any, bool) {
-		items, ok := s.listItems(c, path, in)
-		if !ok {
-			return nil, false
-		}
+	before := len(p.issues)
 
-		before := len(c.issues)
+	c.checkLen(p, path, len(items))
 
-		s.checkLen(c, path, len(items))
+	out := c.parseItems(p, path, items)
 
-		out := s.parseItems(c, path, items)
+	if c.unique && len(p.issues) == before && hasDuplicates(out) {
+		c.o.issue(p, path, CodeNotUnique, CodeNotUnique, nil)
+	}
 
-		if s.unique && len(c.issues) == before && hasDuplicates(out) {
-			s.o.issue(c, path, CodeNotUnique, CodeNotUnique, nil)
-		}
-
-		return out.Interface(), len(c.issues) == before
-	})
+	return out, len(p.issues) == before
 }
 
 // listItems accepts a decoded list, any Go slice but []byte, or (when
 // coercing, as from forms) a single string as a one-element list.
-func (s SliceSchema) listItems(c *pctx, path string, in any) ([]any, bool) {
+func (c sliceCore) listItems(p *pctx, path string, in any) ([]any, bool) {
 	if items, isList := in.([]any); isList {
 		return items, true
 	}
@@ -66,37 +64,37 @@ func (s SliceSchema) listItems(c *pctx, path string, in any) ([]any, bool) {
 		return items, true
 	}
 
-	if _, isStr := in.(string); isStr && c.coerce {
+	if _, isStr := in.(string); isStr && p.coerce {
 		return []any{in}, true
 	}
 
-	s.o.issue(c, path, CodeInvalidType, CodeInvalidType,
+	c.o.issue(p, path, CodeInvalidType, CodeInvalidType,
 		map[string]any{"expected": "a list", "received": typeName(in)})
 
 	return nil, false
 }
 
-func (s SliceSchema) checkLen(c *pctx, path string, n int) {
+func (c sliceCore) checkLen(p *pctx, path string, n int) {
 	switch {
-	case s.length >= 0 && n != s.length:
+	case c.length >= 0 && n != c.length:
 		code := CodeTooSmall
-		if n > s.length {
+		if n > c.length {
 			code = CodeTooBig
 		}
 
-		s.o.issue(c, path, code, "exact.array", map[string]any{"len": s.length})
-	case s.min >= 0 && n < s.min:
-		s.o.issue(c, path, CodeTooSmall, "too_small.array", map[string]any{"min": s.min})
-	case s.max >= 0 && n > s.max:
-		s.o.issue(c, path, CodeTooBig, "too_big.array", map[string]any{"max": s.max})
+		c.o.issue(p, path, code, "exact.array", map[string]any{"len": c.length})
+	case c.min >= 0 && n < c.min:
+		c.o.issue(p, path, CodeTooSmall, "too_small.array", map[string]any{"min": c.min})
+	case c.max >= 0 && n > c.max:
+		c.o.issue(p, path, CodeTooBig, "too_big.array", map[string]any{"max": c.max})
 	}
 }
 
-func (s SliceSchema) parseItems(c *pctx, path string, items []any) reflect.Value {
-	out := reflect.MakeSlice(s.GoType(), 0, len(items))
+func (c sliceCore) parseItems(p *pctx, path string, items []any) reflect.Value {
+	out := reflect.MakeSlice(c.goType(), 0, len(items))
 
 	for i, item := range items {
-		v, set, ok := s.elem.parseAny(c, joinPath(path, strconv.Itoa(i)), item, true)
+		v, set, ok := c.elem.parseAny(p, joinPath(path, strconv.Itoa(i)), item, true)
 		if !ok {
 			continue
 		}
@@ -104,7 +102,7 @@ func (s SliceSchema) parseItems(c *pctx, path string, items []any) reflect.Value
 		if set {
 			out = reflect.Append(out, reflect.ValueOf(v))
 		} else {
-			out = reflect.Append(out, reflect.Zero(s.elem.GoType()))
+			out = reflect.Append(out, reflect.Zero(c.elem.GoType()))
 		}
 	}
 
@@ -129,136 +127,247 @@ func hasDuplicates(v reflect.Value) bool {
 	return false
 }
 
-// Min requires at least n items.
-func (s SliceSchema) Min(n int) SliceSchema { s.o = s.o.clone(); s.min = n; return s }
+// SliceSchema parses arrays into []E where E is the element schema's type.
+// From forms, a single value is accepted as a one-element list.
+type SliceSchema[E any] struct {
+	core sliceCore
+	o    opts[[]E]
+}
 
-// Max allows at most n items.
-func (s SliceSchema) Max(n int) SliceSchema { s.o = s.o.clone(); s.max = n; return s }
+// Slice returns a schema for a list whose elements match elem. The element
+// type is inferred: Slice(String()) is a Schema[[]string].
+func Slice[E any](elem Schema[E]) SliceSchema[E] { return SliceSchema[E]{core: newSliceCore(elem)} }
 
-// Len requires exactly n items.
-func (s SliceSchema) Len(n int) SliceSchema { s.o = s.o.clone(); s.length = n; return s }
+// GoType implements AnySchema.
+func (s SliceSchema[E]) GoType() reflect.Type { return reflect.TypeFor[[]E]() }
 
-// NonEmpty is Min(1).
-func (s SliceSchema) NonEmpty() SliceSchema { return s.Min(1) }
+func (s SliceSchema[E]) optional() bool { return s.o.optional || s.o.hasDef }
 
-// Unique rejects duplicate items.
-func (s SliceSchema) Unique() SliceSchema { s.o = s.o.clone(); s.unique = true; return s }
+func (s SliceSchema[E]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) ([]E, bool) {
+		rv, ok := s.core.parse(c, path, in)
+		if !ok {
+			return nil, false
+		}
 
-// Optional allows the key to be absent (nil slice).
-func (s SliceSchema) Optional() SliceSchema { s.o = s.o.clone(); s.o.optional = true; return s }
+		out, _ := reflect.TypeAssert[[]E](rv)
 
-// Nullable allows null.
-func (s SliceSchema) Nullable() SliceSchema { s.o = s.o.clone(); s.o.nullable = true; return s }
+		return out, true
+	})
 
-// Default uses v (a slice of the element type) when the key is absent. It
-// panics when v has another type.
-func (s SliceSchema) Default(v any) SliceSchema {
-	if reflect.TypeOf(v) != s.GoType() {
-		panic(fmt.Sprintf("z: Slice default must be %s, got %T", s.GoType(), v))
+	if set && s.o.hasDef && (!present || in == nil) {
+		v = slices.Clone(v) // the default is the schema's: never hand it out
 	}
 
-	s.o = s.o.clone()
-	s.o.hasDef, s.o.def = true, v
+	return v, set, ok
+}
+
+// Min requires at least n items.
+func (s SliceSchema[E]) Min(n int) SliceSchema[E] { s.core.min = n; return s }
+
+// Max allows at most n items.
+func (s SliceSchema[E]) Max(n int) SliceSchema[E] { s.core.max = n; return s }
+
+// Len requires exactly n items.
+func (s SliceSchema[E]) Len(n int) SliceSchema[E] { s.core.length = n; return s }
+
+// NonEmpty is Min(1).
+func (s SliceSchema[E]) NonEmpty() SliceSchema[E] { return s.Min(1) }
+
+// Unique rejects duplicate items.
+func (s SliceSchema[E]) Unique() SliceSchema[E] { s.core.unique = true; return s }
+
+// Optional allows the key to be absent (nil slice).
+func (s SliceSchema[E]) Optional() SliceSchema[E] { s.o = s.o.withOptional(); return s }
+
+// Nullable allows null.
+func (s SliceSchema[E]) Nullable() SliceSchema[E] { s.o = s.o.withNullable(); return s }
+
+// Default uses v when the key is absent; each Parse returns its own copy.
+func (s SliceSchema[E]) Default(v []E) SliceSchema[E] { s.o = s.o.withDefault(v); return s }
+
+// Refine adds a custom check on the parsed list; return FieldError for
+// nested paths or FieldErrorKey for a translatable message.
+func (s SliceSchema[E]) Refine(fn func([]E) error) SliceSchema[E] {
+	s.o = s.o.withRefine(fn)
 
 	return s
 }
 
-// Message overrides the message for an issue code.
-func (s SliceSchema) Message(code, message string) SliceSchema {
-	s.o = s.o.clone()
-	if s.o.messages == nil {
-		s.o.messages = map[string]string{}
-	}
+// Transform maps the parsed list after the checks; Refine sees the result.
+func (s SliceSchema[E]) Transform(fn func([]E) []E) SliceSchema[E] {
+	s.o = s.o.withTransform(fn)
 
-	s.o.messages[code] = message
+	return s
+}
+
+// Message overrides the message for an issue code (or a detailed key such as
+// "too_small.array"), for the checks of the list as well as a missing value.
+func (s SliceSchema[E]) Message(code, message string) SliceSchema[E] {
+	s.o = s.o.withMessage(code, message)
+	s.core.o = s.core.o.withMessage(code, message)
 
 	return s
 }
 
 // Describe sets a description used by schema exports.
-func (s SliceSchema) Describe(text string) SliceSchema { s.o = s.o.clone(); s.o.desc = text; return s }
+func (s SliceSchema[E]) Describe(text string) SliceSchema[E] {
+	s.o = s.o.withDescribe(text)
 
-// Parse returns the parsed slice as any ([]E).
-func (s SliceSchema) Parse(in any) (any, error) { return parseRoot[any](s, in) }
+	return s
+}
+
+// Parse implements Schema.
+func (s SliceSchema[E]) Parse(in any) ([]E, error) { return parseRoot[[]E](s, in) }
+
+// Check implements Schema.
+func (s SliceSchema[E]) Check(v []E) error { return checkValue(s, v) }
 
 // ------------------------------------------------------------------ Map
 
-// MapSchema parses objects into map[string]V.
-type MapSchema struct {
-	o     opts[any]
+// mapCore parses objects into map[string]V for the value schema's type;
+// MapSchema wraps it with static typing and mapAny serves the tag path.
+type mapCore struct {
+	o     opts[any] // message overrides for the issues the core reports
 	value AnySchema
 	min   int
 	max   int
 }
 
-// Map returns a schema for an object with string keys and values matching
-// value.
-func Map(value AnySchema) MapSchema { return MapSchema{value: value, min: -1, max: -1} }
+func newMapCore(value AnySchema) mapCore { return mapCore{value: value, min: -1, max: -1} }
 
-// GoType implements AnySchema.
-func (s MapSchema) GoType() reflect.Type {
-	return reflect.MapOf(reflect.TypeFor[string](), s.value.GoType())
+func (c mapCore) goType() reflect.Type {
+	return reflect.MapOf(reflect.TypeFor[string](), c.value.GoType())
 }
 
-func (s MapSchema) optional() bool { return s.o.optional || s.o.hasDef }
+func (c mapCore) parse(p *pctx, path string, in any) (reflect.Value, bool) {
+	m, isMap := in.(map[string]any)
+	if !isMap {
+		c.o.issue(
+			p,
+			path,
+			CodeInvalidType,
+			CodeInvalidType,
+			map[string]any{"expected": "an object", "received": typeName(in)},
+		)
 
-func (s MapSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
-	return parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (any, bool) {
-		m, isMap := in.(map[string]any)
-		if !isMap {
-			s.o.issue(
-				c,
-				path,
-				CodeInvalidType,
-				CodeInvalidType,
-				map[string]any{"expected": "an object", "received": typeName(in)},
-			)
+		return reflect.Value{}, false
+	}
+
+	before := len(p.issues)
+
+	if c.min >= 0 && len(m) < c.min {
+		c.o.issue(p, path, CodeTooSmall, "too_small.array", map[string]any{"min": c.min})
+	}
+
+	if c.max >= 0 && len(m) > c.max {
+		c.o.issue(p, path, CodeTooBig, "too_big.array", map[string]any{"max": c.max})
+	}
+
+	out := reflect.MakeMapWithSize(c.goType(), len(m))
+
+	for _, k := range sortedKeys(m) {
+		v, set, ok := c.value.parseAny(p, joinPath(path, k), m[k], true)
+		if !ok {
+			continue
+		}
+
+		if set {
+			out.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
+		} else {
+			out.SetMapIndex(reflect.ValueOf(k), reflect.Zero(c.value.GoType()))
+		}
+	}
+
+	return out, len(p.issues) == before
+}
+
+// MapSchema parses objects into map[string]V where V is the value schema's
+// type.
+type MapSchema[V any] struct {
+	core mapCore
+	o    opts[map[string]V]
+}
+
+// Map returns a schema for an object with string keys and values matching
+// value. The value type is inferred: Map(Int()) is a Schema[map[string]int].
+func Map[V any](value Schema[V]) MapSchema[V] { return MapSchema[V]{core: newMapCore(value)} }
+
+// GoType implements AnySchema.
+func (s MapSchema[V]) GoType() reflect.Type { return reflect.TypeFor[map[string]V]() }
+
+func (s MapSchema[V]) optional() bool { return s.o.optional || s.o.hasDef }
+
+func (s MapSchema[V]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (map[string]V, bool) {
+		rv, ok := s.core.parse(c, path, in)
+		if !ok {
 			return nil, false
 		}
 
-		before := len(c.issues)
+		out, _ := reflect.TypeAssert[map[string]V](rv)
 
-		if s.min >= 0 && len(m) < s.min {
-			s.o.issue(c, path, CodeTooSmall, "too_small.array", map[string]any{"min": s.min})
-		}
-
-		if s.max >= 0 && len(m) > s.max {
-			s.o.issue(c, path, CodeTooBig, "too_big.array", map[string]any{"max": s.max})
-		}
-
-		out := reflect.MakeMapWithSize(s.GoType(), len(m))
-
-		for _, k := range sortedKeys(m) {
-			v, set, ok := s.value.parseAny(c, joinPath(path, k), m[k], true)
-			if !ok {
-				continue
-			}
-
-			if set {
-				out.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
-			} else {
-				out.SetMapIndex(reflect.ValueOf(k), reflect.Zero(s.value.GoType()))
-			}
-		}
-
-		return out.Interface(), len(c.issues) == before
+		return out, true
 	})
+
+	if set && s.o.hasDef && (!present || in == nil) {
+		v = maps.Clone(v) // the default is the schema's: never hand it out
+	}
+
+	return v, set, ok
 }
 
 // Min requires at least n keys.
-func (s MapSchema) Min(n int) MapSchema { s.o = s.o.clone(); s.min = n; return s }
+func (s MapSchema[V]) Min(n int) MapSchema[V] { s.core.min = n; return s }
 
 // Max allows at most n keys.
-func (s MapSchema) Max(n int) MapSchema { s.o = s.o.clone(); s.max = n; return s }
+func (s MapSchema[V]) Max(n int) MapSchema[V] { s.core.max = n; return s }
 
 // Optional allows the key to be absent.
-func (s MapSchema) Optional() MapSchema { s.o = s.o.clone(); s.o.optional = true; return s }
+func (s MapSchema[V]) Optional() MapSchema[V] { s.o = s.o.withOptional(); return s }
 
 // Nullable allows null.
-func (s MapSchema) Nullable() MapSchema { s.o = s.o.clone(); s.o.nullable = true; return s }
+func (s MapSchema[V]) Nullable() MapSchema[V] { s.o = s.o.withNullable(); return s }
 
-// Parse returns the parsed map as any (map[string]V).
-func (s MapSchema) Parse(in any) (any, error) { return parseRoot[any](s, in) }
+// Default uses v when the key is absent; each Parse returns its own copy.
+func (s MapSchema[V]) Default(v map[string]V) MapSchema[V] { s.o = s.o.withDefault(v); return s }
+
+// Refine adds a custom check on the parsed map; return FieldError for
+// nested paths or FieldErrorKey for a translatable message.
+func (s MapSchema[V]) Refine(fn func(map[string]V) error) MapSchema[V] {
+	s.o = s.o.withRefine(fn)
+
+	return s
+}
+
+// Transform maps the parsed map after the checks; Refine sees the result.
+func (s MapSchema[V]) Transform(fn func(map[string]V) map[string]V) MapSchema[V] {
+	s.o = s.o.withTransform(fn)
+
+	return s
+}
+
+// Message overrides the message for an issue code (or a detailed key), for
+// the checks of the map as well as a missing value.
+func (s MapSchema[V]) Message(code, message string) MapSchema[V] {
+	s.o = s.o.withMessage(code, message)
+	s.core.o = s.core.o.withMessage(code, message)
+
+	return s
+}
+
+// Describe sets a description used by schema exports.
+func (s MapSchema[V]) Describe(text string) MapSchema[V] {
+	s.o = s.o.withDescribe(text)
+
+	return s
+}
+
+// Parse implements Schema.
+func (s MapSchema[V]) Parse(in any) (map[string]V, error) { return parseRoot[map[string]V](s, in) }
+
+// Check implements Schema.
+func (s MapSchema[V]) Check(v map[string]V) error { return checkValue(s, v) }
 
 // --------------------------------------------------------------- Struct
 
@@ -461,32 +570,47 @@ func (s StructSchema[T]) Strict() StructSchema[T] {
 }
 
 // Optional allows the key to be absent.
-func (s StructSchema[T]) Optional() StructSchema[T] { s.o = s.o.clone(); s.o.optional = true; return s }
+func (s StructSchema[T]) Optional() StructSchema[T] { s.o = s.o.withOptional(); return s }
 
 // Nullable allows null.
-func (s StructSchema[T]) Nullable() StructSchema[T] { s.o = s.o.clone(); s.o.nullable = true; return s }
+func (s StructSchema[T]) Nullable() StructSchema[T] { s.o = s.o.withNullable(); return s }
+
+// Default uses v when the key is absent. The value is returned as is, not
+// parsed, and shared between calls: do not mutate it.
+func (s StructSchema[T]) Default(v T) StructSchema[T] {
+	s.o = s.o.withDefault(v)
+
+	return s
+}
 
 // Refine adds a cross-field check; return FieldError to point at a field,
 // or FieldErrorKey for a translatable message.
 func (s StructSchema[T]) Refine(fn func(T) error) StructSchema[T] {
-	s.o = s.o.clone()
-	s.o.refines = append(s.o.refines, fn)
+	s.o = s.o.withRefine(fn)
 
 	return s
 }
 
 // Transform maps the parsed value.
 func (s StructSchema[T]) Transform(fn func(T) T) StructSchema[T] {
-	s.o = s.o.clone()
-	s.o.transforms = append(s.o.transforms, fn)
+	s.o = s.o.withTransform(fn)
 
 	return s
 }
 
 // Describe sets a description used by schema exports.
 func (s StructSchema[T]) Describe(text string) StructSchema[T] {
-	s.o = s.o.clone()
-	s.o.desc = text
+	s.o = s.o.withDescribe(text)
+	return s
+}
+
+// Message overrides the message for an issue code or detailed key. It
+// applies to the issues of the shape itself (a value that is not an object)
+// as well as to a missing value.
+func (s StructSchema[T]) Message(code, message string) StructSchema[T] {
+	s.o = s.o.withMessage(code, message)
+	s.core.o = s.core.o.withMessage(code, message)
+
 	return s
 }
 
@@ -581,7 +705,46 @@ func (s CustomSchema[T]) parseAny(c *pctx, path string, in any, present bool) (a
 }
 
 // Optional allows the key to be absent.
-func (s CustomSchema[T]) Optional() CustomSchema[T] { s.o = s.o.clone(); s.o.optional = true; return s }
+func (s CustomSchema[T]) Optional() CustomSchema[T] { s.o = s.o.withOptional(); return s }
+
+// Nullable allows null.
+func (s CustomSchema[T]) Nullable() CustomSchema[T] { s.o = s.o.withNullable(); return s }
+
+// Default uses v when the key is absent.
+func (s CustomSchema[T]) Default(v T) CustomSchema[T] {
+	s.o = s.o.withDefault(v)
+
+	return s
+}
+
+// Refine adds a custom check on the value fn returned; return FieldError for
+// nested paths or FieldErrorKey for a translatable message.
+func (s CustomSchema[T]) Refine(fn func(T) error) CustomSchema[T] {
+	s.o = s.o.withRefine(fn)
+
+	return s
+}
+
+// Transform maps the value fn returned.
+func (s CustomSchema[T]) Transform(fn func(T) T) CustomSchema[T] {
+	s.o = s.o.withTransform(fn)
+
+	return s
+}
+
+// Message overrides the message for an issue code, e.g. "required".
+func (s CustomSchema[T]) Message(code, message string) CustomSchema[T] {
+	s.o = s.o.withMessage(code, message)
+
+	return s
+}
+
+// Describe sets a description used by schema exports.
+func (s CustomSchema[T]) Describe(text string) CustomSchema[T] {
+	s.o = s.o.withDescribe(text)
+
+	return s
+}
 
 // Parse implements Schema.
 func (s CustomSchema[T]) Parse(in any) (T, error) { return parseRoot[T](s, in) }

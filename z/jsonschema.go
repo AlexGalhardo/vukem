@@ -133,41 +133,51 @@ func (s EnumSchema[T]) jsonSchema() map[string]any {
 	return m
 }
 
-func (s SliceSchema) jsonSchema() map[string]any {
-	m := map[string]any{"items": JSONSchema(s.elem)}
+func (c sliceCore) jsonSchema() map[string]any {
+	m := map[string]any{"items": JSONSchema(c.elem)}
 
-	if s.min >= 0 {
-		m["minItems"] = s.min
+	if c.min >= 0 {
+		m["minItems"] = c.min
 	}
 
-	if s.max >= 0 {
-		m["maxItems"] = s.max
+	if c.max >= 0 {
+		m["maxItems"] = c.max
 	}
 
-	if s.length >= 0 {
-		m["minItems"], m["maxItems"] = s.length, s.length
+	if c.length >= 0 {
+		m["minItems"], m["maxItems"] = c.length, c.length
 	}
 
-	if s.unique {
+	if c.unique {
 		m["uniqueItems"] = true
 	}
 
-	return s.o.decorate(m, "array")
+	return m
 }
 
-func (s MapSchema) jsonSchema() map[string]any {
-	m := map[string]any{"additionalProperties": JSONSchema(s.value)}
-
-	if s.min >= 0 {
-		m["minProperties"] = s.min
-	}
-
-	if s.max >= 0 {
-		m["maxProperties"] = s.max
-	}
-
-	return s.o.decorate(m, "object")
+func (s SliceSchema[E]) jsonSchema() map[string]any {
+	return s.o.decorate(s.core.jsonSchema(), "array")
 }
+
+func (s sliceAny) jsonSchema() map[string]any { return s.core.o.decorate(s.core.jsonSchema(), "array") }
+
+func (c mapCore) jsonSchema() map[string]any {
+	m := map[string]any{"additionalProperties": JSONSchema(c.value)}
+
+	if c.min >= 0 {
+		m["minProperties"] = c.min
+	}
+
+	if c.max >= 0 {
+		m["maxProperties"] = c.max
+	}
+
+	return m
+}
+
+func (s MapSchema[V]) jsonSchema() map[string]any { return s.o.decorate(s.core.jsonSchema(), "object") }
+
+func (s mapAny) jsonSchema() map[string]any { return s.core.o.decorate(s.core.jsonSchema(), "object") }
 
 func (c structCore) jsonSchema() map[string]any {
 	props := map[string]any{}

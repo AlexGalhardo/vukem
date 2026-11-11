@@ -120,30 +120,24 @@ func (s FileSchema) Extensions(exts ...string) FileSchema {
 }
 
 // Optional allows the file to be absent.
-func (s FileSchema) Optional() FileSchema { s.o = s.o.clone(); s.o.optional = true; return s }
+func (s FileSchema) Optional() FileSchema { s.o = s.o.withOptional(); return s }
 
 // Refine adds a custom check.
 func (s FileSchema) Refine(fn func(*multipart.FileHeader) error) FileSchema {
-	s.o = s.o.clone()
-	s.o.refines = append(s.o.refines, fn)
+	s.o = s.o.withRefine(fn)
 
 	return s
 }
 
 // Message overrides the message for an issue code or key ("file.type").
 func (s FileSchema) Message(code, message string) FileSchema {
-	s.o = s.o.clone()
-	if s.o.messages == nil {
-		s.o.messages = map[string]string{}
-	}
-
-	s.o.messages[code] = message
+	s.o = s.o.withMessage(code, message)
 
 	return s
 }
 
 // Describe sets a description used by schema exports.
-func (s FileSchema) Describe(text string) FileSchema { s.o = s.o.clone(); s.o.desc = text; return s }
+func (s FileSchema) Describe(text string) FileSchema { s.o = s.o.withDescribe(text); return s }
 
 // Parse implements Schema.
 func (s FileSchema) Parse(in any) (*multipart.FileHeader, error) {
