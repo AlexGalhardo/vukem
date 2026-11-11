@@ -1,0 +1,125 @@
+---
+title: Key concepts
+description: The nine ideas the Vukem docs build on, each in a few lines with a real snippet and a link to the full page.
+---
+
+Vukem is a set of small packages that sit on Go's `net/http`. Once you know nine ideas, every other page reads as a variation of them. Each section below is short on purpose: it shows one real snippet and points to the page that covers the topic in full.
+
+You will learn:
+
+- what the app, a provider, a route and a handler are
+- why middleware, errors and validation look the way they do
+- where the database and the commands fit
+- what "no globals, no magic" means in practice
+
+## The app and its options
+
+The app is one value, built by `vukem.New` from options. Everything the app uses is listed in `bootstrap/app.go`; nothing registers itself behind your back.
+
+```go title="bootstrap/app.go"
+app, err := vukem.New(
+	vukem.WithProviders(Providers()...),
+	vukem.WithMigrations(migrations.All()),
+	vukem.WithViews(resources.Views()),
+)
+```
+
+`cmd/app` and the tests both call the same `bootstrap.New`, so a test boots the same app a user runs. More in [App lifecycle](/docs/architecture/lifecycle).
+
+## Providers
+
+A provider is a value with a `Register` method. It may also implement `Boot` (work that needs other services) and `Shutdown` (release resources). Providers run in the order you list them.
+
+```go title="bootstrap/providers.go"
+// Providers lists the application providers in registration order.
+func Providers() []vukem.Provider {
+	return []vukem.Provider{}
+}
+```
+
+`vukem make:provider` appends to this list. More in [App lifecycle](/docs/architecture/lifecycle).
+
+## Routes and groups
+
+Routes use the patterns of the standard library's `http.ServeMux`, such as `{id}`. A group shares a prefix and middleware.
+
+```go title="routes/web.go"
+r.Get("/", controllers.Home).Name("home")
+r.Resource("posts", posts).Only("index", "show")
+```
+
+`Resource` turns a controller's seven actions into routes, and `Name` lets you build URLs from the name. More in [Routing](/docs/basics/routing).
+
+## Middleware is `func(http.Handler) http.Handler`
+
+There is no Vukem-specific middleware type. Anything that wraps an `http.Handler` works, from the standard library, a third-party package or your own code.
+
+```go title="routes/web.go"
+r.UseServer(middleware.Gzip())
+```
+
+`UseServer` runs for every request, `Use` for every matched route, and groups and single routes can add their own. More in [Middleware](/docs/basics/middleware).
+
+## Handlers return an error
+
+A handler is `func(c *web.Ctx) error`. It writes a response and returns `nil`, or returns an error and lets the central error handler choose the format: an HTML page, a redirect with flashed errors, an htmx fragment or `application/problem+json`.
+
+```go title="app/controllers/home.go"
+// Home renders the welcome page.
+func Home(c *web.Ctx) error { return c.Render("home", nil) }
+```
+
+More in [Error handling](/docs/basics/error-handling).
+
+## Validation with `z`
+
+A schema describes the input once. `web.Parse` reads the body, the query string and the path parameters, validates them and returns a typed value, or a validation error that becomes a 422.
+
+```go title="app/requests/auth.go"
+var LoginSchema = z.Struct[Login](z.Shape{
+	"email":    z.String().Trim().Email(),
+	"password": z.String().Min(1),
+})
+```
+
+More in [Validation](/docs/basics/validation).
+
+## Models and queries take the executor
+
+A model is a plain struct. It holds no connection: every query function receives the `db` (or a transaction, `tx`) that it runs on, so you always see which one is in use.
+
+```go title="app/controllers/post_controller.go"
+posts, err := orm.QueryOf[models.Post](pc.db).
+	OrderBy("id", orm.Desc).
+	Get(c.Context())
+```
+
+More in [Database overview](/docs/database/overview).
+
+## Commands run through the app binary
+
+`vukem migrate`, `vukem route:list` and your own commands run inside your app, so they see the same configuration and providers as the server. A command is a value with a name and a function.
+
+```go title="bootstrap/commands.go"
+// Commands lists the application commands.
+func Commands() []vukem.Command {
+	return []vukem.Command{}
+}
+```
+
+`vukem make:command` appends to this list. More in [CLI overview](/docs/cli/overview).
+
+## No globals, no magic
+
+Vukem has no package-level registry, no `init()` registration and no reflection-based dependency injection. Dependencies travel through constructors, and generators write plain Go files you can read. When something is wired, you can find the line that wires it. More in [Introduction](/docs/introduction).
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Your first app" href="/docs/first-app" icon="rocket">
+Build a to-do list that uses most of these ideas.
+</Card>
+<Card title="Directory structure" href="/docs/directory-structure" icon="layers">
+Where each of these files lives in a project.
+</Card>
+</CardGroup>

@@ -22,7 +22,7 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 | Theme | Light/dark/system toggle, persisted, no flash on load |
 | Navigation | Left sidebar grouped by category, right "On this page" table of contents, previous/next links, "Edit on GitHub" link |
 | Changelog | `/changelog` renders the repository `CHANGELOG.md` at build time as plain Markdown (braces stay literal), linked from the header; every item links to its commit (`.config/cliff.toml` template) |
-| Agents | `llms.txt` and `llms-full.txt` generated from the MDX content |
+| Agents | `llms.txt` and `llms-full.txt` generated from the MDX content; every current page also has a Markdown twin at `/docs/<slug>.md` (`src/pages/docs/[...slug].md.ts`) |
 | Hosting | GitHub Pages from the Astro static build (`site/out`). Production is `vukem.dev`. The Site workflow builds every pull request and publishes every push to `main` |
 
 ## Layout (Resend-inspired)
@@ -35,8 +35,9 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 
 ## Categories
 
-1. **Getting started** — Introduction, Installation, Starters, Your first app, Configuration, Directory structure, Showcase (the three reference apps)
-2. **Architecture** — Request lifecycle, Application and providers, Context and shutdown
+1. **Getting started** — Introduction, Installation, Quick start, Key concepts, Starters, Your first app, Configuration, Directory structure, Showcase (the three reference apps)
+   **Coming from** — Laravel, AdonisJS (concept maps with a side-by-side route; only these two frameworks, by decision of the maintainer)
+2. **Architecture** — Request lifecycle, Application and providers, Context and shutdown, Best practices
 3. **The basics** — Routing, Middleware, Controllers, HTTP context, Requests and input, Responses, Validation (`z`), Error handling, Logging, Static files, Sessions, CSRF, Views
 4. **APIs** (folder `rest-apis`) — Overview, Pagination, Typed handlers, OpenAPI and the Scalar reference, Client generation, Idempotency, GraphQL, gRPC
 5. **Database** — Getting started, Query builder, Models, Relations, Migrations, Factories and seeders, Transactions, PostgreSQL, Redis, MongoDB

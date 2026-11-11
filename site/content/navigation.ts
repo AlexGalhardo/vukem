@@ -16,12 +16,17 @@ export const navigation: NavCategory[] = [
     title: "Getting started",
     dir: "getting-started",
     prefix: "",
-    pages: ["introduction", "prerequisites", "installation", "starters", "first-app", "configuration", "directory-structure", "showcase"],
+    pages: ["introduction", "prerequisites", "installation", "quick-start", "key-concepts", "starters", "first-app", "configuration", "directory-structure", "showcase"],
+  },
+  {
+    title: "Coming from",
+    dir: "coming-from",
+    pages: ["laravel", "adonisjs"],
   },
   {
     title: "Architecture",
     dir: "architecture",
-    pages: ["lifecycle"],
+    pages: ["lifecycle", "best-practices"],
   },
   {
     title: "The basics",

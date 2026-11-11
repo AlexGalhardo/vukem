@@ -1,0 +1,93 @@
+---
+title: Coming from Laravel
+description: Map the Laravel concepts you know to Vukem, with a side-by-side route and controller, and the differences that surprise most people.
+---
+
+This page is for you if you build apps with [Laravel](https://laravel.com/docs) and want to know where each piece lives in Vukem. It is a map, not a tutorial: every row links to the Vukem page that covers the topic in full. Statements about Laravel link to its documentation.
+
+You will learn:
+
+- which Vukem feature answers each Laravel concept
+- how a route, a controller and a validation look side by side
+- the five differences that surprise Laravel developers
+
+## What stays the same
+
+- Routes, controllers and resource routes: `Route::resource` ([Laravel controllers](https://laravel.com/docs/controllers#resource-controllers)) has the same seven actions and route names (`photos.index`, `photos.store`) as `r.Resource` in Vukem.
+- Generators: `php artisan make:controller` ([Laravel controllers](https://laravel.com/docs/controllers#basic-controllers)) becomes `vukem make:controller`, and `route:list` exists in both.
+- Validation by name: Laravel answers a failed XHR request with a JSON body and a `422` status ([Laravel validation](https://laravel.com/docs/validation)); Vukem sends `application/problem+json` with the same status.
+
+## What changes
+
+- The language is Go, and the HTTP layer is the standard library's `net/http`. Middleware is `func(http.Handler) http.Handler`, not a class with a `handle` method.
+- There is no service container. You build dependencies in `bootstrap/` and pass them to constructors.
+- Models are plain structs. They hold no connection and do not save themselves.
+- Migrations, seeders and routes are Go code, compiled with the app.
+
+## Concept map
+
+| Concept | In Laravel | In Vukem | Read more |
+| --- | --- | --- | --- |
+| Routing | `Route::get(...)`, `Route::resource(...)` ([routing](https://laravel.com/docs/routing)) | `r.Get`, `r.Group`, `r.Resource` | [Routing](/docs/basics/routing) |
+| Middleware | A class with `handle(Request $request, Closure $next)`, attached with `->middleware(...)` ([middleware](https://laravel.com/docs/middleware)) | `func(http.Handler) http.Handler`, attached with `r.Use`, `g.Use` or `route.Use` | [Middleware](/docs/basics/middleware) |
+| Controllers | Classes in `app/Http/Controllers` ([controllers](https://laravel.com/docs/controllers)) | Structs with methods `func(c *web.Ctx) error` | [Controllers](/docs/basics/controllers) |
+| Request validation | `$request->validate([...])` or form requests ([validation](https://laravel.com/docs/validation)) | A `z` schema with `web.Parse`, or `validate` tags with `web.Bind` | [Validation](/docs/basics/validation) |
+| ORM and models | Eloquent ([Eloquent](https://laravel.com/docs/eloquent)) | `orm.QueryOf[T](db)`; no Active Record | [Database overview](/docs/database/overview) |
+| Migrations | Migrations ([migrations](https://laravel.com/docs/migrations)) | `schema.Migration` in Go, run by `vukem migrate` | [Migrations](/docs/database/migrations) |
+| Dependency injection | The service container resolves controllers ([controllers](https://laravel.com/docs/controllers#dependency-injection-and-controllers)) | Providers and constructors; no container | [App lifecycle](/docs/architecture/lifecycle) |
+| CLI and generators | Artisan ([Artisan](https://laravel.com/docs/artisan)) | `vukem make:*` and the commands of your app | [CLI overview](/docs/cli/overview) |
+| Views | Blade ([Blade](https://laravel.com/docs/blade)) | `html/template`, templ, htmx or Inertia | [Views](/docs/basics/views) |
+| Queues, mail, cache | [Queues](https://laravel.com/docs/queues), [mail](https://laravel.com/docs/mail), [cache](https://laravel.com/docs/cache) | The `queue`, `mail` and `cache` packages | [Digging deeper](/docs/digging-deeper/queue) |
+| Testing | [Testing](https://laravel.com/docs/testing) | `vukemtest` | [Testing](/docs/testing/overview) |
+| Configuration | [Configuration](https://laravel.com/docs/configuration) | `.env` plus typed structs | [Configuration](/docs/configuration) |
+
+## Side by side
+
+A page that shows one post. In Laravel, the [controllers page](https://laravel.com/docs/controllers#basic-controllers) registers a controller method like this:
+
+```php
+use App\Http\Controllers\UserController;
+
+Route::get('/user/{id}', [UserController::class, 'show']);
+```
+
+In Vukem you register a resource once and write the actions as methods. This is the blog example of the repository:
+
+```go title="examples/blog/routes/web.go"
+posts := controllers.NewPostController(acc.DB)
+
+r.Resource("posts", posts).Only("index", "show")
+```
+
+```go title="examples/blog/app/controllers/post_controller.go"
+// Show renders one post.
+func (pc *PostController) Show(c *web.Ctx) error {
+	post, err := pc.find(c, "User", "Comments")
+	if err != nil {
+		return err
+	}
+
+	return c.Render("posts/show", &post)
+}
+```
+
+The controller receives its database through `NewPostController`, the way Laravel's container would inject it, but you call the constructor yourself.
+
+## Things that will surprise you
+
+1. **Nothing is loaded on demand.** Reading a relation that you did not load returns `orm.ErrNotLoaded` instead of running a query. Load it with `With("User")`. See [Relations](/docs/database/relations).
+2. **Models hold no connection.** Every query function takes the `db` or the `tx` it runs on. See [Database overview](/docs/database/overview).
+3. **No `init()` registration and no global state.** Commands, seeders and migrations are listed in `bootstrap/` and `database/`. See [Best practices](/docs/architecture/best-practices).
+4. **A handler returns an `error`.** The central error handler picks the response format. See [Error handling](/docs/basics/error-handling).
+5. **Routes use `ServeMux` patterns.** A parameter is `{id}`, and middleware has the standard library's signature. See [Routing](/docs/basics/routing).
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Quick start" href="/docs/quick-start" icon="rocket">
+Create a project and answer a request in five minutes.
+</Card>
+<Card title="Key concepts" href="/docs/key-concepts" icon="book">
+The nine ideas the docs build on.
+</Card>
+</CardGroup>

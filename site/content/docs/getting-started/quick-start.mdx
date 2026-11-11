@@ -1,0 +1,138 @@
+---
+title: Quick start
+description: Go from nothing to a JSON route answering on localhost in about five minutes, with no database.
+---
+
+This page is the short way in. You create a project, start it, add one route and call it. There is no database, no form and no test here; [Your first app](/docs/first-app) builds those in about 30 minutes.
+
+You will learn:
+
+- how to create and start a project with `vukem new` and `vukem serve`
+- where a route lives and how to add one that answers JSON
+- what the starter gave you, file by file
+
+You need Go 1.27.4 or newer on your `PATH` ([Prerequisites](/docs/prerequisites)). Node.js is not required to follow this page.
+
+## Build it
+
+<Steps>
+<Step title="Install the CLI">
+
+```bash
+go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
+vukem version
+```
+
+`go install` puts the `vukem` binary in `$(go env GOPATH)/bin`, which must be on your `PATH` ([Installation](/docs/installation) has the details).
+
+</Step>
+<Step title="Create a project">
+
+```bash
+vukem new hello --minimal
+cd hello
+```
+
+`--minimal` creates an HTMX starter without database code or the SQLite driver, so there is nothing to migrate. The command ends by printing the next steps:
+
+```text
+Created hello (htmx 4.0.0, Tailwind, no database). Next:
+
+  1. cd hello
+  2. read .env: APP_KEY is set; APP_URL, the database and mail live here
+  ...
+  5. start the app: vukem serve, then open http://localhost:3000
+```
+
+</Step>
+<Step title="Start it">
+
+```bash
+vukem serve
+```
+
+`vukem serve` builds `cmd/app`, runs it and restarts it when a `.go` file changes. Open `http://localhost:3000` to see the welcome page. Leave the command running.
+
+</Step>
+</Steps>
+
+## Add a route
+
+Open `routes/web.go`. The starter registers its default middleware and the home page there. Add a `GET /hello` route that answers JSON, and the two imports it needs:
+
+```go title="routes/web.go"
+package routes
+
+import (
+	"net/http"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"hello/app/controllers"
+	"hello/resources"
+)
+
+// Web registers the browser routes. vukem route:list shows them.
+func Web(r *router.Router, app *vukem.App) error {
+	if err := vukem.DefaultMiddleware(app, r); err != nil {
+		return err
+	}
+
+	r.UseServer(middleware.Gzip())
+	r.UseServer(middleware.StaticFS(resources.Public(), middleware.StaticConfig{Prefix: "/"}))
+
+	r.Get("/", controllers.Home).Name("home")
+
+	r.Get("/hello", func(c *web.Ctx) error {
+		return c.JSON(http.StatusOK, map[string]string{"message": "Hello, " + c.Query("name")})
+	}).Name("hello")
+
+	return nil
+}
+```
+
+A handler is a function that takes a `*web.Ctx` and returns an `error`. `c.Query("name")` reads the query string, and `c.JSON` writes the status and the body. `vukem serve` rebuilds on save. Call the route:
+
+```bash
+curl "http://localhost:3000/hello?name=Ana"
+```
+
+```text
+{"message":"Hello, Ana"}
+```
+
+`vukem route:list` shows the new route next to the starter's own:
+
+```text
+METHOD  PATH    NAME          MIDDLEWARE
+GET     /up     vukem.health  middleware.BodyLimit, session.(*Manager).Middleware, csrf.Middleware
+GET     /{$}    home          middleware.BodyLimit, session.(*Manager).Middleware, csrf.Middleware
+GET     /hello  hello         middleware.BodyLimit, session.(*Manager).Middleware, csrf.Middleware
+```
+
+## What you have
+
+| File | Role |
+| --- | --- |
+| `cmd/app/main.go` | The entry point of the app binary; `vukem serve` builds and runs it |
+| `routes/web.go` | The routes and the middleware of the browser pages |
+| `.env` | Configuration, including the generated `APP_KEY` ([Configuration](/docs/configuration)) |
+
+The starter has more: controllers, views, `bootstrap/` and tests. [Directory structure](/docs/directory-structure) explains each folder.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Key concepts" href="/docs/key-concepts" icon="book">
+The nine ideas the rest of the docs build on, each in a few lines.
+</Card>
+<Card title="Your first app" href="/docs/first-app" icon="rocket">
+The 30-minute tutorial: a database, a form, validation and tests.
+</Card>
+<Card title="Starters" href="/docs/starters" icon="layers">
+HTMX, templ, Inertia or JSON-only: pick the stack that fits.
+</Card>
+</CardGroup>
