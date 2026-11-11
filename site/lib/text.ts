@@ -21,7 +21,12 @@ export function mdxToMarkdown(body: string): string {
     }
     if (/^(import|export)\s/.test(line)) continue;
 
+    // An MDX comment is a note for the authors: the page does not render it, so
+    // neither may the twin.
+    if (/^\s*\{\/\*.*\*\/\}\s*$/.test(line)) continue;
+
     const titled = line
+      .replace(/\{\/\*.*?\*\/\}/g, "")
       .replace(/<Callout\b[^>]*\btype="(\w+)"[^>]*>/g, (_, t: string) => `**${CALLOUT_LABELS[t] ?? "Note"}:** `)
       .replace(/<(Step|Tab|Card)\b[^>]*\btitle="([^"]*)"[^>]*>/g, "**$2** ");
     const stripped = titled.replace(/<\/?[A-Z][A-Za-z]*\b[^>]*\/?>/g, "").replace(/\s+$/, "");
