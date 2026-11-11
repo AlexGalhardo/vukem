@@ -30,6 +30,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/events"
@@ -50,6 +51,11 @@ const (
 	// maxMailBody bounds a stored mail part so previews cannot exhaust
 	// memory.
 	maxMailBody = 512 << 10
+	// Per-record bounds: a bulk INSERT or a long subject must not make
+	// every ring slot huge.
+	maxQuerySQL  = 16 << 10 // bytes of normalized SQL kept per query
+	maxQueryArgs = 64       // bind arguments kept per query
+	maxSubject   = 512      // bytes of a mail subject
 )
 
 // Config tunes the collector.
@@ -357,8 +363,8 @@ func (d *Devtools) ObserveQuery(ctx context.Context, q database.Query) {
 
 	norm := NormalizeSQL(q.SQL)
 	rec := Query{
-		TraceID: id, Time: d.cfg.Now().Add(-q.Duration), SQL: norm, Args: RedactArgs(q.Args),
-		Duration: q.Duration, Caller: caller(),
+		TraceID: id, Time: d.cfg.Now().Add(-q.Duration), SQL: truncate(norm, maxQuerySQL),
+		Args: redactBounded(q.Args), Duration: q.Duration, Caller: caller(),
 	}
 
 	if q.Err != nil {
@@ -423,8 +429,9 @@ func (m *mailRecorder) Send(ctx context.Context, msg *mail.Message) error {
 
 	rec := Mail{
 		ID: "m" + strconv.FormatUint(m.d.seq.Add(1), 10), TraceID: id, Time: m.d.cfg.Now(), From: msg.From,
-		To: msg.To, Cc: msg.Cc, Subject: msg.Subject, HTML: truncate(msg.HTML), Text: truncate(msg.Text),
-		Err: errText(err),
+		To: msg.To, Cc: msg.Cc, Subject: truncate(msg.Subject, maxSubject), HTML: truncate(msg.HTML, maxMailBody),
+		Text: truncate(msg.Text, maxMailBody),
+		Err:  errText(err),
 	}
 
 	for _, a := range msg.Attachments {
@@ -439,12 +446,27 @@ func (m *mailRecorder) Send(ctx context.Context, msg *mail.Message) error {
 	return err
 }
 
-func truncate(s string) string {
-	if len(s) <= maxMailBody {
+// truncate keeps at most limit bytes, cutting on a rune boundary.
+func truncate(s string, limit int) string {
+	if len(s) <= limit {
 		return s
 	}
 
-	return s[:maxMailBody] + "\n[truncated by devtools]"
+	for limit > 0 && !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+
+	return s[:limit] + "\n[truncated by devtools]"
+}
+
+// redactBounded redacts at most maxQueryArgs arguments and summarizes the
+// rest, so a huge batch does not allocate one string per parameter.
+func redactBounded(args []any) []string {
+	if len(args) <= maxQueryArgs {
+		return RedactArgs(args)
+	}
+
+	return append(RedactArgs(args[:maxQueryArgs]), fmt.Sprintf("… +%d more", len(args)-maxQueryArgs))
 }
 
 func errText(err error) string {
