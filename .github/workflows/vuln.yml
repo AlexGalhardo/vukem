@@ -35,6 +35,7 @@ jobs:
           - contrib/imaging
           - contrib/qrcode
           - contrib/stripe
+          - contrib/studio
           - examples/api
           - examples/blog
           - examples/saas

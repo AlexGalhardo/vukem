@@ -1,0 +1,5 @@
+{{/* Previous and next links. Data: Prev and Next (URLs; empty hides the link). */}}
+{{define "partials/pager"}}<nav class="flex items-center justify-end gap-2" aria-label="Pages">
+	{{if .Prev}}<a class="btn btn-secondary" href="{{.Prev}}" rel="prev">Previous</a>{{end}}
+	{{if .Next}}<a class="btn btn-secondary" href="{{.Next}}" rel="next">Next</a>{{end}}
+</nav>{{end}}

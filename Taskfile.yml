@@ -4,7 +4,7 @@ version: "3"
 
 vars:
   # Every Go module in the repository (drivers and contrib modules are added as they land).
-  MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/turso drivers/websocket contrib/stripe contrib/cloudflare contrib/graphql contrib/grpc contrib/http3 contrib/imaging contrib/qrcode contrib/engine"
+  MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/turso drivers/websocket contrib/stripe contrib/cloudflare contrib/graphql contrib/grpc contrib/http3 contrib/imaging contrib/qrcode contrib/engine contrib/studio"
   # Same pin as the apidiff job in .github/workflows/ci.yml (x/exp has no tags).
   APIDIFF_VERSION: v0.0.0-20261014143641-f0251eb4aa3e
 
@@ -119,6 +119,11 @@ tasks:
     desc: Scan for known vulnerabilities
     cmds:
       - go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  studio:css:
+    desc: Compile contrib/studio/assets/studio.css with the Tailwind CSS v4 standalone CLI (set TAILWIND_BIN to the executable; see contrib/studio/styles/README.md)
+    cmds:
+      - '{{default "tailwindcss" .TAILWIND_BIN}} -i contrib/studio/styles/studio.input.css -o contrib/studio/assets/studio.css --minify'
 
   secrets:scan:
     desc: Scan the git history for secrets with Betterleaks v1.9.0 (pass -- --log-opts=main..HEAD for a range)

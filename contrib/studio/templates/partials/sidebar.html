@@ -1,0 +1,7 @@
+{{define "partials/sidebar"}}<nav class="hidden w-56 shrink-0 border-r bg-sidebar p-3 text-sidebar-foreground md:block" aria-label="Sources">
+	<p class="px-3 pb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">Sources</p>
+	<ul class="flex flex-col gap-1">
+		{{range .Sources}}<li><a class="nav-link" href="/s/{{.Name}}"{{if eq .Name $.Current}} aria-current="page"{{end}}>{{.Name}} <span class="text-xs text-muted-foreground">{{.Kind}}</span></a></li>
+		{{else}}<li class="px-3 text-sm text-muted-foreground">None configured</li>{{end}}
+	</ul>
+</nav>{{end}}

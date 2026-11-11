@@ -1,0 +1,2 @@
+{{/* A button. Data: Label, Variant (default, secondary, ghost, destructive), Type (button, submit). */}}
+{{define "partials/button"}}<button type="{{or .Type "button"}}" class="btn btn-{{or .Variant "default"}}">{{.Label}}</button>{{end}}

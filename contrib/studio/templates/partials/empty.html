@@ -1,0 +1,6 @@
+{{/* An empty state. Data: Title, Text, and optionally Href and Action. */}}
+{{define "partials/empty"}}<div class="empty">
+	<p class="font-medium text-foreground">{{.Title}}</p>
+	<p class="text-sm">{{.Text}}</p>
+	{{if .Href}}<a class="btn btn-secondary" href="{{.Href}}">{{.Action}}</a>{{end}}
+</div>{{end}}

@@ -1,0 +1,15 @@
+{{define "partials/shortcuts"}}<dialog class="dialog" id="shortcuts" aria-labelledby="shortcuts-title">
+	<form method="dialog" class="flex flex-col gap-4">
+		<h2 class="text-lg font-semibold" id="shortcuts-title">Keyboard shortcuts</h2>
+		<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+			<dt><kbd>/</kbd></dt><dd>Focus the filter</dd>
+			<dt><kbd>g</kbd> <kbd>t</kbd></dt><dd>Go to the tables, collections or keys</dd>
+			<dt><kbd>g</kbd> <kbd>c</kbd></dt><dd>Go to the console</dd>
+			<dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>Run in the console</dd>
+			<dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Previous and next page</dd>
+			<dt><kbd>Esc</kbd></dt><dd>Close a dialog</dd>
+			<dt><kbd>?</kbd></dt><dd>This list</dd>
+		</dl>
+		<button class="btn btn-secondary self-end">Close</button>
+	</form>
+</dialog>{{end}}

@@ -1,0 +1,25 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}vukem-studio{{end}}</title>
+<link rel="stylesheet" href="/assets/studio.css">
+<script src="/assets/studio.js"></script>
+<script src="/assets/htmx.min.js" defer></script>
+</head>
+<body class="min-h-screen">
+<header class="flex h-14 items-center gap-3 border-b px-4">
+	<a href="/" class="font-semibold">vukem-studio</a>
+	{{template "partials/modebadge" .}}
+	<span class="ml-auto text-sm text-muted-foreground">{{.Version}}</span>
+	<button type="button" class="btn btn-ghost" data-theme-toggle aria-label="Toggle light and dark theme">Theme</button>
+	<button type="button" class="btn btn-ghost" data-shortcuts aria-label="Keyboard shortcuts">?</button>
+</header>
+<div class="flex">
+	{{template "partials/sidebar" .}}
+	<main class="min-w-0 flex-1 p-6">{{template "content" .}}</main>
+</div>
+{{template "partials/shortcuts" .}}
+</body>
+</html>{{end}}

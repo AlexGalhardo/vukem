@@ -1,0 +1,8 @@
+{{/* A native dialog, opened by studio.js from a button with data-open set to its ID. Data: ID, Title, Body. */}}
+{{define "partials/dialog"}}<dialog class="dialog" id="{{.ID}}" aria-labelledby="{{.ID}}-title">
+	<form method="dialog" class="flex flex-col gap-4">
+		<h2 class="text-lg font-semibold" id="{{.ID}}-title">{{.Title}}</h2>
+		<p class="text-sm">{{.Body}}</p>
+		<button class="btn btn-secondary self-end">Close</button>
+	</form>
+</dialog>{{end}}

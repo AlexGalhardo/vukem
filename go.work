@@ -10,6 +10,7 @@ use (
 	./contrib/imaging
 	./contrib/qrcode
 	./contrib/stripe
+	./contrib/studio
 	./drivers/mongo
 	./drivers/mysql
 	./drivers/otel
