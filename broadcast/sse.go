@@ -56,7 +56,13 @@ func (s *Server) serveSSE(w http.ResponseWriter, r *http.Request) error {
 // reconnects.
 func pump(st *sse.Stream, sub *Subscription) {
 	for _, ch := range sub.Channels() {
-		if members, ok := sub.Members(ch); ok && !sendSSE(st, ch, EventHere, members) {
+		members, err := sub.Here(st.Context(), ch)
+		if errors.Is(err, ErrInvalidChannel) {
+			continue // not a presence channel
+		}
+
+		// A failing store ends the stream; the browser reconnects.
+		if err != nil || !sendSSE(st, ch, EventHere, members) {
 			return
 		}
 	}

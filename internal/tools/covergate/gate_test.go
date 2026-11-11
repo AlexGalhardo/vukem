@@ -105,7 +105,7 @@ func TestExcluded(t *testing.T) {
 		"internal/bench": true, "internal/testutil": true, "internal/cli": true, "internal/cli/starter": true,
 		"internal/disposition": false, "internal/principal": false, "internal/sqlscan": false, "internal": false,
 		"cache/cachetest": true, "queue/queuetest": true, "storage/storagetest": true, "database/dbtest": true,
-		"session/sessiontest": true,
+		"session/sessiontest": true, "sse/ssetest": true, "broadcast/presencetest": true,
 	}
 
 	for pkg, want := range tests {

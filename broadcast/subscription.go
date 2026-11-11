@@ -1,13 +1,14 @@
 package broadcast
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/sse"
 )
@@ -24,6 +25,14 @@ type Subscription struct {
 	unsub    func()
 	done     chan struct{}
 	once     sync.Once
+
+	// attempted lists the presence channels a Join was started on, including
+	// one that failed: a store that timed out may have written anyway.
+	attempted []string
+	// hbCancel and hbDone stop the heartbeat and wait for it (nil without a
+	// shared store).
+	hbCancel context.CancelFunc
+	hbDone   chan struct{}
 }
 
 // Subscribe authorizes every channel (all or nothing) and subscribes to
@@ -72,13 +81,28 @@ func (s *Server) Subscribe(ctx context.Context, channels ...string) (*Subscripti
 		done:     make(chan struct{}),
 	}
 
-	for ch, m := range members {
-		if s.presence.join(ch, m) {
-			sub.announce(ctx, ch, EventJoining, m)
+	// Whatever way Subscribe fails, a store error or a panic in the store,
+	// leave the presence channels and the hub as they were.
+	ok := false
+
+	defer func() {
+		if !ok {
+			sub.leave(sub.attempted)
+			unsub()
 		}
+	}()
+
+	if err := sub.join(ctx); err != nil {
+		return nil, fmt.Errorf("broadcast: presence store: %w", err)
 	}
 
+	ok = true
+
 	go sub.forward(events)
+
+	if s.cfg.Presence != nil && len(members) > 0 {
+		sub.startHeartbeat(ctx)
+	}
 
 	return sub, nil
 }
@@ -123,28 +147,155 @@ func (sub *Subscription) Channels() []string { return slices.Clone(sub.channels)
 // Messages delivers the events; it closes when the subscription ends.
 func (sub *Subscription) Messages() <-chan Message { return sub.out }
 
-// Members lists the members present on a subscribed presence channel
-// (this instance's view), or false for other channels.
-func (sub *Subscription) Members(channel string) ([]Member, bool) {
+// Here lists the members present on a subscribed presence channel. With a
+// shared Config.Presence the list covers every instance. It returns
+// ErrInvalidChannel for a channel this subscription has no presence on.
+func (sub *Subscription) Here(ctx context.Context, channel string) ([]Member, error) {
 	if _, ok := sub.members[channel]; !ok {
+		return nil, ErrInvalidChannel
+	}
+
+	members, err := sub.srv.presence.Members(ctx, channel)
+	if err != nil {
+		return nil, fmt.Errorf("broadcast: presence store: %w", err)
+	}
+
+	if members == nil {
+		members = []Member{}
+	}
+
+	return members, nil
+}
+
+// Members lists the members present on a subscribed presence channel, or
+// false for other channels.
+//
+// Deprecated: use Here, which takes a context and reports store errors.
+// Members waits at most 5 seconds and returns an empty list when a shared
+// store fails.
+func (sub *Subscription) Members(channel string) ([]Member, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), leaveTimeout)
+	defer cancel()
+
+	members, err := sub.Here(ctx, channel)
+	if errors.Is(err, ErrInvalidChannel) {
 		return nil, false
 	}
 
-	return sub.srv.presence.list(channel), true
+	if err != nil {
+		return []Member{}, true
+	}
+
+	return members, true
+}
+
+// join enters every presence channel, then announces the members that were
+// first on theirs. The caller undoes the joins if it fails.
+func (sub *Subscription) join(ctx context.Context) error {
+	var firsts []string
+
+	for _, ch := range sub.channels {
+		m, ok := sub.members[ch]
+		if !ok {
+			continue
+		}
+
+		sub.attempted = append(sub.attempted, ch)
+
+		first, err := sub.srv.presence.Join(ctx, ch, sub.id, m)
+		if err != nil {
+			return err
+		}
+
+		if first {
+			firsts = append(firsts, ch)
+		}
+	}
+
+	// The request context may end right after Subscribe returns; the
+	// announcement has its own bounded one.
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaveTimeout)
+	defer cancel()
+
+	for _, ch := range firsts {
+		sub.announce(actx, ch, EventJoining, sub.members[ch])
+	}
+
+	return nil
+}
+
+// leave removes this connection from channels without announcing it, under
+// one timeout for all of them.
+func (sub *Subscription) leave(channels []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), leaveTimeout)
+	defer cancel()
+
+	for _, ch := range channels {
+		_, _ = sub.srv.presence.Leave(ctx, ch, sub.id, sub.members[ch].ID)
+	}
+}
+
+// startHeartbeat keeps this connection alive in a store that expires them
+// until Close, which cancels it and waits so that no Touch can run after the
+// Leave.
+func (sub *Subscription) startHeartbeat(ctx context.Context) {
+	var hbCtx context.Context
+
+	hbCtx, sub.hbCancel = context.WithCancel(context.WithoutCancel(ctx))
+	sub.hbDone = make(chan struct{})
+
+	go func() {
+		defer close(sub.hbDone)
+
+		sub.heartbeat(hbCtx)
+	}()
+}
+
+// heartbeat touches every presence channel each tick. A failed Touch is
+// retried at the next tick.
+func (sub *Subscription) heartbeat(ctx context.Context) {
+	ticker := time.NewTicker(sub.srv.cfg.PresenceHeartbeat)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tctx, cancel := context.WithTimeout(ctx, leaveTimeout)
+
+			for ch := range sub.members {
+				_ = sub.srv.presence.Touch(tctx, ch, sub.id)
+			}
+
+			cancel()
+		}
+	}
 }
 
 // Close unsubscribes and announces leaving presence channels; it is safe
-// to call more than once.
+// to call more than once. It stops the heartbeat first and waits for it, so a
+// Touch cannot run after the Leave.
 func (sub *Subscription) Close() {
 	sub.once.Do(func() {
 		close(sub.done)
 		sub.unsub()
 
+		if sub.hbCancel != nil {
+			sub.hbCancel()
+			<-sub.hbDone
+		}
+
+		// The request context is gone by now: leave with a context of our
+		// own, one timeout for every channel. A failed leave is not
+		// announced; a store that expires connections drops the member by
+		// itself.
+		ctx, cancel := context.WithTimeout(context.Background(), leaveTimeout)
+		defer cancel()
+
 		for ch, m := range sub.members {
-			if left := sub.srv.presence.leave(ch, m.ID); left {
-				ctx, cancel := context.WithTimeout(context.Background(), leaveTimeout)
+			if last, err := sub.srv.presence.Leave(ctx, ch, sub.id, m.ID); err == nil && last {
 				sub.announce(ctx, ch, EventLeaving, m)
-				cancel()
 			}
 		}
 	})
@@ -158,81 +309,4 @@ func (sub *Subscription) announce(ctx context.Context, channel, event string, m 
 
 	// A failed presence notification must not fail the subscription.
 	_ = sub.srv.publish(ctx, channel, event, b, sub.id)
-}
-
-// presence tracks the members of presence channels in this process; a
-// member joins on its first connection and leaves with its last.
-//
-// shortcut: per-instance state; with a Broker, joining/leaving reach every
-// instance but Members only lists local members. Upgrade to a shared
-// store (Redis sets) when cluster-wide "here" lists are needed.
-type presence struct {
-	mu    sync.Mutex
-	chans map[string]map[string]*presenceEntry
-}
-
-type presenceEntry struct {
-	m Member
-	n int
-}
-
-func newPresence() *presence { return &presence{chans: map[string]map[string]*presenceEntry{}} }
-
-func (p *presence) join(channel string, m Member) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	set := p.chans[channel]
-	if set == nil {
-		set = map[string]*presenceEntry{}
-		p.chans[channel] = set
-	}
-
-	e := set[m.ID]
-	if e == nil {
-		set[m.ID] = &presenceEntry{m: m, n: 1}
-		return true
-	}
-
-	e.n++
-	e.m = m
-
-	return false
-}
-
-func (p *presence) leave(channel, id string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	e := p.chans[channel][id]
-	if e == nil {
-		return false
-	}
-
-	e.n--
-	if e.n > 0 {
-		return false
-	}
-
-	delete(p.chans[channel], id)
-
-	if len(p.chans[channel]) == 0 {
-		delete(p.chans, channel)
-	}
-
-	return true
-}
-
-func (p *presence) list(channel string) []Member {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	out := make([]Member, 0, len(p.chans[channel]))
-	for _, e := range p.chans[channel] {
-		out = append(out, e.m)
-	}
-
-	slices.SortFunc(out, func(a, b Member) int { return cmp.Compare(a.ID, b.ID) })
-
-	return out
 }
