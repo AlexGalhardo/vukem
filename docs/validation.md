@@ -78,6 +78,13 @@ if errors.As(err, &issues) {
 | `z.Map(value)` | `map[string]V` (a `z.Schema[map[string]V]`) | `Min`, `Max` (entry count); `Default(map[string]V)`, `Refine`, `Transform`, `Message`, `Describe` |
 | `z.Struct[T](z.Shape{...})` | `T` | field schemas mapped by `json`/`form`/`query` tag or field name; `Strict()` rejects unknown keys |
 | `z.Custom[T](fn)` | `T` | user parser |
+| `z.Literal[T](values...)` | `T` (string, bool or number kinds) | exactly one of the values (code `invalid_literal`) |
+| `z.Union[T](variants...)` | `T`, usually `any` or a domain interface | the first variant that parses wins; when none does, one `invalid_union` issue at the union's path. Order matters with coercion: `Union[any](Int(), String())` turns `"5"` into `5`; `Check` does not coerce, so it can refuse what `Parse` takes from a form, and the `Refine`/`Transform` of a variant run on every attempt |
+| `z.DiscriminatedUnion[T](key, variants)` | `T`, usually a domain interface | picks the variant by the string value of `key`, then reports that variant's own issues; an unknown or missing value is `invalid_union_discriminator` at `key` |
+| `z.Tuple[T](items...)` | struct `T` | a fixed-length array read into the exported fields of `T` in order; errors point at the position (`location.0`) |
+| `z.Lazy[T](fn)` | `T` | builds the schema on first use, so a schema can contain itself; a deeper nesting than 1000 is a `too_deep` issue. `JSONSchema` exports it as a `$ref` into `$defs` |
+
+`z.Union`, `z.DiscriminatedUnion`, `z.Tuple`, `z.Lazy` and `z.Literal` have no form in `validate:"..."` struct tags: a tag describes a field by its Go type, and these need an explicit schema.
 
 Every schema has the same modifiers: `Optional`, `Nullable`, `Default`, `Refine`, `Transform`, `Message` and `Describe`, plus `Parse` and `Check`. `z.File()` is the exception: it has no `Nullable`, `Default` or `Transform`.
 | `z.File()` | `*multipart.FileHeader` | `MaxSize(bytes)`, `Types(mime...)` (detected from the first 512 bytes of the content), `Extensions(...)` |
@@ -103,6 +110,38 @@ z.String().Transform(digitsOnly).Regex(e164)  // Regex sees the raw input
 
 The output of the pre-steps is checked again for invalid UTF-8 and control characters, and `Preprocess(nil)` panics. JSON Schema and OpenAPI keywords (`pattern`, `minLength`…) describe the normalized value, after `Trim`/`ToLower`/`Preprocess`, not the raw input.
 
+### Deriving schemas
+
+Build the schema of an update from the one of a create without repeating the rules. The target type is the first type argument; the source type is inferred.
+
+```go
+type CreatePost struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+type UpdatePost struct {
+	Title *string `json:"title"`
+	Body  *string `json:"body"`
+}
+
+var CreatePostSchema = z.Struct[CreatePost](z.Shape{
+	"title": z.String().Trim().Min(3).Max(120),
+	"body":  z.String().Trim().Max(10_000),
+})
+
+var UpdatePostSchema = z.Partial[UpdatePost](CreatePostSchema)
+```
+
+| Function | Result |
+| --- | --- |
+| `z.Pick[U](s, keys...)` | only `keys`; panics for a key `s` does not have |
+| `z.Omit[U](s, keys...)` | everything but `keys`; panics for a key `s` does not have |
+| `z.Extend[U](s, extra)` | the fields of `s` plus `extra`; a key of `extra` replaces the one of `s` |
+| `z.Partial[U](s)` | every field may be absent; use pointer fields in `U` to tell absent from zero |
+
+They reuse the field schemas and check the shape against `U` when built, like `z.Struct`. `Strict()` is inherited; the struct-level `Refine`, `Transform`, `Default` and `Passthrough` of `s` are not, because they are written for `s`'s type. `Strict()` rejects the keys outside the shape; `Passthrough(func(dst *T, extra map[string]any))` hands them to a callback instead (the extra keys are untrusted and unvalidated: copy and validate them before storing) (the two cannot be combined).
+
 ## Coercion
 
 Inputs arrive as JSON values (`string`, `float64`, `bool`, `[]any`, `map[string]any`) or as strings (forms, query, params, env). Schemas coerce only where it is lossless:
@@ -123,7 +162,7 @@ Inputs arrive as JSON values (`string`, `float64`, `bool`, `[]any`, `map[string]
 `Parse` returns `z.Issues` (a `[]z.Issue` implementing `error`), each with:
 
 - `Path` — dotted path with indexes: `tags.2`, `author.email`
-- `Code` — stable machine code: `required`, `invalid_type`, `too_small`, `too_big`, `invalid_string`, `invalid_enum`, `custom`
+- `Code` — stable machine code: `required`, `invalid_type`, `too_small`, `too_big`, `invalid_string`, `invalid_enum`, `invalid_literal`, `invalid_union`, `invalid_union_discriminator`, `custom`
 - `Message` — human message (English by default; translated per request, see [Translated messages](#translated-messages))
 - `Params` — values used by the message (`{"min": 3}`)
 
