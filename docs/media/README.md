@@ -29,7 +29,7 @@ docs/media/record.sh              # all GIFs
 docs/media/record.sh new-htmx     # one tape
 ```
 
-The script builds `bin/vukem` for Linux, builds the `vukem-vhs:local` image from `Dockerfile` (VHS `v0.11.0` plus Go `1.27.3`, both pinned), and runs each tape with the repository mounted at `/src`. Go module and build caches live in the `vukem-vhs-gomod` and `vukem-vhs-gobuild` Docker volumes, so only the first run is slow.
+The script builds `bin/vukem` for Linux, builds the `vukem-vhs:local` image from `Dockerfile` (VHS `v0.11.0` plus Go `1.27.4`, both pinned), and runs each tape with the repository mounted at `/src`. Go module and build caches live in the `vukem-vhs-gomod` and `vukem-vhs-gobuild` Docker volumes, so only the first run is slow.
 
 `tapes/warm.sh` runs hidden before each recording to fill those caches, which keeps `vukem new` to a few seconds. The Inertia and HTMX starters use `--no-install`, so no Node.js is needed.
 
