@@ -65,6 +65,10 @@ const (
 // client is already gone.
 const leaveTimeout = 5 * time.Second
 
+// defaultPresenceHeartbeat refreshes a connection in a store that expires
+// them; the Redis store's default TTL is three times as long.
+const defaultPresenceHeartbeat = 20 * time.Second
+
 var (
 	// ErrInvalidChannel rejects a malformed channel name (400).
 	ErrInvalidChannel = &errs.HTTPError{Status: http.StatusBadRequest, Message: "Invalid channel name."}
@@ -114,13 +118,21 @@ type Config struct {
 	Authorizer web.Authorizer
 	// MaxChannels caps the channels of one connection (0 = 32).
 	MaxChannels int
+	// Presence stores presence-channel members. Nil keeps them in this
+	// process: with several instances, "here" then lists only the members
+	// connected to the instance serving the client.
+	Presence PresenceStore
+	// PresenceHeartbeat is how often a live connection is refreshed in a
+	// store that expires them (0 = 20s). Keep it under a third of the
+	// store's TTL.
+	PresenceHeartbeat time.Duration
 }
 
 // Server authorizes subscriptions and fans broadcast events out.
 type Server struct {
 	cfg      Config
 	hub      *sse.Hub
-	presence *presence
+	presence PresenceStore
 
 	mu    sync.RWMutex
 	rules map[kind][]rule
@@ -137,10 +149,19 @@ func New(cfg Config) *Server {
 		cfg.MaxChannels = DefaultMaxChannels
 	}
 
+	if cfg.PresenceHeartbeat <= 0 {
+		cfg.PresenceHeartbeat = defaultPresenceHeartbeat
+	}
+
+	presence := cfg.Presence
+	if presence == nil {
+		presence = NewMemoryPresence()
+	}
+
 	return &Server{
 		cfg:      cfg,
 		hub:      sse.NewHub(cfg.Broker),
-		presence: newPresence(),
+		presence: presence,
 		rules:    map[kind][]rule{},
 	}
 }

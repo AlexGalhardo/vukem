@@ -66,7 +66,7 @@ func excluded(pkg string) bool {
 	}
 
 	switch path.Base(pkg) {
-	case "cachetest", "queuetest", "storagetest", "dbtest", "sessiontest":
+	case "cachetest", "queuetest", "storagetest", "dbtest", "sessiontest", "ssetest", "presencetest":
 		return true
 	}
 
