@@ -151,3 +151,30 @@ func TestOpenLazyConnectsOnFirstUse(t *testing.T) {
 		t.Fatalf("Ping = %v", err)
 	}
 }
+
+func TestIncrementKeepsTTLOfExistingCounter(t *testing.T) {
+	ctx := t.Context()
+	c := open(t)
+	prefix := unique("incr")
+	s := c.CacheStore(prefix)
+
+	// The counter returns to 0, then to the delta: it still existed, so the
+	// first ttl must stand.
+	for _, step := range []struct {
+		delta int64
+		ttl   time.Duration
+	}{{3, 10 * time.Second}, {-3, time.Hour}, {5, time.Hour}} {
+		if _, err := s.Increment(ctx, "k", step.delta, step.ttl); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ttl, err := c.Redis().PTTL(ctx, prefix+"k").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl <= 0 || ttl > 10*time.Second {
+		t.Errorf("PTTL = %v, want within (0, 10s]", ttl)
+	}
+}

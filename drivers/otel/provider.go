@@ -122,6 +122,18 @@ func (p *Provider) Transport(next http.RoundTripper) http.RoundTripper {
 	return p.ob.Transport(next)
 }
 
+// releaseHeld shuts down what Register holds when it fails before the SDK
+// providers own them.
+func releaseHeld(exp sdktrace.SpanExporter, reader sdkmetric.Reader) {
+	if exp != nil {
+		_ = exp.Shutdown(context.Background())
+	}
+
+	if reader != nil {
+		_ = reader.Shutdown(context.Background())
+	}
+}
+
 // Register implements vukem.Provider.
 func (p *Provider) Register(app *vukem.App) error {
 	getenv := app.Source.Get
@@ -138,9 +150,12 @@ func (p *Provider) Register(app *vukem.App) error {
 	}
 
 	reader := p.cfg.MetricReader
+
 	if reader == nil {
 		var err error
 		if reader, err = metricReader(getenv); err != nil {
+			releaseHeld(exp, reader)
+
 			return err
 		}
 	}
@@ -151,6 +166,8 @@ func (p *Provider) Register(app *vukem.App) error {
 
 	res, err := p.resource(app)
 	if err != nil {
+		releaseHeld(exp, reader)
+
 		return err
 	}
 
@@ -159,6 +176,8 @@ func (p *Provider) Register(app *vukem.App) error {
 	if exp != nil {
 		if sampler = p.cfg.Sampler; sampler == nil {
 			if sampler, err = samplerFromEnv(getenv); err != nil {
+				releaseHeld(exp, reader)
+
 				return err
 			}
 		}

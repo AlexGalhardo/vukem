@@ -184,8 +184,9 @@ func (s *Store) DeleteIf(ctx context.Context, key string, value []byte) (bool, e
 
 //nolint:gochecknoglobals // compiled once, read-only
 var increment = goredis.NewScript(`
+local existed = redis.call("EXISTS", KEYS[1])
 local v = redis.call("INCRBY", KEYS[1], ARGV[1])
-if v == tonumber(ARGV[1]) and tonumber(ARGV[2]) > 0 then redis.call("PEXPIRE", KEYS[1], ARGV[2]) end
+if existed == 0 and tonumber(ARGV[2]) > 0 then redis.call("PEXPIRE", KEYS[1], ARGV[2]) end
 return v`)
 
 // Increment implements cache.Store; a missing key starts at 0 with ttl.

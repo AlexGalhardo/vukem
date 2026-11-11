@@ -959,3 +959,27 @@ func TestProvider_AppMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRegisterShutsDownExporterAndReaderOnFailure(t *testing.T) {
+	t.Parallel()
+
+	exp := &shutdownExporter{InMemoryExporter: tracetest.NewInMemoryExporter()}
+	reader := sdkmetric.NewManualReader()
+
+	_, err := newApp(
+		t,
+		map[string]string{"OTEL_TRACES_SAMPLER": "nope"},
+		otel.New(otel.Config{Exporter: exp, MetricReader: reader}),
+	)
+	if err == nil {
+		t.Fatal("newApp() = nil, want a sampler error")
+	}
+
+	if !exp.shut.Load() {
+		t.Error("span exporter not shut down after a failed Register")
+	}
+
+	if err := reader.Collect(t.Context(), &metricdata.ResourceMetrics{}); !errors.Is(err, sdkmetric.ErrReaderShutdown) {
+		t.Errorf("reader.Collect() = %v, want ErrReaderShutdown", err)
+	}
+}
