@@ -295,7 +295,7 @@ func (r *Resource[T]) index(p *Panel) web.HandlerFunc {
 
 func (r *Resource[T]) searchQuery(q orm.Query[T], dialect database.Dialect, s string) orm.Query[T] {
 	op := "LIKE" // SQLite and MySQL compare case-insensitively by default
-	if dialect.Name() == "postgres" {
+	if database.MustCapabilities(dialect).ILike {
 		op = "ILIKE"
 	}
 

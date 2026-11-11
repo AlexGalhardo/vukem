@@ -77,7 +77,7 @@ func (s *DatabaseStore) Load(ctx context.Context, scope Scope) (map[string]strin
 func (s *DatabaseStore) Save(ctx context.Context, scope Scope, name, value string) error {
 	stmt := `INSERT INTO ` + Table + ` (name, scope, value, updated_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT (name, scope) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-	if s.db.Dialect().Name() == "mysql" {
+	if database.MustCapabilities(s.db.Dialect()).Family == "mysql" {
 		stmt = `INSERT INTO ` + Table + ` (name, scope, value, updated_at) VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)`
 	}

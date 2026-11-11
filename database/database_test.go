@@ -421,3 +421,127 @@ func TestTxLockKey(t *testing.T) {
 		t.Errorf("LockKey on MySQL = %v, want ErrLockKeyUnsupported", err)
 	}
 }
+
+type stateError struct{ state string }
+
+func (e stateError) Error() string    { return "driver error: " + e.state }
+func (e stateError) SQLState() string { return e.state }
+
+func TestUniqueViolation(t *testing.T) {
+	t.Parallel()
+
+	db, err := Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	for _, q := range []string{
+		`CREATE TABLE u (id INTEGER PRIMARY KEY, email TEXT UNIQUE)`,
+		`INSERT INTO u VALUES (1, 'duplicate key')`,
+	} {
+		if _, err := db.ExecContext(t.Context(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, uniqueErr := db.ExecContext(t.Context(), `INSERT INTO u VALUES (2, 'duplicate key')`)
+	_, pkErr := db.ExecContext(t.Context(), `INSERT INTO u VALUES (1, 'x')`)
+	_, otherErr := db.ExecContext(t.Context(), `INSERT INTO nope VALUES ('duplicate key')`)
+
+	tests := []struct {
+		name string
+		hook func(error) bool
+		err  error
+		want bool
+	}{
+		{"sqlite unique", nil, uniqueErr, true},
+		{"sqlite primary key", nil, pkErr, true},
+		{"sqlite other error whose text says duplicate key", nil, otherErr, false},
+		{"sqlstate 23505", nil, stateError{"23505"}, true},
+		{"other sqlstate", nil, stateError{"23503"}, false},
+		{"mysql ER_DUP_ENTRY text", nil, errors.New("Error 1062 (23000): Duplicate entry 'a' for key 'k'"), true},
+		{"text inside a message does not count", nil, errors.New(`bad value "Error 1062 (" duplicate key`), false},
+		{"driver hook decides", func(error) bool { return true }, errors.New("anything"), true},
+		{"driver hook says no", func(error) bool { return false }, stateError{"23505"}, false},
+		{"nil error", nil, nil, false},
+	}
+
+	for _, tt := range tests {
+		if got := uniqueViolation(tt.hook, tt.err); got != tt.want {
+			t.Errorf("%s: uniqueViolation = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+
+	if !db.UniqueViolation(uniqueErr) {
+		t.Error("db.UniqueViolation(unique error) = false")
+	}
+}
+
+func TestWriteRoutedQueries(t *testing.T) {
+	t.Parallel()
+
+	db, err := Open(t.Context(), "file:"+filepath.Join(testutil.TempDir(t), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE w (id INTEGER PRIMARY KEY, note TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+
+	var id int
+	if err := db.QueryRowWriteContext(t.Context(), `INSERT INTO w (note) VALUES ('a') RETURNING id`).
+		Scan(&id); err != nil ||
+		id != 1 {
+		t.Fatalf("QueryRowWriteContext = %d, %v; want id 1", id, err)
+	}
+
+	rows, err := db.QueryWriteContext(t.Context(), `INSERT INTO w (note) VALUES ('b'), ('c') RETURNING id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer rows.Close()
+
+	n := 0
+	for rows.Next() {
+		n++
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if n != 2 {
+		t.Errorf("QueryWriteContext returned %d rows, want 2", n)
+	}
+
+	// A read that merely mentions the word still works.
+	var s string
+	if err := db.QueryRowContext(t.Context(), `SELECT 'returning'`).Scan(&s); err != nil || s != "returning" {
+		t.Errorf("SELECT 'returning' = %q, %v", s, err)
+	}
+
+	for in, want := range map[string]bool{"x RETURNING id": true, "x returning": true, "return": false, "": false} {
+		if got := containsFold(in, "RETURNING"); got != want {
+			t.Errorf("containsFold(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+type oddDialect struct{ sqliteDialect }
+
+func (oddDialect) Capabilities() Capabilities { return Capabilities{Family: "oracle"} }
+
+func TestOpenRejectsUnknownFamily(t *testing.T) {
+	t.Parallel()
+
+	_, err := openGeneric(t.Context(), Driver{SQLName: "sqlite", Dialect: oddDialect{}}, "x", Config{})
+	if err == nil || !strings.Contains(err.Error(), `Family "oracle"`) {
+		t.Fatalf("openGeneric(odd family) = %v, want a Family error", err)
+	}
+}

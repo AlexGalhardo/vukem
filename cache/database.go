@@ -58,9 +58,11 @@ func NewDatabase(db *database.DB, table string) (*Database, error) {
 	return &Database{db: db, table: table, now: time.Now, pruneBatch: 1000}, nil
 }
 
-func (d *Database) mysql() bool { return d.db.Dialect().Name() == "mysql" }
+func (d *Database) mysql() bool { return database.MustCapabilities(d.db.Dialect()).Family == "mysql" }
 
-func (d *Database) postgres() bool { return d.db.Dialect().Name() == "postgres" }
+func (d *Database) postgres() bool {
+	return database.MustCapabilities(d.db.Dialect()).Family == "postgres"
+}
 
 // val binds a value: Postgres stores BYTEA (TEXT rejects NUL and invalid
 // UTF-8); SQLite keeps binding strings so rows written by older versions
@@ -81,7 +83,7 @@ func (d *Database) q(sqlText string) string { return render(d.db.Dialect(), d.ta
 // reserved word on MySQL) and dialect placeholders.
 func render(dl database.Dialect, table, sqlText string) string {
 	key := "key"
-	if dl.Name() == "mysql" {
+	if database.MustCapabilities(dl).Family == "mysql" {
 		key = dl.Quote(key)
 	}
 
@@ -116,7 +118,7 @@ func tableDDL(dl database.Dialect, table string) []string {
 		expires_at BIGINT NOT NULL DEFAULT 0)`
 	index := "CREATE INDEX IF NOT EXISTS " + dl.Quote(table+"_expires_at") + " ON {t} (expires_at)"
 
-	switch dl.Name() {
+	switch database.MustCapabilities(dl).Family {
 	case "mysql":
 		create = `CREATE TABLE IF NOT EXISTS {t} ({k} VARBINARY(255) NOT NULL PRIMARY KEY, value LONGBLOB NOT NULL,
 			expires_at BIGINT NOT NULL DEFAULT 0)`

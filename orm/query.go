@@ -129,9 +129,9 @@ func (q Query[T]) where(or bool, colName string, args []any) Query[T] {
 
 		op, val = strings.ToUpper(s), args[1]
 
-		// MySQL has no ILIKE; its default collations already compare
-		// case-insensitively.
-		if op == "ILIKE" && q.ex != nil && q.ex.Dialect().Name() == "mysql" {
+		// MySQL has no ILIKE and SQLite rejects it; both compare LIKE
+		// case-insensitively (MySQL's default collations, SQLite for ASCII).
+		if op == "ILIKE" && q.ex != nil && !capsOf(q.ex).ILike {
 			op = "LIKE"
 		}
 	default:
@@ -166,12 +166,26 @@ func (q Query[T]) addCond(or bool, sqlFrag string, args ...any) Query[T] {
 func (q Query[T]) quote(col string) string { return q.ex.Dialect().Quote(col) }
 
 // WhereIn adds "col IN (...)". An empty list matches nothing.
-func (q Query[T]) WhereIn(col string, values ...any) Query[T] { return q.whereIn(col, values, false) }
+func (q Query[T]) WhereIn(col string, values ...any) Query[T] {
+	return q.whereIn(false, col, values, false)
+}
+
+// OrWhereIn is WhereIn joined with OR.
+func (q Query[T]) OrWhereIn(col string, values ...any) Query[T] {
+	return q.whereIn(true, col, values, false)
+}
 
 // WhereNotIn adds "col NOT IN (...)". An empty list matches everything.
-func (q Query[T]) WhereNotIn(col string, values ...any) Query[T] { return q.whereIn(col, values, true) }
+func (q Query[T]) WhereNotIn(col string, values ...any) Query[T] {
+	return q.whereIn(false, col, values, true)
+}
 
-func (q Query[T]) whereIn(colName string, values []any, not bool) Query[T] {
+// OrWhereNotIn is WhereNotIn joined with OR.
+func (q Query[T]) OrWhereNotIn(col string, values ...any) Query[T] {
+	return q.whereIn(true, col, values, true)
+}
+
+func (q Query[T]) whereIn(or bool, colName string, values []any, not bool) Query[T] {
 	col, err := q.m.column(colName)
 	if err != nil {
 		return q.fail(err)
@@ -181,10 +195,15 @@ func (q Query[T]) whereIn(colName string, values []any, not bool) Query[T] {
 
 	if len(values) == 0 {
 		if not {
+			// NOT IN () is true: a no-op under AND, the whole filter under OR.
+			if or {
+				return q.addCond(true, "1 = 1")
+			}
+
 			return q
 		}
 
-		return q.addCond(false, "1 = 0")
+		return q.addCond(or, "1 = 0")
 	}
 
 	kw := " IN ("
@@ -192,7 +211,7 @@ func (q Query[T]) whereIn(colName string, values []any, not bool) Query[T] {
 		kw = " NOT IN ("
 	}
 
-	return q.addCond(false, q.quote(col)+kw+strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")+")", values...)
+	return q.addCond(or, q.quote(col)+kw+marks(len(values))+")", values...)
 }
 
 // flatten expands a single slice argument: WhereIn("id", ids) or WhereIn("id", 1, 2).
@@ -217,17 +236,32 @@ func flatten(values []any) []any {
 // WhereNull adds "col IS NULL".
 func (q Query[T]) WhereNull(col string) Query[T] { return q.Where(col, nil) }
 
+// OrWhereNull is WhereNull joined with OR.
+func (q Query[T]) OrWhereNull(col string) Query[T] { return q.OrWhere(col, nil) }
+
 // WhereNotNull adds "col IS NOT NULL".
 func (q Query[T]) WhereNotNull(col string) Query[T] { return q.Where(col, "!=", nil) }
 
+// OrWhereNotNull is WhereNotNull joined with OR.
+func (q Query[T]) OrWhereNotNull(col string) Query[T] { return q.OrWhere(col, "!=", nil) }
+
 // WhereBetween adds "col BETWEEN low AND high".
 func (q Query[T]) WhereBetween(colName string, low, high any) Query[T] {
+	return q.whereBetween(false, colName, low, high)
+}
+
+// OrWhereBetween is WhereBetween joined with OR.
+func (q Query[T]) OrWhereBetween(colName string, low, high any) Query[T] {
+	return q.whereBetween(true, colName, low, high)
+}
+
+func (q Query[T]) whereBetween(or bool, colName string, low, high any) Query[T] {
 	col, err := q.m.column(colName)
 	if err != nil {
 		return q.fail(err)
 	}
 
-	return q.addCond(false, q.quote(col)+" BETWEEN ? AND ?", low, high)
+	return q.addCond(or, q.quote(col)+" BETWEEN ? AND ?", low, high)
 }
 
 // WhereRaw adds a raw condition. It must use "?" placeholders for every
@@ -240,9 +274,18 @@ func (q Query[T]) WhereBetween(colName string, low, high any) Query[T] {
 // and so are explicit PostgreSQL "$n" parameters. Without an executor the
 // fragment is lexed with SQLite's rules.
 func (q Query[T]) WhereRaw(sqlFrag string, args ...any) Query[T] {
+	return q.whereRaw(false, sqlFrag, args)
+}
+
+// OrWhereRaw is WhereRaw joined with OR.
+func (q Query[T]) OrWhereRaw(sqlFrag string, args ...any) Query[T] {
+	return q.whereRaw(true, sqlFrag, args)
+}
+
+func (q Query[T]) whereRaw(or bool, sqlFrag string, args []any) Query[T] {
 	dialect := ""
 	if q.ex != nil {
-		dialect = q.ex.Dialect().Name()
+		dialect = capsOf(q.ex).Family
 	}
 
 	scan := sqlscan.Scan(dialect, sqlFrag, nil)
@@ -264,11 +307,16 @@ func (q Query[T]) WhereRaw(sqlFrag string, args ...any) Query[T] {
 		)
 	}
 
-	return q.addCond(false, "("+sqlFrag+")", args...)
+	return q.addCond(or, "("+sqlFrag+")", args...)
 }
 
 // WhereGroup adds a parenthesised group built by fn.
-func (q Query[T]) WhereGroup(fn func(g Query[T]) Query[T]) Query[T] {
+func (q Query[T]) WhereGroup(fn func(g Query[T]) Query[T]) Query[T] { return q.whereGroup(false, fn) }
+
+// OrWhereGroup is WhereGroup joined with OR.
+func (q Query[T]) OrWhereGroup(fn func(g Query[T]) Query[T]) Query[T] { return q.whereGroup(true, fn) }
+
+func (q Query[T]) whereGroup(or bool, fn func(g Query[T]) Query[T]) Query[T] {
 	g := fn(Query[T]{ex: q.ex, m: q.m, limit: -1})
 	if g.err != nil {
 		return q.fail(g.err)
@@ -280,7 +328,7 @@ func (q Query[T]) WhereGroup(fn func(g Query[T]) Query[T]) Query[T] {
 
 	frag, args := joinConds(g.conds)
 
-	return q.addCond(false, "("+frag+")", args...)
+	return q.addCond(or, "("+frag+")", args...)
 }
 
 func joinConds(conds []cond) (string, []any) {
@@ -396,15 +444,15 @@ func (q Query[T]) lockSQL() string {
 		return ""
 	}
 
-	switch q.ex.Dialect().Name() {
-	case "sqlite":
+	caps := capsOf(q.ex)
+	if !caps.RowLocks {
 		return ""
-	case "mysql":
-		// FOR SHARE is MySQL 8 only; LOCK IN SHARE MODE runs on MySQL and
-		// MariaDB but takes no SKIP LOCKED/NOWAIT on MySQL.
-		if q.lock == "SHARE" && q.wait == "" {
-			return " LOCK IN SHARE MODE"
-		}
+	}
+
+	// FOR SHARE is MySQL 8 only; LOCK IN SHARE MODE runs on MySQL and
+	// MariaDB but takes no SKIP LOCKED/NOWAIT on MySQL.
+	if caps.Family == "mysql" && q.lock == "SHARE" && q.wait == "" {
+		return " LOCK IN SHARE MODE"
 	}
 
 	out := " FOR " + q.lock
@@ -452,6 +500,16 @@ func (q Query[T]) whereSQL() (string, []any) {
 	return " WHERE " + frag, args
 }
 
+// grouped returns q with an OR filter wrapped in parentheses, so a condition
+// appended after it (a key, a keyset predicate) applies to the whole filter:
+// "a OR b AND pk = ?" would match every row satisfying a.
+func (q Query[T]) grouped() Query[T] {
+	q = q.clone()
+	q.conds = wrapOr(q.conds)
+
+	return q
+}
+
 // wrapOr groups user conditions when they contain OR so the soft-delete
 // filter cannot be bypassed by operator precedence.
 func wrapOr(conds []cond) []cond {
@@ -465,6 +523,10 @@ func wrapOr(conds []cond) []cond {
 }
 
 func (q Query[T]) selectSQL(cols string) (string, []any, error) {
+	if err := checkDialect(q.ex); err != nil {
+		return "", nil, err
+	}
+
 	where, args := q.whereSQL()
 
 	var b strings.Builder
@@ -480,11 +542,9 @@ func (q Query[T]) selectSQL(cols string) (string, []any, error) {
 
 	if q.offset > 0 {
 		if q.limit < 0 {
-			switch q.ex.Dialect().Name() {
-			case "sqlite":
-				b.WriteString(" LIMIT -1") // SQLite needs a LIMIT before OFFSET
-			case "mysql":
-				b.WriteString(" LIMIT 18446744073709551615") // MySQL too, documented as the max
+			// SQLite and MySQL need a LIMIT before OFFSET.
+			if lim := capsOf(q.ex).LimitForOffset; lim != "" {
+				b.WriteString(" LIMIT " + lim)
 			}
 		}
 
@@ -535,7 +595,7 @@ func renumber(sqlText string, d database.Dialect) (string, error) {
 		ph = d.Placeholder
 	}
 
-	r := sqlscan.Scan(d.Name(), sqlText, ph)
+	r := sqlscan.Scan(database.MustCapabilities(d).Family, sqlText, ph)
 	if !r.Terminated {
 		return "", errUnterminatedSQL
 	}
@@ -665,7 +725,7 @@ func (q Query[T]) Find(ctx context.Context, id any) (T, error) {
 		return zero, err
 	}
 
-	return q.Where(q.m.pk, id).First(ctx)
+	return q.grouped().Where(q.m.pk, id).First(ctx)
 }
 
 // Count returns the number of matching rows. It ignores LockForUpdate and
@@ -770,7 +830,11 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 		out = append(out, v)
 	}
 
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("orm: pluck %s.%s: %w", q.m.table, col, err)
+	}
+
+	return out, nil
 }
 
 // GroupCount returns how many matching rows hold each value of the column:
@@ -822,7 +886,11 @@ func (q Query[T]) GroupCount[K comparable](ctx context.Context, colName string) 
 		out[key] = n
 	}
 
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("orm: group count %s.%s: %w", q.m.table, col, err)
+	}
+
+	return out, nil
 }
 
 // Chunk processes rows in batches of size ordered by primary key; fn may
@@ -951,7 +1019,7 @@ func (q Query[T]) Paginate(ctx context.Context, page, perPage int) (Page[T], err
 func (m *meta) scanner(rows *sql.Rows, ex database.Executor) (func(*sql.Rows, reflect.Value) error, error) {
 	cols, err := rows.Columns()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("orm: columns %s: %w", m.table, err)
 	}
 
 	enc, lite := encrypterOf(ex), isSQLite(ex)

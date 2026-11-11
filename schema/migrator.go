@@ -204,7 +204,7 @@ func (m *Migrator) up(ctx context.Context) ([]string, error) {
 // CONCURRENTLY leaves one behind, and the retry's IF NOT EXISTS skips it:
 // recording the migration then would leave an index that is never used.
 func (m *Migrator) checkInvalidIndexes(ctx context.Context) error {
-	if m.db.Dialect().Name() != "postgres" {
+	if database.MustCapabilities(m.db.Dialect()).Family != "postgres" {
 		return nil
 	}
 
@@ -399,7 +399,7 @@ func (m *Migrator) locked(ctx context.Context, fn func() error) error {
 
 	var key any
 
-	switch m.db.Dialect().Name() {
+	switch database.MustCapabilities(m.db.Dialect()).AdvisoryLock {
 	case "postgres":
 		// try-lock polled below, never the blocking pg_advisory_lock: a
 		// statement waiting for the lock holds a snapshot, and the holder's
@@ -439,7 +439,7 @@ func (m *Migrator) locked(ctx context.Context, fn func() error) error {
 		_, _ = conn.ExecContext(context.WithoutCancel(ctx), unlock, key)
 	}()
 
-	if m.db.Dialect().Name() == "postgres" {
+	if database.MustCapabilities(m.db.Dialect()).AdvisoryLock == "postgres" {
 		if err := pollLock(ctx, conn, lock, key); err != nil {
 			return fmt.Errorf("schema: lock migrations: %w", err)
 		}
@@ -492,7 +492,8 @@ func pollLock(ctx context.Context, conn *sql.Conn, query string, key any) error 
 func DropAll(ctx context.Context, db *database.DB) error { return dropAll(ctx, db) }
 
 func dropAll(ctx context.Context, db *database.DB) error {
-	if db.Dialect().Name() == "mysql" {
+	family := database.MustCapabilities(db.Dialect()).Family
+	if family == "mysql" {
 		return dropAllMySQL(ctx, db)
 	}
 
@@ -501,7 +502,7 @@ func dropAll(ctx context.Context, db *database.DB) error {
 		cascade string
 	)
 
-	if db.Dialect().Name() == "postgres" {
+	if family == "postgres" {
 		q = "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
 		cascade = " CASCADE"
 	} else {

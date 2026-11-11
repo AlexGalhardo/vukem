@@ -136,13 +136,14 @@ func Run(t *testing.T, db *database.DB) {
 	run("PartialIndexRebind", testPartialIndexRebind)
 	run("AggregateTimes", testAggregateTimes)
 	run("RawRebindChunk", testRawRebindChunk)
+	run("Conflict", testConflict)
 }
 
 func clean(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
 	s := schema.New(ctx, db)
-	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks"} {
+	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks", "dbt_conflict"} {
 		if err := s.DropIfExists(table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -507,7 +508,7 @@ func testPartialIndexRebind(ctx context.Context, t *testing.T, db *database.DB) 
 		t.String("status", 20)
 		t.UniqueIndex("number_id").Where("status = 'live'")
 	})
-	if db.Dialect().Name() == "mysql" {
+	if database.MustCapabilities(db.Dialect()).Family == "mysql" {
 		if err == nil {
 			_ = s.DropIfExists("dbt_reservations")
 			t.Fatal("mysql accepted a partial index")
@@ -683,5 +684,54 @@ func testRawRebindChunk(ctx context.Context, t *testing.T, db *database.DB) {
 	})
 	if err != nil || !slices.Equal(seen, want) {
 		t.Fatalf("Chunk deleting its rows visited %v (%v), want %v", seen, err, want)
+	}
+}
+
+// conflictRow has a unique code and a CHECK that refuses the code "bad".
+type conflictRow struct {
+	ID   int64
+	Code string
+	Note string
+}
+
+// Table implements orm.Tabler.
+func (conflictRow) Table() string { return "dbt_conflict" }
+
+// testConflict checks that a unique violation becomes orm.ErrConflict on
+// every dialect, through the driver's error code, and that no other
+// constraint error does, even when its message carries a column value that
+// reads like a unique violation.
+func testConflict(ctx context.Context, t *testing.T, db *database.DB) {
+	t.Helper()
+
+	if err := schema.New(ctx, db).Create("dbt_conflict", func(t *schema.Table) {
+		t.ID()
+		t.String("code", 20).Unique()
+		t.String("note", 40).Default("")
+		t.Check("dbt_conflict_code_check", "code <> 'bad'")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orm.Create(ctx, db, &conflictRow{Code: "a"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := orm.Create(ctx, db, &conflictRow{Code: "a"}); !errors.Is(err, orm.ErrConflict) {
+		t.Errorf("duplicate Create = %v, want ErrConflict", err)
+	}
+
+	err := db.Tx(ctx, func(tx *database.Tx) error {
+		return orm.Create(ctx, tx, &conflictRow{Code: "a"})
+	})
+	if !errors.Is(err, orm.ErrConflict) {
+		t.Errorf("duplicate Create in a transaction = %v, want ErrConflict", err)
+	}
+
+	// The CHECK violation is not a unique violation, whatever its message
+	// says: PostgreSQL echoes the failing row, which holds this note.
+	err = orm.Create(ctx, db, &conflictRow{Code: "bad", Note: "duplicate key"})
+	if err == nil || errors.Is(err, orm.ErrConflict) {
+		t.Errorf("check violation = %v, want an error that is not ErrConflict", err)
 	}
 }
