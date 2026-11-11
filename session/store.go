@@ -329,8 +329,8 @@ func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
 	s.qInsert = "INSERT INTO " + t + " (id, data, expires_at, user_id) VALUES (" +
 		p(1) + ", " + p(2) + ", " + p(3) + ", " + p(4) + ")"
 	s.qUpdate = "UPDATE " + t + " SET data = " + p(1) + ", expires_at = " + p(2) + ", user_id = " + p(3) +
-		" WHERE id = " + p(4)
-	s.qExists = "SELECT 1 FROM " + t + " WHERE id = " + p(1)
+		" WHERE id = " + p(4) + " AND expires_at > " + p(5)
+	s.qExists = "SELECT 1 FROM " + t + " WHERE id = " + p(1) + " AND expires_at > " + p(2)
 	s.qRekey = "UPDATE " + t + " SET id = " + p(1) + " WHERE id = " + p(2)
 	s.qDelete = "DELETE FROM " + t + " WHERE id = " + p(1) + " OR id = " + p(2)
 	s.qPrune = "DELETE FROM " + t + " WHERE expires_at <= " + p(1)
@@ -537,7 +537,7 @@ func (s *SQLStore) Create(ctx context.Context, id, userID string, data []byte, e
 func (s *SQLStore) Update(ctx context.Context, id, userID string, data []byte, expiry time.Time) error {
 	key := storageKey(id)
 
-	res, err := s.db.ExecContext(ctx, s.qUpdate, string(data), expiry.Unix(), nullUser(userID), key)
+	res, err := s.db.ExecContext(ctx, s.qUpdate, string(data), expiry.Unix(), nullUser(userID), key, s.now().Unix())
 	if err != nil {
 		return fmt.Errorf("session: update: %w", err)
 	}
@@ -549,7 +549,7 @@ func (s *SQLStore) Update(ctx context.Context, id, userID string, data []byte, e
 	// MySQL reports 0 affected rows when nothing changed: check the row.
 	var one int
 
-	err = s.db.QueryRowContext(ctx, s.qExists, key).Scan(&one)
+	err = s.db.QueryRowContext(ctx, s.qExists, key, s.now().Unix()).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrSessionNotFound
 	}

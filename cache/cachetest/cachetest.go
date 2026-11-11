@@ -74,7 +74,21 @@ func Run(t *testing.T, store cache.Store) {
 			t.Skip("store has no prefix delete")
 		}
 
-		keys := []string{"pf:a:1", "pf:a:2", "pf:ab", "PF:a:3", "pf:b:1", "w_1", "wx1", "s*a", "sxa", "pf:%"}
+		keys := []string{
+			"pf:a:1",
+			"pf:a:2",
+			"pf:ab",
+			"PF:a:3",
+			"pf:b:1",
+			"w_1",
+			"wx1",
+			"s*a",
+			"sxa",
+			"pf:%",
+			"usuário:1",
+			"usuário:2",
+			"usuario:3",
+		}
 		for _, k := range keys {
 			if err := c.Put(ctx, k, 1, time.Minute); err != nil {
 				t.Fatal(err)
@@ -86,6 +100,8 @@ func Run(t *testing.T, store cache.Store) {
 			"w_":    {"w_1"},
 			"s*":    {"s*a"},
 			"pf:%":  {"pf:%"},
+			// MySQL compares bytes, not characters.
+			"usuário:": {"usuário:1", "usuário:2"},
 		} {
 			if err := c.ForgetPrefix(ctx, prefix); err != nil {
 				t.Fatalf("ForgetPrefix(%q) = %v", prefix, err)
@@ -98,7 +114,7 @@ func Run(t *testing.T, store cache.Store) {
 			}
 		}
 
-		for _, k := range []string{"pf:ab", "PF:a:3", "pf:b:1", "wx1", "sxa"} {
+		for _, k := range []string{"pf:ab", "PF:a:3", "pf:b:1", "wx1", "sxa", "usuario:3"} {
 			if _, ok, _ := cache.Get[int](ctx, c, k); !ok {
 				t.Errorf("%q was deleted by a prefix it does not start with", k)
 			}

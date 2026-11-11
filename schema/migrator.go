@@ -418,6 +418,12 @@ func (m *Migrator) locked(ctx context.Context, fn func() error) error {
 		return fn()
 	}
 
+	// The lock connection is held while the migrations run on the pool: with
+	// a single connection they would wait for it forever.
+	if m.db.SQL().Stats().MaxOpenConnections == 1 {
+		return errors.New("schema: migrations need at least 2 connections to hold the lock; raise DB_MAX_OPEN")
+	}
+
 	// Session locks belong to one connection: take and release it on a
 	// pinned one while the migrations use the pool.
 	conn, err := m.db.SQL().Conn(ctx)
