@@ -638,6 +638,9 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 | `migrate:reset` | `-force` | Rolls back every migration |
 | `migrate:fresh` | `-force` | Drops all tables and re-runs every migration |
 | `migrate:status` | `-json` | Shows which migrations ran |
+| `migrate:check` | `-json` | Finds colliding and out-of-order migrations |
+| `migrate:diff` | `-name`, `-o`, `-delete`, `-rename`, `-check` | Writes a migration stub from the models |
+| `db:pull` | `-o`, `-table`, `-models`, `-mark-applied` | Writes a baseline migration from the database |
 | `db:seed` | `-class Name` (repeatable), `-force` | Runs every seeder, or the named ones in order ([Seeders](/docs/database/factories-seeders)) |
 | `db:wipe` | `-force` | Drops every table |
 | `db:run` | `-file path` (or `-` for stdin), `-commit` | Runs a SQL script in one transaction on the app's own database; rolls back unless `-commit` (a dry run on the real data) |

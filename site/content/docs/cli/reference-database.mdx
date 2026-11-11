@@ -32,10 +32,14 @@ Exit code 1, nothing changed. With `-force` it runs. `migrate`, `migrate:rollbac
 Run every pending migration, in timestamp order, as one new batch.
 
 ```text
-vukem migrate
+vukem migrate [-allow-destructive]
 ```
 
-No flags, no arguments.
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-allow-destructive` | bool | `false` | In production, run pending migrations that drop a table or a column. Without it `migrate` refuses them and runs nothing. |
+
+No arguments.
 
 ```bash
 vukem migrate
@@ -166,6 +170,60 @@ With `-json` each entry has `id` and `ran`, plus `batch` and `ran_at` (UTC) once
 ```
 
 Use it in CI to fail a deploy that has pending migrations.
+
+## `vukem migrate:check`
+
+Find migrations that collide, without a database, and pending ones that sort before the last migration that ran. **App**.
+
+```text
+vukem migrate:check [-json]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-json` | bool | `false` | Print the findings as a JSON list. |
+
+```text
+conflict  20261202100000_add_slug_to_posts  posts.slug  column already added by 20261201150000_add_slug_to_posts
+order     20261130080000_create_tags_table  pending, but 20261201150000_add_slug_to_posts already ran
+```
+
+Exit code 1 when there is any finding, 0 with `No conflicts.` otherwise. `Schema.Raw` statements are not analysed. `migrate:status` marks the second kind `Pending (out of order)`.
+
+## `vukem migrate:diff`
+
+Write a migration stub for the differences between the models listed with `vukem.WithModels` and the database. **App**. It never applies the migration.
+
+```text
+vukem migrate:diff [-name n] [-o dir] [-delete item]... [-rename table.old:table.new]... [-check]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-name` | string | `sync_models` | Suffix of the migration ID. |
+| `-o` | string | `database/migrations` | Output directory. `-` prints to stdout. |
+| `-delete` | string, repeatable | none | Consent to dropping `table` or `table.column`. |
+| `-rename` | string, repeatable | none | Treat `table.old:table.new` as a column rename. |
+| `-check` | bool | `false` | Write nothing; exit 1 when anything differs. |
+
+Without consent for a destructive item nothing is written, the command exits 1 and prints `migrate:diff: consent required for N destructive change(s)` with the flag to pass for each. A `-delete` that matches no pending change is an error. On SQLite a table that needs a `Rebuild` gets only the `Rebuild`, carrying all its changes; what the models cannot reproduce (a default, a CHECK, a composite foreign key, an expression index, triggers) is listed in a comment above it and as a warning. An existing migration file is never overwritten.
+
+## `vukem db:pull`
+
+Write a baseline migration, and optionally Go structs, from the database that already exists. **App**.
+
+```text
+vukem db:pull [-o dir] [-table name]... [-models] [-mark-applied]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-o` | string | `database/migrations` | Directory of the generated migration. |
+| `-table` | string, repeatable | all | Only these tables. |
+| `-models` | bool | `false` | Also write `app/models/<name>.go` for each table; an existing file is kept. |
+| `-mark-applied` | bool | `false` | Record the migration as applied (it has to be registered; rebuild and run again otherwise). Running it again reports `Already applied`. |
+
+The framework's own tables and `migrations` are skipped. A column type the schema builder has no method for, and an index on an expression, are left out with a warning. A table or column name that is not a plain identifier is an error, and an existing migration file is never overwritten.
 
 ## `vukem db:seed`
 
