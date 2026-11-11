@@ -146,6 +146,8 @@ Latencies come from a fixed-size log-linear histogram, so a percentile is exact 
 - run: go run ./cmd/app bench:run -d 20s --threshold 'p95<250ms' --threshold 'error_rate<1%'
 ```
 
+`--ui` (with `-ui-port` and `-no-open`) serves a read-only live dashboard on `127.0.0.1` while the run goes: the start URL printed on stderr carries a session token, the page draws throughput, per-second p50, p95 and p99, failures, requests in flight against the target load, the thresholds and a table per request name, and it has no control, so it cannot change the load (stop the run with Ctrl+C). The process stays up after the run until Ctrl+C. It is for a person at a terminal: `--report out.html` writes the same charts as one self-contained HTML file, with no script and no external resource, which is the way to keep a result in CI or attach it to a pull request. The dashboard refuses any non-loopback peer or Host and any proxy header, and its Content-Security-Policy allows no inline code.
+
 The in-process app is not production: `APP_ENV=test`, SQLite and a mailer in memory change the numbers, and a self rate-limiting app answers `429`, which counts as failed.
 
 ## Follow-ups
