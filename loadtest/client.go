@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -31,6 +32,8 @@ type client struct {
 	allow   []string
 	timeout time.Duration
 	agent   string
+	// active counts the requests in flight; user clients share it.
+	active *atomic.Int64
 	// own is true when the run built the HTTP client, so the run closes its idle connections at the end.
 	own bool
 }
@@ -39,7 +42,13 @@ type client struct {
 // apply. The transport has no proxy, never follows a redirect (a 302 to another host would turn the generator on a
 // target nobody approved) and dials loopback addresses only, unless the host is in AllowRemote.
 func newClient(cfg *Config, agent string) *client {
-	c := &client{allow: cfg.AllowRemote, timeout: cmp.Or(cfg.Timeout, defaultTimeout), agent: agent, http: cfg.Client}
+	c := &client{
+		active:  new(atomic.Int64),
+		allow:   cfg.AllowRemote,
+		timeout: cmp.Or(cfg.Timeout, defaultTimeout),
+		agent:   agent,
+		http:    cfg.Client,
+	}
 	if c.http != nil {
 		return c
 	}
@@ -155,6 +164,9 @@ func (c *client) do(ctx context.Context, req Request, seq uint64, scheduled time
 func (c *client) doBody(
 	ctx context.Context, req Request, seq uint64, scheduled time.Time, now func() time.Time, keep int,
 ) (Result, *Response) {
+	c.active.Add(1)
+	defer c.active.Add(-1)
+
 	res := Result{Seq: seq, Name: req.Name, Sent: now(), BytesOut: int64(len(req.Body))}
 	if scheduled.IsZero() {
 		scheduled = res.Sent

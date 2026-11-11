@@ -241,6 +241,26 @@ func (r *Runner) Results() <-chan Result { return r.results }
 // Dropped returns the open-model arrivals that found MaxWorkers requests already in flight.
 func (r *Runner) Dropped() uint64 { return r.dropped.Load() }
 
+// InFlight returns the requests being sent right now.
+func (r *Runner) InFlight() int { return int(r.c.active.Load()) }
+
+// Target returns the load being asked for now: arrivals per second in the open model, virtual users in the closed
+// one, interpolated when stages drive it.
+func (r *Runner) Target() int {
+	switch {
+	case len(r.stages) > 0:
+		return int(targetAt(r.stages, r.now().Sub(r.begin)) + 0.5)
+	case r.open:
+		if rate := r.rate.Load(); rate != nil && rate.Freq > 0 {
+			return int(rate.perSecond() + 0.5)
+		}
+
+		return 0
+	}
+
+	return r.cfg.Concurrency
+}
+
 // Elapsed returns the time since Start, frozen when the run ends.
 func (r *Runner) Elapsed() time.Duration {
 	select {

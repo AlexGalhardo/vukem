@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} - vukem bench report</title>
+<style>{{.CSS}}</style>
+</head>
+<body>
+<header>
+	<h1>vukem bench</h1>
+	<p class="subtitle">{{.Title}}</p>
+	<p class="meta">{{.Generated}} UTC, vukem {{.Version}}, {{.Model}}, {{.Duration}}, {{.Target}}</p>
+</header>
+
+<div class="cards">
+	{{range .Cards}}<div class="card"><span class="value">{{.Value}}</span><span class="label">{{.Label}}</span></div>
+	{{end}}
+</div>
+{{if .Warnings}}<section><h2>Warnings</h2><ul>{{range .Warnings}}<li class="fail">{{.}}</li>{{end}}</ul></section>{{end}}
+{{if .Charts}}<div class="charts">
+	{{range .Charts}}<figure>
+		<svg viewBox="0 0 {{.W}} {{.H}}" role="img" aria-labelledby="{{.ID}}"><title id="{{.ID}}">{{.Title}}</title><rect class="frame" x="0" y="0" width="{{.W}}" height="{{.H}}"/>{{range .Lines}}<polyline class="line {{.Class}}" points="{{.Points}}"/>{{end}}</svg>
+		<figcaption>{{.Caption}}</figcaption>
+	</figure>
+	{{end}}
+</div>
+{{else}}<section><p class="empty">no data: the run recorded no second</p></section>{{end}}
+
+<section>
+	<h2>Thresholds</h2>
+	<ul>{{range .Thresholds}}<li class="{{if .OK}}ok{{else}}fail{{end}}">{{.Threshold}} (got {{.Got}})</li>{{else}}<li class="empty">none set</li>{{end}}</ul>
+</section>
+
+<section>
+	<h2>Requests</h2>
+	<table>
+		<thead><tr><th>name</th><th>reqs</th><th>failed</th><th>p50</th><th>p95</th><th>p99</th></tr></thead>
+		<tbody>{{range .Names}}<tr><td>{{.Name}}</td><td>{{.Reqs}}</td><td>{{.Failed}}</td><td>{{.P50}}</td><td>{{.P95}}</td><td>{{.P99}}</td></tr>{{end}}</tbody>
+	</table>
+</section>
+
+<section>
+	<h2>Latency histogram</h2>
+	{{if .Bars}}<svg viewBox="0 0 600 120" role="img" aria-labelledby="t-histogram"><title id="t-histogram">Latency histogram</title>{{range .Bars}}<rect class="bar" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"/><text class="axis" x="{{.LX}}" y="112" text-anchor="middle">{{.Label}}</text>{{end}}</svg>
+	{{else}}<p class="empty">no data</p>{{end}}
+</section>
+
+<section>
+	<h2>Status codes and errors</h2>
+	<p>{{.Statuses}}</p>
+</section>
+</body>
+</html>

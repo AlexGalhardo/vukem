@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/loadtest"
+	"github.com/AlexGalhardo/vukem/loadtest/liveui"
 )
 
 // repeatFlag collects every occurrence of a repeatable flag, in order.
@@ -40,6 +42,11 @@ type benchOptions struct {
 	// Gates, for a URL and for the project's scenarios.
 	threshold            repeatFlag
 	save, compare, toler string
+
+	// The live dashboard and the HTML report.
+	ui, noOpen bool
+	uiPort     int
+	report     string
 
 	// Flags that only the project's scenarios (bench:run in the app binary) understand: the CLI forwards them.
 	scenario                     repeatFlag
@@ -79,86 +86,195 @@ func benchCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	set.StringVar(&o.database, "database-url", "", "project scenarios: database for the in-process app")
 	set.BoolVar(&o.seed, "seed", false, "project scenarios: run the registered seeders after migrating")
 	set.BoolVar(&o.list, "list", false, "project scenarios: list them and exit")
+	set.BoolVar(&o.ui, "ui", false, "serve a read-only live dashboard on 127.0.0.1 and keep running until Ctrl+C")
+	set.IntVar(&o.uiPort, "ui-port", 0, "dashboard port (0 = a free port)")
+	set.BoolVar(&o.noOpen, "no-open", false, "do not try to open the browser")
+	set.StringVar(&o.report, "report", "", "write a self-contained HTML report when the run ends")
 	set.BoolVar(&o.yes, "yes", false, "project scenarios: confirm a -database-url that is not a temporary SQLite file")
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		explicit := map[string]bool{}
 		set.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 
-		// No URL: run the scenarios of the project, which only its app binary can load.
-		if len(args) == 0 {
-			urlOnly := []string{
-				"n",
-				"m",
-				"H",
-				"body",
-				"body-file",
-				"connections",
-				"no-keepalive",
-				"http2",
-				"o",
-				"quiet",
-			}
-			if name := firstSet(explicit, urlOnly...); name != "" {
-				return usagef("-%s needs a URL: bench:run in the project does not take it", name)
-			}
-
-			return delegate(ctx, env, append([]string{"bench:run"}, forwardedFlags(set)...))
-		}
-
-		if name := firstSet(
-			explicit,
-			"scenario",
-			"model",
-			"stages",
-			"url",
-			"database-url",
-			"seed",
-			"list",
-			"yes",
-		); name != "" {
-			return usagef("-%s is for the project's scenarios: run vukem bench without a URL", name)
-		}
-
-		gate, err := o.gate(env)
-		if err != nil {
-			return err
-		}
-
-		cfg, req, err := o.build(env, args, explicit)
-		if err != nil {
-			return err
-		}
-
-		r, err := loadtest.Start(ctx, cfg, loadtest.Static(req))
-		if err != nil {
-			return usagef("%v", err)
-		}
-
-		sum := collectBench(env, r, o.interactive(env))
-
-		if o.out != "" {
-			var b bytes.Buffer
-			if err := loadtest.WriteJSON(&b, sum); err != nil {
-				return err
-			}
-
-			if err := os.WriteFile(env.path(o.out), b.Bytes(), 0o600); err != nil {
-				return err
-			}
-		}
-
-		report := loadtest.WriteText
-		if o.asJSON {
-			report = loadtest.WriteJSON
-		}
-
-		if err := report(env.Stdout, sum); err != nil {
-			return err
-		}
-
-		return gateError(gate.Apply(env.Stderr, sum))
+		return o.run(ctx, env, set, args, explicit)
 	}
+}
+
+// run is bench: a URL is load tested here, no URL hands the scenarios of the project to the app binary.
+func (o *benchOptions) run(
+	ctx context.Context, env *Env, set *flag.FlagSet, args []string, explicit map[string]bool,
+) error {
+	if err := o.checkUI(env, explicit); err != nil {
+		return err
+	}
+
+	// No URL: run the scenarios of the project, which only its app binary can load.
+	if len(args) == 0 {
+		urlOnly := []string{
+			"n",
+			"m",
+			"H",
+			"body",
+			"body-file",
+			"connections",
+			"no-keepalive",
+			"http2",
+			"o",
+			"quiet",
+		}
+		if name := firstSet(explicit, urlOnly...); name != "" {
+			return usagef("-%s needs a URL: bench:run in the project does not take it", name)
+		}
+
+		return delegate(ctx, env, append([]string{"bench:run"}, forwardedFlags(set)...))
+	}
+
+	if name := firstSet(
+		explicit,
+		"scenario",
+		"model",
+		"stages",
+		"url",
+		"database-url",
+		"seed",
+		"list",
+		"yes",
+	); name != "" {
+		return usagef("-%s is for the project's scenarios: run vukem bench without a URL", name)
+	}
+
+	gate, err := o.gate(env)
+	if err != nil {
+		return err
+	}
+
+	cfg, req, err := o.build(env, args, explicit)
+	if err != nil {
+		return err
+	}
+
+	r, err := loadtest.Start(ctx, cfg, loadtest.Static(req))
+	if err != nil {
+		return usagef("%v", err)
+	}
+
+	watch, err := o.watch(ctx, env, r, req)
+	if err != nil {
+		r.Stop()
+
+		return err
+	}
+
+	sum := collectBench(env, r, o.interactive(env), watch)
+
+	var reportErr error
+
+	if watch != nil {
+		defer watch.Close()
+
+		reportErr = watch.Finish(sum)
+	}
+
+	if o.out != "" {
+		var b bytes.Buffer
+		if err := loadtest.WriteJSON(&b, sum); err != nil {
+			return err
+		}
+
+		if err := os.WriteFile(env.path(o.out), b.Bytes(), 0o600); err != nil {
+			return err
+		}
+	}
+
+	report := loadtest.WriteText
+	if o.asJSON {
+		report = loadtest.WriteJSON
+	}
+
+	if err := report(env.Stdout, sum); err != nil {
+		return err
+	}
+
+	gateErr := gateError(gate.Apply(env.Stderr, sum))
+
+	// With a dashboard the process stays up, after the report and the gates, until the user quits.
+	if watch != nil {
+		watch.Hold(ctx)
+	}
+
+	if reportErr != nil {
+		return reportErr
+	}
+
+	return gateErr
+}
+
+// checkUI validates the dashboard flags: -ui is for a person at a terminal, not for a pipe or CI.
+func (o *benchOptions) checkUI(env *Env, explicit map[string]bool) error {
+	if !o.ui {
+		if name := firstSet(explicit, "ui-port", "no-open"); name != "" {
+			return usagef("-%s needs -ui", name)
+		}
+
+		return nil
+	}
+
+	if o.asJSON {
+		return usagef("-ui is interactive and -json is for machines: pick one")
+	}
+
+	if !env.Interactive {
+		return usagef("--ui needs an interactive terminal; use --report in CI")
+	}
+
+	return nil
+}
+
+// watch attaches the dashboard and the report file to a started run; nil when neither was asked for.
+func (o *benchOptions) watch(
+	ctx context.Context,
+	env *Env,
+	r *loadtest.Runner,
+	req loadtest.Request,
+) (*liveui.Watch, error) {
+	if !o.ui && o.report == "" {
+		return nil, nil //nolint:nilnil // no watch is a valid answer
+	}
+
+	opts := liveui.Options{
+		UI:      o.ui,
+		Port:    o.uiPort,
+		NoOpen:  o.noOpen,
+		Title:   req.Method + " " + liveurl(req.URL),
+		Model:   "closed",
+		Out:     env.Stderr,
+		Active:  r.InFlight,
+		Target:  r.Target,
+		Dropped: r.Dropped,
+		Version: version(env),
+	}
+
+	if o.rate != "" {
+		opts.Model = "open"
+	}
+
+	if o.report != "" {
+		opts.Report = projectPath(env, o.report)
+	}
+
+	return liveui.Begin(ctx, opts)
+}
+
+// liveurl is the target without credentials, query or fragment, for titles.
+func liveurl(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+
+	u.User, u.RawQuery, u.Fragment = nil, "", ""
+
+	return u.String()
 }
 
 // codeError is an error that makes the CLI exit with a code of its own, after having printed its own message.
@@ -351,7 +467,7 @@ func parseHeaders(raw []string) (http.Header, error) {
 }
 
 // collectBench reads the results of r until it ends and, on a terminal, prints a progress line every second.
-func collectBench(env *Env, r *loadtest.Runner, progress bool) loadtest.Summary {
+func collectBench(env *Env, r *loadtest.Runner, progress bool, watch *liveui.Watch) loadtest.Summary {
 	var m loadtest.Metrics
 
 	tick := time.NewTicker(time.Second)
@@ -365,6 +481,10 @@ func collectBench(env *Env, r *loadtest.Runner, progress bool) loadtest.Summary 
 			}
 
 			m.Add(res)
+
+			if watch != nil {
+				watch.Observe(res)
+			}
 		case <-tick.C:
 			if progress {
 				s := r.Summarize(&m)

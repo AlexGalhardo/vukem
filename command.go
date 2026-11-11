@@ -2,6 +2,7 @@ package vukem
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,7 @@ import (
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/internal/suggest"
 	"github.com/AlexGalhardo/vukem/loadtest"
+	"github.com/AlexGalhardo/vukem/loadtest/liveui"
 	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/ssg"
@@ -1104,6 +1106,9 @@ type benchFlags struct {
 	users, maxWorkers                 int
 	duration, timeout                 time.Duration
 	seed, asJSON, list, yes           bool
+	ui, noOpen                        bool
+	uiPort                            int
+	report                            string
 }
 
 func defineBenchFlags(set *flag.FlagSet, f *benchFlags) {
@@ -1124,6 +1129,10 @@ func defineBenchFlags(set *flag.FlagSet, f *benchFlags) {
 		"database for the in-process app (default: a temporary SQLite file)",
 	)
 	set.BoolVar(&f.seed, "seed", false, "run the registered seeders after migrating")
+	set.BoolVar(&f.ui, "ui", false, "serve a read-only live dashboard on 127.0.0.1 and keep running until Ctrl+C")
+	set.IntVar(&f.uiPort, "ui-port", 0, "dashboard port (0 = a free port)")
+	set.BoolVar(&f.noOpen, "no-open", false, "do not try to open the browser")
+	set.StringVar(&f.report, "report", "", "write a self-contained HTML report when the run ends")
 	set.BoolVar(&f.yes, "yes", false, "confirm a --database-url that is not a temporary SQLite file")
 	set.Var(&f.threshold, "threshold", "fail (exit 3) unless the expression holds, such as p95<200ms (repeatable)")
 	set.StringVar(&f.save, "save", "", "write the JSON summary to a file")
@@ -1238,6 +1247,14 @@ func planBench(f *benchFlags, explicit map[string]bool) (benchPlan, error) {
 		return plan, errors.New("--model open needs --rate or --stages")
 	}
 
+	if f.ui && f.asJSON {
+		return plan, errors.New("--ui is interactive and --json is for machines: pick one")
+	}
+
+	if !f.ui && (explicit["ui-port"] || explicit["no-open"]) {
+		return plan, errors.New("--ui-port and --no-open need --ui")
+	}
+
 	if f.url != "" && (f.databaseURL != "" || f.seed) {
 		return plan, errors.New("--url boots no database: --database-url and --seed do not apply")
 	}
@@ -1322,7 +1339,12 @@ func withAppKey(getenv func(string) (string, bool)) func(string) (string, bool) 
 
 // runBench is bench:run. It is resolved by RunMain before build, so it can build the app on its own environment.
 func runBench(
-	ctx context.Context, args []string, getenv func(string) (string, bool), build BuildFunc, opts []Option,
+	ctx context.Context,
+	args []string,
+	getenv func(string) (string, bool),
+	build BuildFunc,
+	opts []Option,
+	interactive bool,
 ) error {
 	o := options{stdout: os.Stdout, stderr: os.Stderr}
 	for _, opt := range opts {
@@ -1338,6 +1360,10 @@ func runBench(
 
 	if err != nil {
 		return err
+	}
+
+	if f.ui && !interactive {
+		return benchUsage(o.stderr, "--ui needs an interactive terminal; use --report in CI")
 	}
 
 	// --list and --url need the routes and the scenarios only: a warmup app registers them and boots nothing.
@@ -1580,18 +1606,83 @@ func runBenchLoad(ctx context.Context, app *App, f *benchFlags, plan benchPlan, 
 		return benchUsage(app.stderr, "%v", err)
 	}
 
+	watch, err := beginBenchWatch(ctx, app, f, plan, r)
+	if err != nil {
+		r.Stop()
+
+		return err
+	}
+
 	var m loadtest.Metrics
 
 	for res := range r.Results() {
 		m.Add(res)
+
+		if watch != nil {
+			watch.Observe(res)
+		}
 	}
 
-	return finishBench(app, f, plan, r.Summarize(&m))
+	return finishBench(ctx, app, f, plan, r.Summarize(&m), watch)
+}
+
+// beginBenchWatch attaches the dashboard and the report file to a started run; nil when neither was asked for.
+func beginBenchWatch(
+	ctx context.Context, app *App, f *benchFlags, plan benchPlan, r *loadtest.Runner,
+) (*liveui.Watch, error) {
+	if !f.ui && f.report == "" {
+		return nil, nil //nolint:nilnil // no watch is a valid answer
+	}
+
+	var names []string
+
+	for _, s := range app.benchScenarios {
+		if len(f.scenario) == 0 || slices.Contains(f.scenario, s.Name) {
+			names = append(names, s.Name)
+		}
+	}
+
+	model := "closed"
+	if plan.open {
+		model = "open"
+	}
+
+	return liveui.Begin(ctx, liveui.Options{
+		UI:         f.ui,
+		Port:       f.uiPort,
+		NoOpen:     f.noOpen,
+		Report:     f.report,
+		Title:      strings.Join(names, ", "),
+		Model:      model,
+		Thresholds: plan.thresholds,
+		Active:     r.InFlight,
+		Target:     r.Target,
+		Dropped:    r.Dropped,
+		Version:    app.Version,
+		Out:        app.stderr,
+	})
+}
+
+// stdinIsTerminal reports an interactive terminal on stdin, the way cmd/vukem decides it.
+func stdinIsTerminal() bool {
+	info, err := os.Stdin.Stat()
+
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // finishBench prints the report, then applies --save, the thresholds and --compare. A run that was interrupted prints
 // what it has and fails with exit code 1, without judging a partial result.
-func finishBench(app *App, f *benchFlags, plan benchPlan, sum loadtest.Summary) error {
+func finishBench(
+	ctx context.Context, app *App, f *benchFlags, plan benchPlan, sum loadtest.Summary, watch *liveui.Watch,
+) error {
+	var reportErr error
+
+	if watch != nil {
+		defer watch.Close()
+
+		reportErr = watch.Finish(sum)
+	}
+
 	emit := loadtest.WriteText
 	if f.asJSON {
 		emit = loadtest.WriteJSON
@@ -1602,12 +1693,21 @@ func finishBench(app *App, f *benchFlags, plan benchPlan, sum loadtest.Summary) 
 	}
 
 	if sum.Interrupted {
-		return errors.New("bench:run: interrupted")
+		return cmp.Or(reportErr, errors.New("bench:run: interrupted"))
 	}
 
 	gate := loadtest.Gate{Thresholds: plan.thresholds, Save: f.save, Compare: f.compare, Tolerance: plan.tolerance}
 
-	switch err := gate.Apply(app.stderr, sum); {
+	err := gate.Apply(app.stderr, sum)
+
+	// With a dashboard the process stays up, after the report and the gates, until the user quits.
+	if watch != nil {
+		watch.Hold(ctx)
+	}
+
+	switch {
+	case reportErr != nil:
+		return reportErr
 	case errors.Is(err, loadtest.ErrThresholds):
 		return &ExitError{Code: exitThresholds, Err: errors.New("bench:run: thresholds failed")}
 	case errors.Is(err, loadtest.ErrRegression):

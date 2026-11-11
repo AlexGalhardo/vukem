@@ -1,0 +1,256 @@
+/* The dashboard and the report share this file. It loads nothing: no image, no import, no font. */
+:root {
+	--background: #fafafa;
+	--foreground: #171717;
+	--card: #ffffff;
+	--muted: #f0f0f0;
+	--muted-foreground: #5c5c5c;
+	--border: #d9d9d9;
+	--primary: #2563eb;
+	--destructive: #c2261f;
+	--ring: #2563eb;
+	--radius: 8px;
+	--ok: #1a7f37;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not(.light) {
+		--background: #0f0f10;
+		--foreground: #ededed;
+		--card: #18181a;
+		--muted: #232326;
+		--muted-foreground: #a3a3a3;
+		--border: #333338;
+		--primary: #6ea0ff;
+		--destructive: #ff6b63;
+		--ring: #6ea0ff;
+		--ok: #4cc26a;
+	}
+}
+
+:root.dark {
+	--background: #0f0f10;
+	--foreground: #ededed;
+	--card: #18181a;
+	--muted: #232326;
+	--muted-foreground: #a3a3a3;
+	--border: #333338;
+	--primary: #6ea0ff;
+	--destructive: #ff6b63;
+	--ring: #6ea0ff;
+	--ok: #4cc26a;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	padding: 1rem;
+	font: 14px/1.45 system-ui, sans-serif;
+	color: var(--foreground);
+	background: var(--background);
+}
+
+header {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1.5rem;
+	align-items: baseline;
+	margin-bottom: 1rem;
+}
+
+h1 {
+	margin: 0;
+	font-size: 1.1rem;
+}
+
+h2 {
+	margin: 0 0 0.5rem;
+	font-size: 0.85rem;
+	font-weight: 600;
+	color: var(--muted-foreground);
+}
+
+.subtitle,
+.meta {
+	margin: 0;
+	color: var(--muted-foreground);
+}
+
+.badge {
+	padding: 0.1rem 0.6rem;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--muted);
+	font-size: 0.8rem;
+}
+
+.badge.running {
+	border-color: var(--primary);
+	color: var(--primary);
+}
+
+.badge.finished {
+	border-color: var(--ok);
+	color: var(--ok);
+}
+
+.cards,
+.charts {
+	display: grid;
+	gap: 0.75rem;
+	margin-bottom: 0.75rem;
+	grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+}
+
+.charts {
+	grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+}
+
+.card,
+figure,
+section {
+	margin: 0;
+	padding: 0.75rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--card);
+}
+
+section {
+	margin-bottom: 0.75rem;
+}
+
+.card .value {
+	display: block;
+	font-size: 1.6rem;
+	font-weight: 600;
+}
+
+.card .label,
+figcaption {
+	color: var(--muted-foreground);
+	font-size: 0.8rem;
+}
+
+svg {
+	display: block;
+	width: 100%;
+	height: auto;
+}
+
+.frame {
+	fill: none;
+	stroke: var(--border);
+}
+
+.axis {
+	fill: var(--muted-foreground);
+	font-size: 10px;
+}
+
+.line {
+	fill: none;
+	stroke-width: 2;
+	stroke-linejoin: round;
+}
+
+/* The three percentiles also differ by stroke, not only by colour. */
+.line.p50 {
+	stroke: var(--primary);
+}
+
+.line.p95 {
+	stroke: var(--foreground);
+	stroke-dasharray: 6 3;
+}
+
+.line.p99 {
+	stroke: var(--destructive);
+	stroke-dasharray: 2 3;
+}
+
+.line.reqs {
+	stroke: var(--primary);
+}
+
+.line.failed {
+	stroke: var(--destructive);
+}
+
+.line.active {
+	stroke: var(--primary);
+}
+
+.line.target {
+	stroke: var(--foreground);
+	stroke-dasharray: 6 3;
+}
+
+.bar {
+	fill: var(--primary);
+}
+
+table {
+	width: 100%;
+	border-collapse: collapse;
+	font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+	padding: 0.3rem 0.5rem;
+	border-bottom: 1px solid var(--border);
+	text-align: right;
+}
+
+th:first-child,
+td:first-child {
+	text-align: left;
+}
+
+ul {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+li.ok::before {
+	content: "ok ";
+	color: var(--ok);
+	font-weight: 600;
+}
+
+li.fail::before {
+	content: "FAIL ";
+	color: var(--destructive);
+	font-weight: 600;
+}
+
+a {
+	color: var(--primary);
+}
+
+a:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+
+footer {
+	display: flex;
+	gap: 1rem;
+	color: var(--muted-foreground);
+}
+
+.empty {
+	color: var(--muted-foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	* {
+		transition: none !important;
+		animation: none !important;
+	}
+}
