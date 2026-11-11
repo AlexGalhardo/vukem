@@ -30,7 +30,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 - Never edit released `CHANGELOG.md` sections by hand; never move a pushed tag; push version tags one at a time ([tag pushes](docs/tooling.md#tag-pushes)).
 - GitHub Actions is the CI gate (Linux/macOS/Windows, race, govulncheck, snippetcheck, Postgres): push, then check `gh run list` and fix failures; a `ci-failure` issue blocks the next release. Windows 11 stays first-class.
 - Everything (code, comments, docs) in English. Docs site: Any PR that adds, changes or removes a page under `site/content/docs/` must refresh `site/content/last-updated.json` (`npm run last-updated` in `site/`, from a clone with full history) in the same PR. The "Last updated" date is part of the page contract; never edit it by hand. CI checks every docs page (`Site / Last updated`, and `Docs last updated / Last updated` on every pull request and push to `main`).
-- Downstream apps (vukem-email, hexascore, vukem-trading, vukem-studio, vukem-music, vukem-tools) log framework findings in the single `vukem-feedback.md` at the workspace root, never in a copy inside an app; fix them on one PR, one commit per entry ([feedback queue](docs/maintenance.md#downstream-feedback-queue)).
+- Downstream apps (vukem-email, hexascore, vukem-trading, vukem-video, vukem-music, vukem-tools) log framework findings in the single `vukem-feedback.md` at the workspace root, never in a copy inside an app; fix them on one PR, one commit per entry ([feedback queue](docs/maintenance.md#downstream-feedback-queue)).
 
 ## Where things live
 

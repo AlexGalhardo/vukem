@@ -87,12 +87,12 @@ A personal trading terminal for systematic strategies: backtests and paper tradi
 - **Stack**: Inertia + React, PostgreSQL, an independent engine worker, an MCP endpoint, Tailwind CSS v4.
 - **Links**: [app](https://app.trading.vukem.dev) · [docs](https://trading.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-trading)
 
-### [Vukem Studio](https://github.com/AlexGalhardo/vukem-studio)
+### [Vukem Video](https://github.com/AlexGalhardo/vukem-video)
 
 Turns a video brief into a rendered MP4 for Shorts, Reels and other short social cuts: the dashboard collects the goal, audience and style, a planner writes the scene plan and a worker renders the file with FFmpeg.
 
 - **Stack**: Inertia + React, SQLite, a database queue, FFmpeg, Google sign-in.
-- **Links**: [app](https://app.studio.vukem.dev) · [docs](https://studio.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-studio)
+- **Links**: [app](https://app.studio.vukem.dev) · [docs](https://studio.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-video)
 
 ### [Vukem Rifa](https://github.com/AlexGalhardo/vukem-rifa)
 
