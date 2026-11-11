@@ -70,6 +70,7 @@ func commands() []command {
 		{"serve", "", "Run the app (HTTP, scheduler) and restart it when Go files change", serveCmd},
 		{"build", "", "Build assets (Vite) and a production binary in bin/", buildCmd},
 		{"version", "", "Print the vukem version", nil},
+		{"bench", "<url>", "Load test a URL and report throughput and latency percentiles", benchCmd},
 		{"doctor", "", "Report the optional tools the project uses (Betterleaks) and project checks", doctorCmd},
 		{
 			"upgrade",

@@ -1,0 +1,21 @@
+vukem bench  GET http://127.0.0.1:3000/
+  model      closed, 10 workers
+  duration   10.00s
+
+  http_reqs ................ 6 182    618.2/s
+  http_req_failed .......... 0.05%    3 of 6 182
+  http_req_duration ........ min=1.6ms mean=16.0ms p50=14.4ms p90=25.6ms p95=30.4ms p99=48.0ms max=112.0ms
+  http_req_waiting ......... min=1.5ms mean=15.0ms p50=13.5ms p90=24.0ms p95=28.5ms p99=45.0ms max=105.0ms
+  http_req_connecting ...... min=0s mean=0s p50=0s p90=0s p95=0s p99=400.0µs max=1.9ms
+  data_received ............ 4.1 MB   410.0 kB/s
+  data_sent ................ 0 B   0 B/s
+  dropped_iterations ....... 0
+
+  status  200=6179 500=3
+  errors  timeout=2
+
+  latency histogram
+       1.2ms -    8.0ms  ########                           812
+       8.0ms -   16.0ms  ##############################   2 904
+      16.0ms -   32.0ms  ######################           2 211
+      32.0ms -  112.4ms  ##                                 255

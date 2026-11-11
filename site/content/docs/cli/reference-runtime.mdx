@@ -579,6 +579,48 @@ wrote index.html (4 bytes)
 wrote about/index.html (5 bytes)
 ```
 
+## `vukem bench`
+
+Load test one URL and report throughput and latency percentiles. **Global**: it needs no project and starts nothing; point it at an app that is already running.
+
+```text
+vukem bench [flags] <url>
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-c` | int | `10` | Closed model: concurrent workers, each sending in a loop. |
+| `-rate` | string |  | Open model: arrival rate such as `200/s` or `3000/1m`. Disables `-c`; using both is a usage error. |
+| `-d` | duration | `10s` | How long to run. At most `1h`. |
+| `-n` | uint | `0` | Stop after this many requests. `0` means no limit. The run ends at `-d` or `-n`, whichever comes first. |
+| `-m` | string | `GET` | HTTP method. |
+| `-H` | string |  | Request header `"Name: value"`. Repeat the flag. |
+| `-body` | string |  | Request body. |
+| `-body-file` | string |  | Read the request body from a file in the project directory. Exclusive with `-body`. |
+| `-timeout` | duration | `30s` | Per-request timeout. At most `5m`. |
+| `-connections` | int | `0` | Idle connections kept per host. `0` keeps at least 100. |
+| `-max-workers` | int | `1000` | Open model: cap on requests in flight. Arrivals past it are dropped and counted, not queued. At most `10000`. |
+| `-no-keepalive` | bool | `false` | Open a new connection per request. At a high rate this can run out of ephemeral ports, which shows as `other` errors. |
+| `-http2` | bool | `false` | Negotiate HTTP/2 over TLS. |
+| `-allow-remote` | string |  | Allow a host that is not loopback. Repeat the flag. See below. |
+| `-json` | bool | `false` | Print the summary as JSON (`schema_version` 1, durations in nanoseconds) instead of text. |
+| `-o` | string |  | Also write the JSON summary to this file. |
+| `-quiet` | bool | `false` | No progress line. The line is printed once a second, to stderr, only on a terminal. |
+
+**Open and closed model.** With `-c` the workers send one request after another, so a slow server slows the generator down and hides its own slowness. With `-rate` requests arrive at a constant rate whether or not earlier ones finished, and `http_req_duration` runs from the instant a request was due, so a late generator or a saturated server shows in the latency.
+
+**Targets.** Only `http` and `https` URLs without credentials, and only loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). Any other host is refused with exit code 2 unless `-allow-remote <host>` names it exactly (case-insensitive, no port). The flag states that you own the target; it is not a check, so a name can still resolve to any address. The host is checked for every request. Redirects are never followed: a `302` is a successful response. A status of `400` or more, or a transport error, counts as failed.
+
+**Output.** The text report lists `http_reqs`, `http_req_failed`, `http_req_duration`, `http_req_waiting`, `http_req_connecting`, `data_received`, `data_sent`, `dropped_iterations`, the status codes, the error classes (`timeout`, `connection refused`, `eof`, `other`; never the raw message) and a latency histogram. Ctrl+C stops the load and prints the report so far with a `note` line and `"interrupted": true` in JSON; the exit code stays 0. The numbers depend on the machine, and the generator shares its CPU with a target on the same host.
+
+```bash
+vukem serve &
+vukem bench -c 10 -d 10s http://localhost:3000/
+vukem bench -rate 500/s -d 30s -json -o result.json http://127.0.0.1:3000/posts
+```
+
+If `localhost` fails with `connection refused` while the app listens, the app may be on IPv4 only: use `127.0.0.1`.
+
 ## `vukem boost:mcp`
 
 A Model Context Protocol server over standard input and output, for coding agents. **App.** No flags. `vukem boost:install` registers it for you; you do not run it by hand. Tools: `application_info`, `list_routes`, `list_commands`, `database_schema`, `database_query` (one read-only statement, at most 100 rows), `get_absolute_url`, `search_docs`.
