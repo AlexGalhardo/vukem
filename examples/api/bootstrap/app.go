@@ -22,6 +22,7 @@ func New(opts ...vukem.Option) (*vukem.App, error) {
 		vukem.WithJobs(jobs.All()...),
 		vukem.WithSchedule(routes.Schedule),
 		vukem.WithViews(resources.Views()),
+		vukem.WithBench(Bench()...),
 	}
 
 	for _, fn := range routes.All() {
