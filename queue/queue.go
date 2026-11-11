@@ -101,6 +101,13 @@ type FailedStore interface {
 	Forget(ctx context.Context, ids ...string) (int, error)
 }
 
+// FailedPager is implemented by FailedStore drivers that can bound the
+// listing (Database).
+type FailedPager interface {
+	// FailedPage lists at most limit failed jobs, newest first; limit < 1 means all.
+	FailedPage(ctx context.Context, limit int) ([]FailedJob, error)
+}
+
 // Inline is implemented by drivers that run jobs during Dispatch (Sync).
 type Inline interface {
 	Inline() bool
