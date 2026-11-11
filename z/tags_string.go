@@ -74,6 +74,44 @@ func stringFromRules(t reflect.Type, rs ruleSet, optional, nullable bool) (AnySc
 			s = s.Trim()
 		case "lowercase":
 			s = s.ToLower()
+		case "uppercase":
+			s = s.ToUpper()
+		case "normalize_email":
+			s = s.NormalizeEmail()
+		case "escape":
+			s = s.Escape()
+		case "ip":
+			s = s.IP()
+		case "ipv4":
+			s = s.IPv4()
+		case "ipv6":
+			s = s.IPv6()
+		case "cidr":
+			s = s.CIDR()
+		case "mac":
+			s = s.MAC()
+		case "hostname":
+			s = s.Hostname()
+		case "e164":
+			s = s.E164()
+		case "slug":
+			s = s.Slug()
+		case "hex":
+			s = s.Hex()
+		case "base64":
+			s = s.Base64()
+		case "base64url":
+			s = s.Base64URL()
+		case "jwt":
+			s = s.JWT()
+		case "iso_date":
+			s = s.ISODate()
+		case "iso_time":
+			s = s.ISOTime()
+		case "iso_datetime":
+			s = s.ISODateTime()
+		case "iso_duration":
+			s = s.ISODuration()
 		default:
 			return nil, unknownRuleError(r, scopeString)
 		}

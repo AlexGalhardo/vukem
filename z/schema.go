@@ -39,6 +39,8 @@ type pctx struct {
 	issues Issues
 	coerce bool
 
+	bail bool // stop each string or number field at its first issue
+
 	depth  int  // Lazy schemas being followed, to bound recursion
 	unions int  // Union attempts being made, one inside the other
 	work   *int // attempts made inside another attempt, shared by a parse
@@ -61,7 +63,7 @@ func (c *pctx) fork() *pctx {
 		c.work = new(int)
 	}
 
-	return &pctx{coerce: c.coerce, depth: c.depth, unions: c.unions + 1, work: c.work}
+	return &pctx{coerce: c.coerce, bail: c.bail, depth: c.depth, unions: c.unions + 1, work: c.work}
 }
 
 // spendNested counts an attempt made inside another one and reports whether

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -31,6 +32,21 @@ func TestIssues_Key(t *testing.T) {
 		}](Shape{"a": String()}), map[string]any{}, []string{CodeRequired}},
 		{"detailed key", String().Min(3), "ab", []string{"too_small.string"}},
 		{"format", String().Email(), "nope", []string{"string.email"}},
+		{"format ip", String().IP(), "x", []string{"string.ip"}},
+		{"format jwt", String().JWT(), "x", []string{"string.jwt"}},
+		{"format iso_duration", String().ISODuration(), "P", []string{"string.iso_duration"}},
+		{
+			"date inclusive", Time().AfterOrEqual(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)), "2020-01-01",
+			[]string{"too_small.date_inclusive"},
+		},
+		{
+			"cross-field confirmed", Struct[signup](Shape{
+				"email": String(), "password": String(), "kind": String(),
+				"tax_id": String().Optional(), "phone": String().Optional(), "fax": String().Optional(),
+			}).Confirmed("password"),
+			map[string]any{"email": "a", "password": "x", "kind": "k"},
+			[]string{"confirmed"},
+		},
 		{"literal", Literal("v1"), "v2", []string{CodeInvalidLiteral}},
 		{"union", Union[any](Int(), String().Min(5)), "ab", []string{CodeInvalidUnion}},
 		{"discriminator", paymentSchema(), map[string]any{"method": "x"}, []string{CodeInvalidDiscriminator}},

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -148,7 +149,7 @@ func docScopes(t *testing.T, doc string) map[tagScope]string {
 
 		text := strings.TrimSpace(line)
 
-		for _, scope := range []tagScope{scopeAny, scopeString, scopeNumber, scopeList, scopeMap} {
+		for _, scope := range []tagScope{scopeAny, scopeString, scopeNumber, scopeList, scopeMap, scopeCross} {
 			if label := string(scope) + ":"; strings.HasPrefix(text, label) {
 				current = scope
 				text = strings.TrimPrefix(text, label)
@@ -162,8 +163,8 @@ func docScopes(t *testing.T, doc string) map[tagScope]string {
 		}
 	}
 
-	if len(sections) != 5 {
-		t.Fatalf("FromTags doc comment lists %d scopes, want 5 (any, string, number, list, map)", len(sections))
+	if len(sections) != 6 {
+		t.Fatalf("FromTags doc comment lists %d scopes, want 6 (any, string, number, list, map, cross)", len(sections))
 	}
 
 	return sections
@@ -211,7 +212,7 @@ func tableRules(t *testing.T, page string) []string {
 
 	var names []string
 
-	bare := regexp.MustCompile(`^[a-z]+$`)
+	bare := regexp.MustCompile(`^[a-z0-9_]+$`)
 
 	for _, line := range lines[start+1:] {
 		if !strings.HasPrefix(line, "|") {
@@ -289,5 +290,111 @@ func TestTagRules_ApplyToTheirScopes(t *testing.T) {
 				t.Errorf("rule %q on a %s (%s): accepted, want an error", tag, scope, rt)
 			}
 		}
+	}
+}
+
+type tagSignup struct {
+	Password             string     `json:"password"               validate:"required,min=12,confirmed"`
+	Kind                 string     `json:"kind"                   validate:"required,oneof=person company"`
+	TaxID                *string    `json:"tax_id"                 validate:"required_if=kind company"`
+	StartsAt             time.Time  `json:"starts_at"              validate:"required"`
+	EndsAt               time.Time  `json:"ends_at"                validate:"required,gtfield=starts_at"`
+	Homepage             string     `json:"homepage"               validate:"omitempty,url,required_with=nickname"`
+	Nickname             string     `json:"nickname"               validate:"omitempty,slug,normalize_email"`
+	Ping                 *time.Time `json:"ping"                   validate:"ltefield=ends_at"`
+	Backup               string     `json:"backup"                 validate:"omitempty,required_without_all=primary secondary"`
+	Primary              string     `json:"primary"                validate:"omitempty"`
+	Secondary            string     `json:"secondary"              validate:"omitempty,ip"`
+	DifferentFromPrimary string     `json:"different_from_primary" validate:"omitempty,different=primary"`
+}
+
+func TestTagCross(t *testing.T) {
+	t.Parallel()
+
+	s := For[tagSignup]()
+
+	good := map[string]any{
+		"password": "a very long one", "password_confirmation": "a very long one", "kind": "person",
+		"starts_at": "2026-01-01", "ends_at": "2026-01-02", "primary": "x",
+	}
+
+	if _, err := s.Parse(good); err != nil {
+		t.Fatalf("Parse(good) = %v", err)
+	}
+
+	bad := map[string]any{
+		"password": "a very long one", "password_confirmation": "nope", "kind": "company",
+		"starts_at": "2026-01-02", "ends_at": "2026-01-02", "nickname": "ok-slug",
+		"ping": "2026-02-01",
+	}
+
+	_, err := s.Parse(bad)
+
+	want := []issueRow{
+		{"backup", CodeRequired, "required_without", map[string]any{"others": "primary, secondary"}},
+		{"ends_at", CodeTooSmall, "date.after_field", map[string]any{"other": "starts at"}},
+		{"homepage", CodeRequired, "required_with", map[string]any{"others": "nickname"}},
+		{"password", CodeCustom, "confirmed", nil},
+		{"ping", CodeTooBig, "date.before_or_equal_field", map[string]any{"other": "ends at"}},
+		{"tax_id", CodeRequired, "required_if", map[string]any{"other": "kind", "value": "company"}},
+	}
+	if diff := cmp.Diff(want, issueRows(t, err)); diff != "" {
+		t.Errorf("issues (-want +got):\n%s", diff)
+	}
+}
+
+func TestTagCrossBootErrors(t *testing.T) {
+	t.Parallel()
+
+	type unknownKey struct {
+		A string `json:"a" validate:"same=nope"`
+	}
+
+	type noArg struct {
+		A string `json:"a" validate:"same"`
+		B string `json:"b"`
+	}
+
+	type badRequiredIf struct {
+		A *string `json:"a" validate:"required_if=b"`
+		B string  `json:"b"`
+	}
+
+	type requiredAlways struct {
+		A string `json:"a" validate:"required,required_with=b"`
+		B string `json:"b"`
+	}
+
+	type notTime struct {
+		A string `json:"a" validate:"gtfield=b"`
+		B string `json:"b"`
+	}
+
+	mustPanic(t, "unknown key", func() { For[unknownKey]() })
+	mustPanic(t, "no argument", func() { For[noArg]() })
+	mustPanic(t, "required_if without a value", func() { For[badRequiredIf]() })
+	mustPanic(t, "required_with on a required field", func() { For[requiredAlways]() })
+	mustPanic(t, "gtfield on strings", func() { For[notTime]() })
+}
+
+func TestTagFormatsAndNormalization(t *testing.T) {
+	t.Parallel()
+
+	type form struct {
+		IP    string `json:"ip"    validate:"ip"`
+		Mail  string `json:"mail"  validate:"normalize_email,email"`
+		Code  string `json:"code"  validate:"uppercase,len=3"`
+		Phone string `json:"phone" validate:"e164"`
+	}
+
+	got, err := For[form]().Parse(map[string]any{
+		"ip": "10.0.0.1", "mail": " Ada@Example.COM ", "code": "abc", "phone": "+5511987654321",
+	})
+	if err != nil || got.Mail != "ada@example.com" || got.Code != "ABC" {
+		t.Errorf("Parse = %+v, %v", got, err)
+	}
+
+	if _, err := For[form]().Parse(map[string]any{"ip": "nope", "phone": "123"}); err == nil {
+		t.Error("an invalid ip and phone passed")
 	}
 }

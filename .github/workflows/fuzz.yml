@@ -56,6 +56,7 @@ jobs:
           - { module: ., pkg: ./web, target: FuzzSafeRedirect }
           - { module: ., pkg: ./webhook, target: FuzzVerifyHMAC }
           - { module: ., pkg: ./z, target: FuzzParse }
+          - { module: ., pkg: ./z, target: FuzzStringFormats }
           - { module: contrib/graphql, pkg: ., target: FuzzParseQuery }
           - { module: contrib/graphql, pkg: ., target: FuzzParseSchema }
           - { module: contrib/stripe, pkg: ., target: FuzzConstructEvent }

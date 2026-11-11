@@ -16,12 +16,18 @@ func (s structCore) shapeOf() Shape {
 	return shape
 }
 
-// derive builds the schema of U from shape. Strict is inherited; the
-// struct-level Refine, Transform, Default, Message and Passthrough are not:
-// they are written for T and cannot be applied to U.
+// derive builds the schema of U from shape. What it carries over from s:
+// Strict, EmptyAsAbsent and Bail, and the cross-field rules (Confirmed, SameAs,
+// RequiredIf, AfterField and the like) whose keys all remain in shape; a rule
+// that cites a key that is gone is dropped, and RequiredWhen, which holds a
+// func of T, always is. The struct-level Refine, Transform, Default, Message
+// and Passthrough are written for T and are never carried over.
 func derive[U, T any](s StructSchema[T], shape Shape) StructSchema[U] {
 	core := newStructCore(reflect.TypeFor[U](), shape)
 	core.strict = s.core.strict
+	core.emptyAsAbsent = s.core.emptyAsAbsent
+	core.bail = s.core.bail
+	core = core.withDerived(s.core.rules)
 
 	return StructSchema[U]{core: core}
 }
@@ -29,8 +35,9 @@ func derive[U, T any](s StructSchema[T], shape Shape) StructSchema[U] {
 // Pick returns a schema for U built from the field schemas of s named by
 // keys, so the rules of a field are written once. U is the Go struct the
 // result is read into; it needs a field for each key, like [Struct]. Pick
-// panics when s has no such key. Struct-level Refine, Transform and Default
-// of s are not carried over.
+// panics when s has no such key. The cross-field rules of s whose keys are all
+// picked are carried over, and Strict, EmptyAsAbsent and Bail; the others, and
+// the struct-level Refine, Transform and Default, are not.
 func Pick[U, T any](s StructSchema[T], keys ...string) StructSchema[U] {
 	all := s.core.shapeOf()
 	shape := make(Shape, len(keys))
@@ -48,8 +55,10 @@ func Pick[U, T any](s StructSchema[T], keys ...string) StructSchema[U] {
 }
 
 // Omit returns a schema for U built from every field schema of s except
-// keys. It panics when s has no such key. Struct-level Refine, Transform and
-// Default of s are not carried over.
+// keys. It panics when s has no such key. A cross-field rule of s that cites
+// an omitted key is dropped, the others are carried over with Strict,
+// EmptyAsAbsent and Bail; the struct-level Refine, Transform and Default are
+// not.
 func Omit[U, T any](s StructSchema[T], keys ...string) StructSchema[U] {
 	shape := s.core.shapeOf()
 
@@ -65,8 +74,9 @@ func Omit[U, T any](s StructSchema[T], keys ...string) StructSchema[U] {
 }
 
 // Extend returns a schema for U with the field schemas of s plus extra; a
-// key in extra replaces the one in s. Struct-level Refine, Transform and
-// Default of s are not carried over.
+// key in extra replaces the one in s. The cross-field rules of s are carried
+// over (rebuilt for U) while their keys remain, with Strict, EmptyAsAbsent
+// and Bail; the struct-level Refine, Transform and Default are not.
 func Extend[U, T any](s StructSchema[T], extra Shape) StructSchema[U] {
 	shape := s.core.shapeOf()
 	maps.Copy(shape, extra)
@@ -78,7 +88,9 @@ func Extend[U, T any](s StructSchema[T], extra Shape) StructSchema[U] {
 // the schema of an update built from the one of a create, with the same
 // rules for the fields that are sent. Give U pointer fields (*string) to
 // tell an absent field from a zero one; a plain field keeps its zero value.
-// Struct-level Refine, Transform and Default of s are not carried over.
+// The cross-field rules of s are carried over, as the fields they cite stay:
+// a Confirmed password still has to match its confirmation when it is sent.
+// The struct-level Refine, Transform and Default of s are not.
 func Partial[U, T any](s StructSchema[T]) StructSchema[U] {
 	shape := s.core.shapeOf()
 	for k, schema := range shape {

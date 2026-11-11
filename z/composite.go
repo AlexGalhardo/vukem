@@ -395,7 +395,12 @@ type structCore struct {
 	strict bool
 	// passthrough keeps the keys outside the shape for StructSchema.Passthrough.
 	passthrough bool
-	o           opts[any]
+	// emptyAsAbsent reads an empty string as a missing key (EmptyAsAbsent);
+	// bail stops each field at its first issue (Bail).
+	emptyAsAbsent, bail bool
+	rules               []structRule // cross-field rules, run after the fields
+	known               []string     // keys read by a rule outside the shape (<key>_confirmation)
+	o                   opts[any]
 }
 
 func newStructCore(rt reflect.Type, shape Shape) structCore {
@@ -516,9 +521,13 @@ func fieldKeys(f reflect.StructField) []string {
 
 // unknownKeys returns the entries of m that no field of the shape reads.
 func (s structCore) unknownKeys(m map[string]any) map[string]any {
-	known := make(map[string]bool, len(s.fields))
+	known := make(map[string]bool, len(s.fields)+len(s.known))
 	for _, f := range s.fields {
 		known[f.key] = true
+	}
+
+	for _, k := range s.known {
+		known[k] = true
 	}
 
 	extra := map[string]any{}
@@ -533,6 +542,12 @@ func (s structCore) unknownKeys(m map[string]any) map[string]any {
 }
 
 func (s structCore) parse(c *pctx, path string, in any) (reflect.Value, bool) {
+	return s.parseFrom(c, path, in, false)
+}
+
+// parseFrom is parse; fromTyped says the input was built from a value of the
+// struct.
+func (s structCore) parseFrom(c *pctx, path string, in any, fromTyped bool) (reflect.Value, bool) {
 	m, isMap := in.(map[string]any)
 	if !isMap {
 		s.o.issue(
@@ -548,10 +563,32 @@ func (s structCore) parse(c *pctx, path string, in any) (reflect.Value, bool) {
 	before := len(c.issues)
 	out := reflect.New(s.rt).Elem()
 
+	if s.bail {
+		defer func(prev bool) { c.bail = prev }(c.bail)
+
+		c.bail = true
+	}
+
+	var bad map[string]bool
+
 	for _, f := range s.fields {
 		raw, present := m[f.key]
 
+		if str, isStr := raw.(string); s.emptyAsAbsent && isStr && str == "" {
+			present = false
+		}
+
+		issues := len(c.issues)
+
 		v, set, ok := f.schema.parseAny(c, joinPath(path, f.key), raw, present)
+		if !ok || len(c.issues) > issues {
+			if bad == nil {
+				bad = map[string]bool{}
+			}
+
+			bad[f.key] = true
+		}
+
 		if !ok || !set {
 			continue
 		}
@@ -559,10 +596,26 @@ func (s structCore) parse(c *pctx, path string, in any) (reflect.Value, bool) {
 		f.store(out, v)
 	}
 
+	// Typed data is a value of the struct (Check, or Parse given a T), not
+	// a decoded request: what was "sent" cannot be known.
+	typed := fromTyped || !c.coerce
+
+	for _, rule := range s.rules {
+		if typed && rule.needsInput {
+			continue
+		}
+
+		rule.run(c, path, m, out, bad, typed)
+	}
+
 	if s.strict {
-		known := make(map[string]bool, len(s.fields))
+		known := make(map[string]bool, len(s.fields)+len(s.known))
 		for _, f := range s.fields {
 			known[f.key] = true
+		}
+
+		for _, k := range s.known {
+			known[k] = true
 		}
 
 		for _, k := range sortedKeys(m) {
@@ -599,11 +652,12 @@ func (s StructSchema[T]) asOptional() AnySchema { return s.Optional() }
 
 func (s StructSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (T, bool) {
+		fromTyped := false
 		if t, isT := in.(T); isT {
-			in = toMap(t)
+			in, fromTyped = toMap(t), true
 		}
 
-		rv, ok := s.core.parse(c, path, in)
+		rv, ok := s.core.parseFrom(c, path, in, fromTyped)
 		if !ok {
 			var zero T
 			return zero, false

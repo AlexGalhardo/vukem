@@ -20,8 +20,11 @@ import (
 //	any:    required, dive (the rules after it apply to slice elements
 //	        or map values)
 //	string: min=N, max=N, len=N, email, url, uuid, ulid, alpha, alphanum,
-//	        numeric, oneof=a b c, regex=PATTERN (last rule), startswith=,
-//	        endswith=, contains=, trim, lowercase, omitempty (skips the
+//	        numeric, ip, ipv4, ipv6, cidr, mac, hostname, e164, slug, hex,
+//	        base64, base64url, jwt (shape only), iso_date, iso_time,
+//	        iso_datetime, iso_duration, oneof=a b c, regex=PATTERN (last
+//	        rule), startswith=, endswith=, contains=, trim, lowercase,
+//	        uppercase, normalize_email, escape, omitempty (skips the
 //	        rules above when the value is empty, so "omitempty,oneof=a b"
 //	        accepts "a", "b" and ""), default=V (used when the key is
 //	        absent, or empty with omitempty; it also reaches the OpenAPI
@@ -29,6 +32,12 @@ import (
 //	number: min=N, max=N, positive, default=V
 //	list:   min=N, max=N, len=N, unique
 //	map:    min=N, max=N (entry count); the key must be string
+//	cross:  confirmed, same=KEY, different=KEY, required_if=KEY V1 V2,
+//	        required_with=K1 K2 (any present), required_with_all=K1 K2,
+//	        required_without=K1 K2 (any missing), required_without_all=K1 K2,
+//	        gtfield=KEY, gtefield=KEY, ltfield=KEY, ltefield=KEY (times);
+//	        on any field, citing other fields by input key; the field the
+//	        rule is on must be optional for the required_* rules
 //
 // Fields without "required" are optional; "required" on a string means
 // non-empty, on a list present and not null (use min=1 for a non-empty
@@ -70,6 +79,9 @@ const (
 	scopeNumber tagScope = "number"
 	scopeList   tagScope = "list"
 	scopeMap    tagScope = "map"
+	// scopeCross rules belong to the struct around the field: they cite other
+	// fields by input key and are read by tagCore, not by the field's schema.
+	scopeCross tagScope = "cross"
 )
 
 // tagRule is one `validate` rule FromTags understands.
@@ -109,6 +121,37 @@ func tagRules() []tagRule {
 		{name: "lowercase", scopes: []tagScope{scopeString}},
 		{name: "positive", scopes: []tagScope{scopeNumber}},
 		{name: "unique", scopes: []tagScope{scopeList}},
+		{name: "ip", scopes: []tagScope{scopeString}},
+		{name: "ipv4", scopes: []tagScope{scopeString}},
+		{name: "ipv6", scopes: []tagScope{scopeString}},
+		{name: "cidr", scopes: []tagScope{scopeString}},
+		{name: "mac", scopes: []tagScope{scopeString}},
+		{name: "hostname", scopes: []tagScope{scopeString}},
+		{name: "e164", scopes: []tagScope{scopeString}},
+		{name: "slug", scopes: []tagScope{scopeString}},
+		{name: "hex", scopes: []tagScope{scopeString}},
+		{name: "base64", scopes: []tagScope{scopeString}},
+		{name: "base64url", scopes: []tagScope{scopeString}},
+		{name: "jwt", scopes: []tagScope{scopeString}},
+		{name: "iso_date", scopes: []tagScope{scopeString}},
+		{name: "iso_time", scopes: []tagScope{scopeString}},
+		{name: "iso_datetime", scopes: []tagScope{scopeString}},
+		{name: "iso_duration", scopes: []tagScope{scopeString}},
+		{name: "normalize_email", scopes: []tagScope{scopeString}},
+		{name: "escape", scopes: []tagScope{scopeString}},
+		{name: "uppercase", scopes: []tagScope{scopeString}},
+		{name: "confirmed", scopes: []tagScope{scopeCross}},
+		{name: "same", arg: "other", scopes: []tagScope{scopeCross}},
+		{name: "different", arg: "other", scopes: []tagScope{scopeCross}},
+		{name: "required_if", arg: "kind company", scopes: []tagScope{scopeCross}},
+		{name: "required_with", arg: "a b", scopes: []tagScope{scopeCross}},
+		{name: "required_with_all", arg: "a b", scopes: []tagScope{scopeCross}},
+		{name: "required_without", arg: "a b", scopes: []tagScope{scopeCross}},
+		{name: "required_without_all", arg: "a b", scopes: []tagScope{scopeCross}},
+		{name: "gtfield", arg: "other", scopes: []tagScope{scopeCross}},
+		{name: "gtefield", arg: "other", scopes: []tagScope{scopeCross}},
+		{name: "ltfield", arg: "other", scopes: []tagScope{scopeCross}},
+		{name: "ltefield", arg: "other", scopes: []tagScope{scopeCross}},
 	}
 }
 
@@ -155,6 +198,8 @@ func tagCore(rt reflect.Type, depth int) structCore {
 
 	shape := Shape{}
 
+	var cross []crossTag
+
 	for _, f := range reflect.VisibleFields(rt) {
 		if !f.IsExported() || (f.Anonymous && f.Type.Kind() == reflect.Struct) {
 			continue
@@ -165,7 +210,10 @@ func tagCore(rt reflect.Type, depth int) structCore {
 			continue // json:"-"
 		}
 
-		rules := splitRules(f.Tag.Get("validate"))
+		rules, crossRules := splitCross(splitRules(f.Tag.Get("validate")))
+		for _, r := range crossRules {
+			cross = append(cross, crossTag{owner: keys[0], rule: r})
+		}
 
 		s, err := schemaForType(f.Type, rules, depth)
 		if err != nil {
@@ -175,7 +223,7 @@ func tagCore(rt reflect.Type, depth int) structCore {
 		shape[keys[0]] = s
 	}
 
-	return newStructCore(rt, shape)
+	return newStructCore(rt, shape).withCrossRules(rt.String(), cross)
 }
 
 // splitRules splits "required,min=3,regex=^a,b$" keeping regex last and
