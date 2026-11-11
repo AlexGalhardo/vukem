@@ -41,9 +41,11 @@ type pctx struct {
 
 	bail bool // stop each string or number field at its first issue
 
-	depth  int  // Lazy schemas being followed, to bound recursion
-	unions int  // Union attempts being made, one inside the other
-	work   *int // attempts made inside another attempt, shared by a parse
+	// The counters are small on purpose: with them the context is 32 bytes,
+	// the size it had before they existed, and one is allocated per Parse.
+	depth  uint16 // Lazy schemas being followed, to bound recursion
+	unions uint16 // Union attempts being made, one inside the other
+	spent  uint16 // attempts made inside another attempt so far in this parse
 }
 
 const (
@@ -57,14 +59,14 @@ const (
 )
 
 // fork returns a scratch context for one attempt of a Union: its issues are
-// its own, while the depth and the work budget carry on.
+// its own, while the depth and the work spent so far carry on. After the
+// attempt, join copies the work it spent back.
 func (c *pctx) fork() *pctx {
-	if c.work == nil {
-		c.work = new(int)
-	}
-
-	return &pctx{coerce: c.coerce, bail: c.bail, depth: c.depth, unions: c.unions + 1, work: c.work}
+	return &pctx{coerce: c.coerce, bail: c.bail, depth: c.depth, unions: c.unions + 1, spent: c.spent}
 }
+
+// join takes back the work an attempt spent.
+func (c *pctx) join(attempt *pctx) { c.spent = attempt.spent }
 
 // spendNested counts an attempt made inside another one and reports whether
 // the budget lasts.
@@ -73,13 +75,13 @@ func (c *pctx) spendNested() bool {
 		return true
 	}
 
-	if c.work == nil {
-		c.work = new(int)
+	// It stops one past the limit: a uint16 that counted on would wrap and
+	// give the budget back.
+	if c.spent <= maxNestedUnionWork {
+		c.spent++
 	}
 
-	*c.work++
-
-	return *c.work <= maxNestedUnionWork
+	return c.spent <= maxNestedUnionWork
 }
 
 func (c *pctx) add(path, code string, msg string, params map[string]any) {

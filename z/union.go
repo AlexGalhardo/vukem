@@ -80,6 +80,9 @@ func (s UnionSchema[T]) parseAny(c *pctx, path string, in any, present bool) (an
 			try := c.fork()
 
 			v, set, ok := variant.parseAny(try, path, in, true)
+
+			c.join(try)
+
 			if !ok || len(try.issues) > 0 {
 				continue
 			}
