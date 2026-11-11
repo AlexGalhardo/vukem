@@ -1,6 +1,7 @@
 package inertia
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/AlexGalhardo/vukem/i18n"
@@ -31,7 +32,9 @@ func I18n(prefixes ...string) func(http.Handler) http.Handler {
 
 				Share(ctx, "locale", locale)
 				Share(ctx, "locales", b.Locales())
-				Share(ctx, "messages", Once(b.Messages(locale, prefixes...)).As("i18n:"+locale))
+				Share(ctx, "messages", Once(func(context.Context) (any, error) {
+					return b.Messages(locale, prefixes...), nil
+				}).As("i18n:"+locale))
 			}
 
 			next.ServeHTTP(w, r)

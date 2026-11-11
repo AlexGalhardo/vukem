@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"html/template"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -481,5 +483,73 @@ func TestClientShellSkippedWhenServerRendered(t *testing.T) {
 
 	if body := hs.do(t, http.MethodGet, "/events/1", nil).Body.String(); strings.Contains(body, "SHELL") {
 		t.Errorf("server-rendered page carries the client shell: %s", body)
+	}
+}
+
+// Every SSR render goes to one host: idle connections must cover the
+// concurrency, or each burst reopens them.
+func TestSSRClientReusesConnections(t *testing.T) {
+	t.Parallel()
+
+	const burst = 16
+
+	var (
+		conns   atomic.Int32
+		arrived atomic.Int32
+		release atomic.Pointer[chan struct{}]
+	)
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Hold each request until the whole burst is in flight, so the burst needs burst connections.
+		ch := *release.Load()
+		if arrived.Add(1)%burst == 0 {
+			close(ch)
+		}
+
+		<-ch
+
+		rendered(w, r)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	// One harness per slot: its fake session is not safe for concurrent requests.
+	var (
+		hss      [burst]*harness
+		failures [burst]*[]inertia.SSRError
+	)
+
+	for i := range burst {
+		hss[i], failures[i] = ssrHarness(t, &inertia.SSRConfig{URL: srv.URL})
+	}
+
+	for range 3 {
+		ch := make(chan struct{})
+		release.Store(&ch)
+
+		var wg sync.WaitGroup
+		for i := range burst {
+			wg.Go(func() {
+				hss[i].do(t, http.MethodGet, "/events/"+strconv.Itoa(i), nil)
+			})
+		}
+
+		wg.Wait()
+	}
+
+	if n := conns.Load(); n > burst {
+		t.Errorf("new connections = %d, want <= %d", n, burst)
+	}
+
+	for _, f := range failures {
+		if len(*f) != 0 {
+			t.Errorf("SSR failures = %v", *f)
+		}
 	}
 }
