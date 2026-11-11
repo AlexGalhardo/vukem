@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { navigation } from "../content/navigation.ts";
+import { mdxToMarkdown } from "../lib/text.ts";
 
 // The twins are build output, so this runs after `npm run build` and skips
 // on a fresh checkout (the CI order is test, then build).
@@ -26,4 +27,12 @@ test("a twin is plain Markdown", { skip: !built && "run npm run build first" }, 
   assert.ok(text.includes("Source: https://vukem.dev/docs/introduction/"));
   assert.ok(!/^import /m.test(text), "import lines must be dropped");
   assert.ok(!/<Steps>|<Card /.test(text), "JSX tags must be dropped");
+});
+
+test("an MDX comment is not published in the twin", () => {
+  const md = mdxToMarkdown(["Visible.", "{/* internal note: do not publish */}", "Also {/* inline note */}visible.", "```", "{/* kept in code */}", "```"].join("\n"));
+
+  assert.ok(!md.includes("internal note") && !md.includes("inline note"), md);
+  assert.ok(md.includes("Visible.") && md.includes("Also visible."), md);
+  assert.ok(md.includes("{/* kept in code */}"), "a fenced code block is left as written");
 });
