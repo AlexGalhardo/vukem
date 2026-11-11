@@ -96,12 +96,21 @@ type Driver struct {
 	Schemes []string
 	// DSN, when set, turns the URL into the database/sql driver's data
 	// source name (MySQL's driver does not take URLs). Its errors must not
-	// echo the URL, which may hold a password.
+	// echo the URL, which may hold a password. DSN is ignored when Open is
+	// set: Open receives the raw URL.
 	DSN func(rawURL string) (string, error)
 	// IsUniqueViolation reports whether err is the driver's unique or
 	// primary key violation. Optional: without it the error is matched by
 	// its SQLSTATE method, then by the text the built-in drivers produce.
 	IsUniqueViolation func(err error) bool
+	// Open, when set, replaces sql.Open(SQLName, dsn): the driver returns a
+	// ready *sql.DB and owns its pool settings (Config limits are not
+	// applied). rawURL is the DATABASE_URL. Its errors must not echo it.
+	Open func(ctx context.Context, rawURL string) (*sql.DB, error)
+	// Close, when set, runs before the pool closes (a final sync, say). It
+	// also runs when the connection check right after Open fails, so the
+	// driver can release what Open created.
+	Close func(ctx context.Context) error
 }
 
 // Config tunes connection pools.
@@ -124,6 +133,8 @@ type DB struct {
 	enc     Encrypter
 	obs     QueryObserver
 	uniq    func(error) bool
+	// closeFn is Driver.Close, wrapped to run once.
+	closeFn func() error
 }
 
 // Encrypter seals and opens column values for orm.Encrypted;
@@ -316,30 +327,66 @@ func openGeneric(ctx context.Context, d Driver, rawURL string, cfg Config) (*DB,
 
 	dsn := rawURL
 
-	if d.DSN != nil {
+	if d.DSN != nil && d.Open == nil {
 		var err error
 		if dsn, err = d.DSN(rawURL); err != nil {
 			return nil, fmt.Errorf("database: %s url: %w", d.Dialect.Name(), err)
 		}
 	}
 
-	conn, err := sql.Open(d.SQLName, dsn)
+	var (
+		conn *sql.DB
+		err  error
+	)
+
+	if d.Open != nil {
+		conn, err = d.Open(ctx, rawURL)
+	} else {
+		conn, err = sql.Open(d.SQLName, dsn)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("database: open %s: %w", d.Dialect.Name(), err)
 	}
 
-	conn.SetMaxOpenConns(cfg.MaxOpen)
-	conn.SetMaxIdleConns(cfg.MaxIdle)
-	conn.SetConnMaxLifetime(cfg.MaxLifetime)
-	conn.SetConnMaxIdleTime(cfg.MaxIdleTime)
+	if d.Open == nil {
+		conn.SetMaxOpenConns(cfg.MaxOpen)
+		conn.SetMaxIdleConns(cfg.MaxIdle)
+		conn.SetConnMaxLifetime(cfg.MaxLifetime)
+		conn.SetConnMaxIdleTime(cfg.MaxIdleTime)
+	}
 
 	if err := conn.PingContext(ctx); err != nil {
+		// A driver that opened its own pool may hold more than the pool
+		// (a sync handle): let it release that too.
+		if d.Close != nil {
+			closeCtx, cancel := context.WithTimeout(context.Background(), driverCloseTimeout)
+			_ = d.Close(closeCtx)
+
+			cancel()
+		}
+
 		_ = conn.Close()
+
 		return nil, fmt.Errorf("database: connect %s: %w", d.Dialect.Name(), err)
 	}
 
-	return &DB{dialect: d.Dialect, writer: conn, reader: conn, log: cfg.Log, uniq: d.IsUniqueViolation}, nil
+	db := &DB{dialect: d.Dialect, writer: conn, reader: conn, log: cfg.Log, uniq: d.IsUniqueViolation}
+
+	if d.Close != nil {
+		db.closeFn = sync.OnceValue(func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), driverCloseTimeout)
+			defer cancel()
+
+			return d.Close(ctx)
+		})
+	}
+
+	return db, nil
 }
+
+// driverCloseTimeout bounds Driver.Close, which may reach the network.
+const driverCloseTimeout = 10 * time.Second
 
 // FromSQL wraps an existing *sql.DB (tests, sqlc interop).
 func FromSQL(conn *sql.DB, dialect Dialect) *DB {
@@ -457,6 +504,11 @@ func (db *DB) Ping(ctx context.Context) error {
 // files (required on Windows).
 func (db *DB) Close() error {
 	var errs []error
+
+	if db.closeFn != nil {
+		errs = append(errs, db.closeFn())
+	}
+
 	if db.reader != db.writer {
 		errs = append(errs, db.reader.Close())
 	}

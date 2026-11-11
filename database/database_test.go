@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -543,5 +544,130 @@ func TestOpenRejectsUnknownFamily(t *testing.T) {
 	_, err := openGeneric(t.Context(), Driver{SQLName: "sqlite", Dialect: oddDialect{}}, "x", Config{})
 	if err == nil || !strings.Contains(err.Error(), `Family "oracle"`) {
 		t.Fatalf("openGeneric(odd family) = %v, want a Family error", err)
+	}
+}
+
+// ownPoolDriver is a Driver that opens its own pool: MaxOpen 3, and a Close
+// hook that counts calls and records whether the pool was still usable.
+func ownPoolDriver(closes *int, poolOpenAtClose *bool, openErr error) Driver {
+	var pool *sql.DB
+
+	return Driver{
+		SQLName: "unused", Dialect: SQLite, Schemes: []string{"own"},
+		Open: func(_ context.Context, _ string) (*sql.DB, error) {
+			if openErr != nil {
+				return nil, openErr
+			}
+
+			var err error
+			if pool, err = sql.Open("sqlite", ":memory:"); err != nil {
+				return nil, err
+			}
+
+			pool.SetMaxOpenConns(3)
+
+			return pool, nil
+		},
+		Close: func(ctx context.Context) error {
+			*closes++
+			*poolOpenAtClose = pool.PingContext(ctx) == nil
+
+			return nil
+		},
+	}
+}
+
+func TestDriverOpenUsesTheDriversPoolAndLimits(t *testing.T) {
+	t.Parallel()
+
+	var (
+		closes int
+		usable bool
+	)
+
+	db, err := Open(t.Context(), "own://anything", WithDriver(ownPoolDriver(&closes, &usable, nil)),
+		WithConfig(Config{MaxOpen: 10, MaxIdle: 5}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer db.Close()
+
+	if got := db.SQL().Stats().MaxOpenConnections; got != 3 {
+		t.Errorf("MaxOpenConnections = %d, want the driver's 3, not the Config's 10", got)
+	}
+
+	if _, err := db.ExecContext(t.Context(), "CREATE TABLE t (id INTEGER)"); err != nil {
+		t.Errorf("the pool the driver opened does not work: %v", err)
+	}
+}
+
+func TestDriverCloseRunsOnceBeforeThePoolCloses(t *testing.T) {
+	t.Parallel()
+
+	var (
+		closes int
+		usable bool
+	)
+
+	db, err := Open(t.Context(), "own://anything", WithDriver(ownPoolDriver(&closes, &usable, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = db.Close()
+
+	if closes != 1 {
+		t.Errorf("Driver.Close ran %d times, want once", closes)
+	}
+
+	if !usable {
+		t.Error("the pool was already closed when Driver.Close ran")
+	}
+}
+
+func TestDriverOpenErrorDoesNotEchoTheURL(t *testing.T) {
+	t.Parallel()
+
+	var (
+		closes int
+		usable bool
+	)
+
+	_, err := Open(t.Context(), "own://user:s3cret@host/db",
+		WithDriver(ownPoolDriver(&closes, &usable, errors.New("boom"))))
+	if err == nil || !strings.Contains(err.Error(), "boom") || strings.Contains(err.Error(), "s3cret") {
+		t.Fatalf("Open = %v, want the driver's error without the URL", err)
+	}
+}
+
+func TestDriverCloseRunsWhenThePingAfterOpenFails(t *testing.T) {
+	t.Parallel()
+
+	var closes int
+
+	d := Driver{
+		SQLName: "unused", Dialect: SQLite, Schemes: []string{"own"},
+		Open: func(context.Context, string) (*sql.DB, error) {
+			// A read-only file in a directory that does not exist: the open
+			// succeeds lazily and the ping fails.
+			return sql.Open("sqlite", "file:"+filepath.Join(testutil.TempDir(t), "missing", "x.db")+"?mode=ro")
+		},
+		Close: func(context.Context) error {
+			closes++
+			return nil
+		},
+	}
+
+	if _, err := Open(t.Context(), "own://x", WithDriver(d)); err == nil {
+		t.Fatal("Open succeeded although the ping failed")
+	}
+
+	if closes != 1 {
+		t.Errorf("Driver.Close ran %d times after a failed ping, want once (the driver may hold a sync handle)", closes)
 	}
 }
