@@ -41,3 +41,70 @@ func ExampleAsIssues() {
 	// password: The password field must be at least 12 characters.
 	// age: The age field must be at least 18.
 }
+
+type payment interface{ isPayment() }
+
+type card struct {
+	Method string `json:"method"`
+	Number string `json:"number"`
+}
+
+type pix struct {
+	Method string `json:"method"`
+	Key    string `json:"key"`
+}
+
+func (card) isPayment() {}
+func (pix) isPayment()  {}
+
+func ExampleDiscriminatedUnion() {
+	schema := z.DiscriminatedUnion[payment]("method", map[string]z.AnySchema{
+		"card": z.Struct[card](z.Shape{"method": z.Literal("card"), "number": z.String().Len(16)}),
+		"pix":  z.Struct[pix](z.Shape{"method": z.Literal("pix"), "key": z.String().Min(1)}),
+	})
+
+	p, err := schema.Parse(map[string]any{"method": "pix", "key": "ada@example.com"})
+	if v, ok := p.(pix); ok {
+		fmt.Println("pix", v.Key, err)
+	}
+
+	_, err = schema.Parse(map[string]any{"method": "card", "number": "12"})
+	issues, _ := z.AsIssues(err)
+	fmt.Println(issues.First("number"))
+
+	_, err = schema.Parse(map[string]any{"method": "cash"})
+	issues, _ = z.AsIssues(err)
+	fmt.Println(issues.First("method"))
+	// Output:
+	// pix ada@example.com <nil>
+	// The number field must be 16 characters.
+	// The selected method is invalid.
+}
+
+type createPost struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+type updatePost struct {
+	Title *string `json:"title"`
+	Body  *string `json:"body"`
+}
+
+func ExamplePartial() {
+	create := z.Struct[createPost](z.Shape{
+		"title": z.String().Trim().Min(3).Max(120),
+		"body":  z.String().Trim().Max(10_000),
+	})
+	update := z.Partial[updatePost](create)
+
+	got, err := update.Parse(map[string]any{"title": "  Hello "})
+	fmt.Println(*got.Title, got.Body == nil, err)
+
+	_, err = update.Parse(map[string]any{"title": "Hi"})
+	issues, _ := z.AsIssues(err)
+	fmt.Println(issues.First("title"))
+	// Output:
+	// Hello true <nil>
+	// The title field must be at least 3 characters.
+}

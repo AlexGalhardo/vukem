@@ -13,6 +13,8 @@ type structAny struct {
 func (s structAny) GoType() reflect.Type { return s.core.rt }
 func (s structAny) optional() bool       { return s.core.o.optional }
 
+func (s structAny) asOptional() AnySchema { s.core.o.optional = true; return s }
+
 func (s structAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	o := s.core.o
 
@@ -36,6 +38,8 @@ type sliceAny struct {
 func (s sliceAny) GoType() reflect.Type { return s.core.goType() }
 func (s sliceAny) optional() bool       { return s.core.o.optional }
 
+func (s sliceAny) asOptional() AnySchema { s.core.o.optional = true; return s }
+
 func (s sliceAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	o := s.core.o
 
@@ -56,6 +60,8 @@ type mapAny struct {
 
 func (s mapAny) GoType() reflect.Type { return s.core.goType() }
 func (s mapAny) optional() bool       { return s.core.o.optional }
+
+func (s mapAny) asOptional() AnySchema { s.core.o.optional = true; return s }
 
 func (s mapAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	o := s.core.o

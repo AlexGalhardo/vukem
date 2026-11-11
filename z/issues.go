@@ -45,6 +45,13 @@ const (
 	CodeInvalidDate      = "invalid_date"
 	CodeNotUnique        = "not_unique"
 	CodeCustom           = "custom"
+
+	CodeInvalidLiteral       = "invalid_literal"
+	CodeInvalidUnion         = "invalid_union"
+	CodeInvalidDiscriminator = "invalid_union_discriminator"
+	// CodeTooDeep is reported when the input nests deeper, or a union has to
+	// try more variants, than a schema is willing to follow.
+	CodeTooDeep = "too_deep"
 )
 
 // Issue is one problem found while parsing.
@@ -179,6 +186,12 @@ var defaultMessages = map[string]string{
 	CodeNotMultiple:      "The {field} field must be a multiple of {multiple}.",
 	CodeInvalidDate:      "The {field} field must be a valid date.",
 	CodeNotUnique:        "The {field} field must not contain duplicates.",
+
+	CodeInvalidLiteral:       "The {field} field must be {expected}.",
+	CodeInvalidUnion:         "The {field} field is invalid.",
+	CodeInvalidDiscriminator: "The selected {field} is invalid.",
+	CodeTooDeep:              "The {field} field is nested too deeply.",
+
 	"too_small.string":   "The {field} field must be at least {min} characters.",
 	"too_small.number":   "The {field} field must be at least {min}.",
 	"too_small.positive": "The {field} field must be greater than 0.",

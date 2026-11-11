@@ -99,6 +99,8 @@ type numberAny struct {
 func (n numberAny) GoType() reflect.Type { return n.t }
 func (n numberAny) optional() bool       { return n.opt }
 
+func (n numberAny) asOptional() AnySchema { n.opt = true; return n }
+
 func (n numberAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	var s AnySchema
 

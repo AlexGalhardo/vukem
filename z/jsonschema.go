@@ -11,8 +11,28 @@ import (
 // Refine, Transform and Custom logic cannot be expressed and is omitted,
 // so the server may reject values the schema allows, never the reverse.
 func JSONSchema(s AnySchema) map[string]any {
-	if js, ok := s.(interface{ jsonSchema() map[string]any }); ok {
-		return js.jsonSchema()
+	jc := &jsctx{}
+	m := jc.of(s)
+
+	if len(jc.defs) > 0 {
+		m["$defs"] = jc.defs
+	}
+
+	return m
+}
+
+// jsctx is the state of one JSONSchema call: the definitions of the Lazy
+// schemas met so far, so a schema that refers to itself becomes a $ref
+// instead of an endless expansion.
+type jsctx struct {
+	defs  map[string]any
+	names map[any]string // $defs name of each Lazy schema, keyed by its resolver
+}
+
+// of returns the JSON Schema of s.
+func (jc *jsctx) of(s AnySchema) map[string]any {
+	if js, ok := s.(interface{ jsonSchema(*jsctx) map[string]any }); ok {
+		return js.jsonSchema(jc)
 	}
 
 	return map[string]any{}
@@ -48,7 +68,7 @@ func (o *opts[T]) decorate(m map[string]any, typ string) map[string]any {
 	return m
 }
 
-func (s StringSchema) jsonSchema() map[string]any {
+func (s StringSchema) jsonSchema(*jsctx) map[string]any {
 	m := s.o.decorate(map[string]any{}, "string")
 	if !s.omitEmpty {
 		return m
@@ -88,7 +108,7 @@ func constrainsAString(m map[string]any) bool {
 	return false
 }
 
-func (s NumberSchema[N]) jsonSchema() map[string]any {
+func (s NumberSchema[N]) jsonSchema(*jsctx) map[string]any {
 	return s.o.decorate(map[string]any{}, numberType(s.GoType()))
 }
 
@@ -100,9 +120,11 @@ func numberType(t reflect.Type) string {
 	return "integer"
 }
 
-func (s BoolSchema) jsonSchema() map[string]any { return s.o.decorate(map[string]any{}, "boolean") }
+func (s BoolSchema) jsonSchema(*jsctx) map[string]any {
+	return s.o.decorate(map[string]any{}, "boolean")
+}
 
-func (s TimeSchema) jsonSchema() map[string]any {
+func (s TimeSchema) jsonSchema(*jsctx) map[string]any {
 	m := map[string]any{}
 	if slices.Equal(s.layouts, defaultLayouts) {
 		m["format"] = "date-time"
@@ -111,7 +133,7 @@ func (s TimeSchema) jsonSchema() map[string]any {
 	return s.o.decorate(m, "string")
 }
 
-func (s EnumSchema[T]) jsonSchema() map[string]any {
+func (s EnumSchema[T]) jsonSchema(*jsctx) map[string]any {
 	enum := make([]any, 0, len(s.values)+1)
 	for _, v := range s.values {
 		enum = append(enum, string(v))
@@ -133,8 +155,8 @@ func (s EnumSchema[T]) jsonSchema() map[string]any {
 	return m
 }
 
-func (c sliceCore) jsonSchema() map[string]any {
-	m := map[string]any{"items": JSONSchema(c.elem)}
+func (c sliceCore) jsonSchema(jc *jsctx) map[string]any {
+	m := map[string]any{"items": jc.of(c.elem)}
 
 	if c.min >= 0 {
 		m["minItems"] = c.min
@@ -155,14 +177,16 @@ func (c sliceCore) jsonSchema() map[string]any {
 	return m
 }
 
-func (s SliceSchema[E]) jsonSchema() map[string]any {
-	return s.o.decorate(s.core.jsonSchema(), "array")
+func (s SliceSchema[E]) jsonSchema(jc *jsctx) map[string]any {
+	return s.o.decorate(s.core.jsonSchema(jc), "array")
 }
 
-func (s sliceAny) jsonSchema() map[string]any { return s.core.o.decorate(s.core.jsonSchema(), "array") }
+func (s sliceAny) jsonSchema(jc *jsctx) map[string]any {
+	return s.core.o.decorate(s.core.jsonSchema(jc), "array")
+}
 
-func (c mapCore) jsonSchema() map[string]any {
-	m := map[string]any{"additionalProperties": JSONSchema(c.value)}
+func (c mapCore) jsonSchema(jc *jsctx) map[string]any {
+	m := map[string]any{"additionalProperties": jc.of(c.value)}
 
 	if c.min >= 0 {
 		m["minProperties"] = c.min
@@ -175,17 +199,21 @@ func (c mapCore) jsonSchema() map[string]any {
 	return m
 }
 
-func (s MapSchema[V]) jsonSchema() map[string]any { return s.o.decorate(s.core.jsonSchema(), "object") }
+func (s MapSchema[V]) jsonSchema(jc *jsctx) map[string]any {
+	return s.o.decorate(s.core.jsonSchema(jc), "object")
+}
 
-func (s mapAny) jsonSchema() map[string]any { return s.core.o.decorate(s.core.jsonSchema(), "object") }
+func (s mapAny) jsonSchema(jc *jsctx) map[string]any {
+	return s.core.o.decorate(s.core.jsonSchema(jc), "object")
+}
 
-func (c structCore) jsonSchema() map[string]any {
+func (c structCore) jsonSchema(jc *jsctx) map[string]any {
 	props := map[string]any{}
 
 	var required []string
 
 	for _, f := range c.fields {
-		prop := JSONSchema(f.schema)
+		prop := jc.of(f.schema)
 		props[f.key] = prop
 
 		// The parser accepts a Nullable key that is absent, so it is not
@@ -201,24 +229,27 @@ func (c structCore) jsonSchema() map[string]any {
 		m["required"] = required
 	}
 
-	if c.strict {
+	switch {
+	case c.strict:
 		m["additionalProperties"] = false
+	case c.passthrough:
+		m["additionalProperties"] = true
 	}
 
 	return m
 }
 
-func (s StructSchema[T]) jsonSchema() map[string]any {
-	return s.o.decorate(s.core.jsonSchema(), "object")
+func (s StructSchema[T]) jsonSchema(jc *jsctx) map[string]any {
+	return s.o.decorate(s.core.jsonSchema(jc), "object")
 }
 
-func (s structAny) jsonSchema() map[string]any {
-	return s.core.o.decorate(s.core.jsonSchema(), "object")
+func (s structAny) jsonSchema(jc *jsctx) map[string]any {
+	return s.core.o.decorate(s.core.jsonSchema(jc), "object")
 }
 
-func (c convertedString) jsonSchema() map[string]any { return c.s.jsonSchema() }
+func (c convertedString) jsonSchema(jc *jsctx) map[string]any { return c.s.jsonSchema(jc) }
 
-func (n numberAny) jsonSchema() map[string]any {
+func (n numberAny) jsonSchema(*jsctx) map[string]any {
 	m := maps.Clone(n.kw)
 	if m == nil {
 		m = map[string]any{}
@@ -237,7 +268,7 @@ func allowsNull(m map[string]any) bool {
 
 // jsonSchema for a JSON value: an object says so, any value says nothing
 // at all, which is how JSON Schema and OpenAPI 3.1 spell "anything".
-func (s JSONValueSchema) jsonSchema() map[string]any {
+func (s JSONValueSchema) jsonSchema(*jsctx) map[string]any {
 	if s.object {
 		return s.o.decorate(map[string]any{}, "object")
 	}

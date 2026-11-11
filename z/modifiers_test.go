@@ -388,6 +388,11 @@ func TestModifierMatrix(t *testing.T) {
 		{"Struct", Struct[pair](Shape{"a": String()}), nil},
 		{"Custom", Custom(func(any) (int, error) { return 0, nil }), nil},
 		{"JSON", JSON(), nil},
+		{"Literal", Literal("a"), nil},
+		{"Union", Union[any](Int(), String()), nil},
+		{"DiscriminatedUnion", paymentSchema(), nil},
+		{"Tuple", pointSchema(), nil},
+		{"Lazy", Lazy(func() Schema[string] { return String() }), nil},
 		// An upload has no default and no useful null or rewritten form.
 		{"File", File(), []string{"Nullable", "Default", "Transform"}},
 	}

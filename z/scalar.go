@@ -21,6 +21,8 @@ func (BoolSchema) GoType() reflect.Type { return reflect.TypeFor[bool]() }
 
 func (s BoolSchema) optional() bool { return s.o.optional || s.o.hasDef }
 
+func (s BoolSchema) asOptional() AnySchema { return s.Optional() }
+
 func (s BoolSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, func(c *pctx, path string, in any) (bool, bool) {
 		switch x := in.(type) {
@@ -111,6 +113,8 @@ func Time() TimeSchema { return TimeSchema{layouts: defaultLayouts} }
 func (TimeSchema) GoType() reflect.Type { return reflect.TypeFor[time.Time]() }
 
 func (s TimeSchema) optional() bool { return s.o.optional || s.o.hasDef }
+
+func (s TimeSchema) asOptional() AnySchema { return s.Optional() }
 
 func (s TimeSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, func(c *pctx, path string, in any) (time.Time, bool) {
@@ -245,6 +249,8 @@ func EnumOf[T ~string](values ...T) EnumSchema[T] {
 func (EnumSchema[T]) GoType() reflect.Type { return reflect.TypeFor[T]() }
 
 func (s EnumSchema[T]) optional() bool { return s.o.optional || s.o.hasDef }
+
+func (s EnumSchema[T]) asOptional() AnySchema { return s.Optional() }
 
 // Values returns the allowed values.
 func (s EnumSchema[T]) Values() []T { return slices.Clone(s.values) }

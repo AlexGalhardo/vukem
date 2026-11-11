@@ -34,6 +34,8 @@ func (FileSchema) GoType() reflect.Type { return reflect.TypeFor[*multipart.File
 
 func (s FileSchema) optional() bool { return s.o.optional || s.o.hasDef }
 
+func (s FileSchema) asOptional() AnySchema { return s.Optional() }
+
 func (s FileSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true,
 		func(c *pctx, path string, in any) (*multipart.FileHeader, bool) {
@@ -157,7 +159,7 @@ func (s FileSchema) Check(fh *multipart.FileHeader) error {
 	return nil
 }
 
-func (s FileSchema) jsonSchema() map[string]any {
+func (s FileSchema) jsonSchema(*jsctx) map[string]any {
 	m := s.o.decorate(map[string]any{"format": "binary"}, "string")
 	if len(s.types) == 1 {
 		m["contentMediaType"] = s.types[0]
