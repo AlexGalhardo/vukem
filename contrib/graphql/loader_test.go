@@ -160,6 +160,69 @@ func TestLoaderAvoidsNPlusOne(t *testing.T) {
 	}
 }
 
+type ctxKey struct{}
+
+func TestLoaderBatchUsesOperationContext(t *testing.T) {
+	t.Parallel()
+
+	for name, cancelA := range map[string]bool{"derived values": false, "cancelled sibling": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				mu      sync.Mutex
+				calls   [][]string
+				fromCtx []any
+			)
+
+			l := graphql.NewLoader(func(ctx context.Context, keys []string) (map[string]int, error) {
+				mu.Lock()
+				defer mu.Unlock()
+
+				calls = append(calls, slices.Sorted(slices.Values(keys)))
+				fromCtx = append(fromCtx, ctx.Value(ctxKey{}), ctx.Err())
+
+				return map[string]int{"a": 1, "b": 2}, nil
+			})
+
+			load := func(key string, cancel bool) func(context.Context, graphql.NoArgs) (int, error) {
+				return func(ctx context.Context, _ graphql.NoArgs) (int, error) {
+					ctx = context.WithValue(ctx, ctxKey{}, key)
+					if cancel {
+						var stop context.CancelFunc
+
+						ctx, stop = context.WithCancel(ctx)
+						stop()
+					}
+
+					return l.Load(ctx, key)
+				}
+			}
+
+			s, err := graphql.New(`type Query { a: Int b: Int }`,
+				graphql.Query("a", load("a", cancelA)), graphql.Query("b", load("b", false)))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			ctx := context.WithValue(t.Context(), ctxKey{}, "operation")
+
+			resp := s.Execute(ctx, graphql.Request{Query: `{ a b }`})
+			if len(resp.Errors) > 0 {
+				t.Fatalf("Execute errors = %v", resp.Errors)
+			}
+
+			if diff := cmp.Diff([][]string{{"a", "b"}}, calls); diff != "" {
+				t.Errorf("batches mismatch (-want +got):\n%s", diff)
+			}
+
+			if diff := cmp.Diff([]any{"operation", nil}, fromCtx); diff != "" {
+				t.Errorf("batch context (value, err) mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestLoaderCachesPerRequest(t *testing.T) {
 	t.Parallel()
 

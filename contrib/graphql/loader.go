@@ -94,7 +94,7 @@ func (l *Loader[K, V]) Load(ctx context.Context, key K) (V, error) {
 	if en == nil {
 		en = &entry[V]{ch: make(chan struct{})}
 		st.cache[key] = en
-		st.add(ctx, sc, key)
+		st.add(sc, key)
 	}
 
 	if en.done {
@@ -104,7 +104,7 @@ func (l *Loader[K, V]) Load(ctx context.Context, key K) (V, error) {
 
 	en.waiters++
 	sc.running--
-	sc.dispatchLocked(ctx)
+	sc.dispatchLocked()
 	sc.mu.Unlock()
 
 	<-en.ch
@@ -136,7 +136,7 @@ func (l *Loader[K, V]) LoadMany(ctx context.Context, keys []K) ([]V, error) {
 	for _, k := range keys {
 		if st.cache[k] == nil {
 			st.cache[k] = &entry[V]{ch: make(chan struct{})}
-			st.add(ctx, sc, k)
+			st.add(sc, k)
 		}
 	}
 
@@ -178,7 +178,7 @@ func (l *Loader[K, V]) call(ctx context.Context, keys []K) (m map[K]V, err error
 }
 
 // add queues key; called with sc.mu held.
-func (st *loaderState[K, V]) add(ctx context.Context, sc *requestScope, key K) {
+func (st *loaderState[K, V]) add(sc *requestScope, key K) {
 	st.pending = append(st.pending, key)
 
 	if !st.dirty {
@@ -187,12 +187,12 @@ func (st *loaderState[K, V]) add(ctx context.Context, sc *requestScope, key K) {
 
 		if st.l.wait > 0 {
 			st.since = time.Now()
-			st.armLocked(ctx, sc, st.l.wait)
+			st.armLocked(sc, st.l.wait)
 		}
 	}
 
 	if st.l.maxBatch > 0 && len(st.pending) >= st.l.maxBatch {
-		st.flushLocked(ctx, sc)
+		st.flushLocked(sc)
 	}
 }
 
@@ -206,7 +206,7 @@ const maxBatchAge = 10
 // or the oldest key waited maxBatchAge waits; otherwise it re-arms for
 // the rest: a timer measured from the first key alone would split
 // batches whenever siblings are merely slow to be scheduled.
-func (st *loaderState[K, V]) armLocked(ctx context.Context, sc *requestScope, d time.Duration) {
+func (st *loaderState[K, V]) armLocked(sc *requestScope, d time.Duration) {
 	var t *time.Timer
 
 	t = time.AfterFunc(d, func() {
@@ -219,17 +219,17 @@ func (st *loaderState[K, V]) armLocked(ctx context.Context, sc *requestScope, d 
 
 		idle, age := time.Since(sc.lastProgress), time.Since(st.since)
 		if maxAge := maxBatchAge * st.l.wait; idle < st.l.wait && age < maxAge {
-			st.armLocked(ctx, sc, min(st.l.wait-idle, maxAge-age))
+			st.armLocked(sc, min(st.l.wait-idle, maxAge-age))
 			return
 		}
 
-		st.flushLocked(ctx, sc)
+		st.flushLocked(sc)
 	})
 	st.timer = t
 }
 
 // flushLocked starts batches for the pending keys; idempotent.
-func (st *loaderState[K, V]) flushLocked(ctx context.Context, sc *requestScope) {
+func (st *loaderState[K, V]) flushLocked(sc *requestScope) {
 	if !st.dirty {
 		return
 	}
@@ -254,7 +254,7 @@ func (st *loaderState[K, V]) flushLocked(ctx context.Context, sc *requestScope) 
 
 		sc.running++
 
-		go st.run(ctx, sc, chunk)
+		go st.run(sc.ctx, sc, chunk)
 	}
 }
 
@@ -273,7 +273,7 @@ func (st *loaderState[K, V]) run(ctx context.Context, sc *requestScope, keys []K
 	}
 
 	sc.running--
-	sc.dispatchLocked(ctx)
+	sc.dispatchLocked()
 }
 
 // ByKey is a BatchFunc that loads one T per key with a single
