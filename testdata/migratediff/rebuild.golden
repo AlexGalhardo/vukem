@@ -1,0 +1,25 @@
+package migrations
+
+import "github.com/AlexGalhardo/vukem/schema"
+
+// Written by migrate:diff from the models; review it before you run it.
+func mTSSyncModels() schema.Migration {
+	return schema.Migration{
+		ID:            "TS_sync_models",
+		NoTransaction: true, // Rebuild manages its own transaction on SQLite
+		Up: func(s *schema.Schema) error {
+			if err := s.Rebuild("members", func(t *schema.Table) {
+				t.ID()
+				t.String("email", 255).Unique()
+			}); err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(s *schema.Schema) error {
+			// The changes to members cannot be undone: it was rebuilt.
+			return nil
+		},
+	}
+}

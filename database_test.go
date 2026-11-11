@@ -13,12 +13,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
+	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -1764,5 +1767,740 @@ func TestSecurity_A05_DBConsoleNeedsForceInProduction(t *testing.T) {
 
 	if _, err := runDBConsole(t, "production", file, "-print", "-force"); err != nil {
 		t.Fatalf("db -force in production = %v", err)
+	}
+}
+
+// ------------------------------------------------------------------ migrate:check, db:pull, migrate:diff
+
+type appRun struct {
+	dbURL      string
+	env        string
+	migrations []schema.Migration
+	models     []orm.ModelInfo
+	clock      func() time.Time
+}
+
+func (a appRun) run(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+
+	var out, errOut bytes.Buffer
+
+	env := a.env
+	if env == "" {
+		env = "test"
+	}
+
+	getenv := func(k string) (string, bool) {
+		v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": env, "DATABASE_URL": a.dbURL}[k]
+		return v, ok
+	}
+
+	build := func(opts ...Option) (*App, error) {
+		if a.clock != nil {
+			opts = append(opts, WithClock(a.clock))
+		}
+
+		return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithStderr(&errOut),
+			WithMigrations(a.migrations), WithModels(a.models...))...)
+	}
+
+	err = RunMain(t.Context(), append([]string{"app"}, args...), getenv, build)
+
+	return out.String(), errOut.String(), err
+}
+
+func newAppRun(t *testing.T, migs ...schema.Migration) appRun {
+	t.Helper()
+
+	return appRun{dbURL: "file:" + filepath.Join(testutil.TempDir(t), "app.db"), migrations: migs}
+}
+
+func createT(id, table string, cols func(t *schema.Table)) schema.Migration {
+	return schema.Migration{ID: id, Up: func(s *schema.Schema) error { return s.Create(table, cols) }}
+}
+
+func addCol(id, col string) schema.Migration {
+	return schema.Migration{ID: id, Up: func(s *schema.Schema) error {
+		return s.Table("posts", func(t *schema.Table) { t.String(col).Nullable() })
+	}}
+}
+
+func TestMigrateCheck(t *testing.T) {
+	t.Parallel()
+
+	base := createT("20260101000000_create_posts", "posts", func(t *schema.Table) { t.ID(); t.String("title") })
+
+	a := newAppRun(t, base, addCol("20260102000000_add_slug", "slug"))
+	if out, _, err := a.run(t, "migrate:check"); err != nil || !strings.Contains(out, "No conflicts.") {
+		t.Fatalf("clean check = %q, %v", out, err)
+	}
+
+	// Two branches added the same column.
+	a = newAppRun(
+		t,
+		base,
+		addCol("20260102000000_add_slug", "slug"),
+		addCol("20260103000000_add_slug_again", "slug"),
+	)
+
+	out, _, err := a.run(t, "migrate:check")
+	if err == nil ||
+		!strings.Contains(
+			out,
+			"conflict  20260103000000_add_slug_again  posts.slug  column already added by 20260102000000_add_slug",
+		) {
+		t.Fatalf("conflicting check = %q, %v", out, err)
+	}
+
+	jsonOut, _, err := a.run(t, "migrate:check", "-json")
+	if err == nil || !strings.Contains(jsonOut, `"kind":"conflict"`) {
+		t.Errorf("check -json = %q, %v", jsonOut, err)
+	}
+
+	// A pending migration older than the last one that ran.
+	late := addCol("20260301000000_late", "late")
+	a = newAppRun(t, base, late)
+
+	if _, _, err := a.run(t, "migrate"); err != nil {
+		t.Fatal(err)
+	}
+
+	a.migrations = []schema.Migration{base, addCol("20260201000000_other_branch", "other"), late}
+
+	out, _, err = a.run(t, "migrate:check")
+	if err == nil ||
+		!strings.Contains(out, "order     20260201000000_other_branch  pending, but 20260301000000_late already ran") {
+		t.Errorf("out of order check = %q, %v", out, err)
+	}
+
+	if out, _, _ := a.run(t, "migrate:status"); !strings.Contains(out, "Pending (out of order)") {
+		t.Errorf("status = %q, want the out of order mark", out)
+	}
+}
+
+func TestSecurity_A05_MigrateRefusesDestructiveInProduction(t *testing.T) {
+	t.Parallel()
+
+	a := newAppRun(t,
+		createT("20260101000000_create_posts", "posts", func(t *schema.Table) { t.ID() }),
+		schema.Migration{ID: "20260102000000_drop_posts", Up: func(s *schema.Schema) error { return s.Drop("posts") }},
+	)
+	a.env = "production"
+
+	if _, _, err := a.run(t, "migrate"); !errors.Is(err, errDestructiveMigration) {
+		t.Fatalf("migrate in production = %v, want the destructive refusal", err)
+	}
+
+	if out, _, err := a.run(t, "migrate", "-allow-destructive"); err != nil || !strings.Contains(out, "Migrated:") {
+		t.Errorf("migrate --allow-destructive = %q, %v", out, err)
+	}
+
+	// Outside production nothing is refused.
+	b := newAppRun(t, a.migrations...)
+	if _, _, err := b.run(t, "migrate"); err != nil {
+		t.Errorf("migrate in test = %v", err)
+	}
+}
+
+type pullUser struct {
+	ID    int64 `db:"id"`
+	Email string
+}
+
+func (pullUser) Table() string { return "users" }
+
+func pullDB(t *testing.T) (appRun, *database.DB) {
+	t.Helper()
+
+	a := newAppRun(t)
+
+	db, err := database.Open(t.Context(), a.dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	s := schema.New(t.Context(), db)
+
+	for _, err := range []error{
+		s.Create("users", func(t *schema.Table) {
+			t.ID()
+			t.String("email", 120).Unique()
+			t.Boolean("active").Default(true)
+			t.Timestamps()
+		}),
+		s.Create("posts", func(t *schema.Table) {
+			t.ID()
+			t.ForeignID("user_id").Constrained("users").CascadeOnDelete()
+			t.String("title")
+			t.Text("body").Nullable()
+			t.Index("title")
+		}),
+		s.Create("tags", func(t *schema.Table) {
+			t.ID()
+			t.String("label").Unique()
+		}),
+		s.Create("post_tag", func(t *schema.Table) {
+			t.ForeignID("post_id").Constrained("posts").CascadeOnDelete()
+			t.ForeignID("tag_id").Constrained("tags").CascadeOnDelete()
+			t.Primary("post_id", "tag_id")
+		}),
+		// The framework owns this one; db:pull leaves it out.
+		s.Create("jobs", func(t *schema.Table) { t.ID() }),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return a, db
+}
+
+func TestDBPullBaselineRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	a, db := pullDB(t)
+
+	snap, err := schema.Inspect(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap.Tables = slices.DeleteFunc(
+		snap.Tables,
+		func(tb schema.TableInfo) bool { return slices.Contains(frameworkTables(), tb.Name) },
+	)
+
+	src, warnings, err := baselineGo("migrations", "20261201000000_baseline", snap)
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("baselineGo = %v, warnings %v", err, warnings)
+	}
+
+	golden := filepath.Join("testdata", "dbpull", "baseline.golden")
+	if *update {
+		if err := os.MkdirAll(filepath.Dir(golden), 0o750); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.WriteFile(golden, src, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(string(want), string(src)); diff != "" {
+		t.Errorf("baseline mismatch (-want +got):\n%s", diff)
+	}
+
+	// Round trip: the same specs, applied through the builder on an empty
+	// database, give back the schema they were read from.
+	_ = a
+
+	replay, err := replayBaseline(t, snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(snap, replay); diff != "" {
+		t.Errorf("snapshot after the baseline (-original +replayed):\n%s", diff)
+	}
+}
+
+// replayBaseline runs baselineMigration on an empty database and inspects it.
+func replayBaseline(t *testing.T, snap schema.Snapshot) (schema.Snapshot, error) {
+	t.Helper()
+
+	db, err := database.Open(t.Context(), ":memory:")
+	if err != nil {
+		return schema.Snapshot{}, err
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := baselineMigration("replay", snap).Up(schema.New(t.Context(), db)); err != nil {
+		return schema.Snapshot{}, err
+	}
+
+	return schema.Inspect(t.Context(), db)
+}
+
+func TestDBPullAndMigrateDiffNeverOverwriteAMigration(t *testing.T) {
+	a, _ := pullDB(t)
+	a.clock = func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
+	dir := filepath.Join(t.TempDir(), "m")
+	path := filepath.Join(dir, "20260102030405_baseline.go")
+
+	if _, _, err := a.run(t, "db:pull", "-o", dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(path, []byte("package m // edited\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := a.run(t, "db:pull", "-o", dir); !errors.Is(err, os.ErrExist) {
+		t.Errorf("second db:pull = %v, want it to refuse to overwrite", err)
+	}
+
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "// edited") {
+		t.Error("db:pull overwrote an existing migration")
+	}
+
+	d := diffSetup(t, nil)
+	d.clock = a.clock
+
+	diffPath := filepath.Join(dir, "20260102030405_sync_models.go")
+	if _, _, err := d.run(t, "migrate:diff", "-o", dir, "-delete", "people.nickname"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := d.run(t, "migrate:diff", "-o", dir, "-delete", "people.nickname"); !errors.Is(err, os.ErrExist) {
+		t.Errorf("second migrate:diff = %v, want it to refuse to overwrite (%s)", err, diffPath)
+	}
+}
+
+func TestDBPullRefusesNamesThatAreNotIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ name, ddl, want string }{
+		{"column", "CREATE TABLE ok (id INTEGER PRIMARY KEY, \"a`;b\" TEXT)", "a`;b"},
+		{"table", "CREATE TABLE \"x\ny\" (id INTEGER PRIMARY KEY)", "x\\ny"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			a, db := pullDB(t)
+			if _, err := db.ExecContext(t.Context(), tt.ddl); err != nil {
+				t.Fatal(err)
+			}
+
+			dir := filepath.Join(t.TempDir(), "m")
+
+			_, _, err := a.run(t, "db:pull", "-o", dir, "-models")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("db:pull = %v, want an error naming %q", err, tt.want)
+			}
+
+			if _, statErr := os.Stat(dir); statErr == nil {
+				t.Error("db:pull wrote files before refusing")
+			}
+		})
+	}
+}
+
+func TestDBPullKnownLimitsAndFiles(t *testing.T) {
+	t.Parallel()
+
+	_, db := pullDB(t)
+
+	if _, err := db.ExecContext(
+		t.Context(),
+		`CREATE TABLE odd (id INTEGER PRIMARY KEY AUTOINCREMENT, shape GEOMETRY)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := schema.Inspect(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	odd, _ := snap.Table("odd")
+
+	src, warnings, err := baselineGo(
+		"migrations",
+		"20261201000000_baseline",
+		schema.Snapshot{Tables: []schema.TableInfo{odd}},
+	)
+	if err != nil || len(warnings) != 1 ||
+		!strings.Contains(string(src), `db:pull: column "shape" has type "geometry"`) {
+		t.Errorf("unknown type: warnings %v, err %v, src %s", warnings, err, src)
+	}
+
+	for in, want := range map[string]string{"users": "user", "categories": "category", "addresses": "address"} {
+		if got := singularTable(in); got != want {
+			t.Errorf("singularTable(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	users, _ := snap.Table("users")
+
+	model, err := modelGo("models", users)
+	if err != nil || !strings.Contains(string(model), "type User struct") ||
+		!strings.Contains(string(model), "orm.Model") {
+		t.Errorf("modelGo = %s, %v", model, err)
+	}
+}
+
+func TestDBPullCommandWritesFilesAndKeepsExistingModels(t *testing.T) {
+	a, _ := pullDB(t)
+
+	dir := t.TempDir()
+
+	t.Chdir(dir)
+
+	out, _, err := a.run(t, "db:pull", "-o", filepath.Join(dir, "database", "migrations"), "-models", "-table", "users")
+	if err != nil || !strings.Contains(out, "Register it: add m") {
+		t.Fatalf("db:pull = %q, %v", out, err)
+	}
+
+	model := filepath.Join(dir, "app", "models", "user.go")
+	if _, err := os.Stat(model); err != nil {
+		t.Fatalf("the model was not written: %v", err)
+	}
+
+	if err := os.WriteFile(model, []byte("package models\n// mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := a.run(
+		t,
+		"db:pull",
+		"-o",
+		filepath.Join(dir, "database", "again"),
+		"-models",
+		"-table",
+		"users",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if b, _ := os.ReadFile(model); !strings.Contains(string(b), "// mine") {
+		t.Error("db:pull -models overwrote an existing model")
+	}
+}
+
+func TestDBPullMarkApplied(t *testing.T) {
+	const id = "20260102030405_baseline"
+
+	clock := func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
+
+	t.Run("not registered", func(t *testing.T) {
+		a, _ := pullDB(t)
+		a.clock = clock
+
+		out, _, err := a.run(t, "db:pull", "-o", filepath.Join(t.TempDir(), "m"), "-mark-applied")
+		if err != nil || !strings.Contains(out, "Not registered yet") {
+			t.Fatalf("db:pull = %q, %v", out, err)
+		}
+	})
+
+	t.Run("registered, then again", func(t *testing.T) {
+		a, _ := pullDB(t)
+		a.clock = clock
+		a.migrations = []schema.Migration{{ID: id, Up: func(*schema.Schema) error { return nil }}}
+
+		args := func() []string {
+			return []string{"db:pull", "-o", filepath.Join(t.TempDir(), "m"), "-mark-applied"}
+		}
+
+		out, _, err := a.run(t, args()...)
+		if err != nil || !strings.Contains(out, "Marked as applied: "+id) {
+			t.Fatalf("first db:pull = %q, %v", out, err)
+		}
+
+		out, _, err = a.run(t, "migrate:status", "-json")
+		if err != nil || !strings.Contains(out, `"ran": true`) && !strings.Contains(out, `"ran":true`) {
+			t.Fatalf("migrate:status = %q, %v", out, err)
+		}
+
+		out, _, err = a.run(t, args()...)
+		if err != nil || !strings.Contains(out, "Already applied: "+id) {
+			t.Fatalf("second db:pull = %q, %v", out, err)
+		}
+	})
+}
+
+type diffModel struct {
+	ID    int64 `db:"id"`
+	Email string
+	Name  string
+}
+
+func (diffModel) Table() string { return "people" }
+
+func diffSetup(t *testing.T, extra func(s *schema.Schema)) appRun {
+	t.Helper()
+
+	a := newAppRun(t)
+	a.models = []orm.ModelInfo{orm.ModelOf[diffModel]()}
+
+	db, err := database.Open(t.Context(), a.dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	s := schema.New(t.Context(), db)
+	if err := s.Create("people", func(t *schema.Table) {
+		t.ID()
+		t.String("email")
+		t.String("nickname", 30).Nullable()
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if extra != nil {
+		extra(s)
+	}
+
+	return a
+}
+
+func TestMigrateDiffConsent(t *testing.T) {
+	t.Parallel()
+
+	a := diffSetup(t, nil)
+	dir := filepath.Join(t.TempDir(), "migrations")
+
+	// Without consent nothing is written and the block is the error.
+	_, _, err := a.run(t, "migrate:diff", "-o", dir)
+	if err == nil || !strings.Contains(err.Error(), "consent required for 1 destructive change(s)") ||
+		!strings.Contains(err.Error(), "pass --delete people.nickname") {
+		t.Fatalf("migrate:diff without consent = %v", err)
+	}
+
+	if _, statErr := os.Stat(dir); statErr == nil {
+		t.Error("migrate:diff wrote something without consent")
+	}
+
+	// With --delete: the add of name and the drop of nickname.
+	out, _, err := a.run(t, "migrate:diff", "-o", "-", "-delete", "people.nickname")
+	if err != nil || !strings.Contains(out, `t.DropColumn("nickname")`) ||
+		!strings.Contains(out, `t.String("name", 255).Nullable()`) {
+		t.Fatalf("migrate:diff --delete = %q, %v", out, err)
+	}
+
+	// With --rename the two become one rename (the add of name is separate).
+	out, _, err = a.run(t, "migrate:diff", "-o", "-", "-rename", "people.nickname:people.name")
+	if err != nil || !strings.Contains(out, `t.RenameColumn("nickname", "name")`) ||
+		strings.Contains(out, "DropColumn") {
+		t.Fatalf("migrate:diff --rename = %q, %v", out, err)
+	}
+
+	if _, _, err := a.run(t, "migrate:diff", "-o", "-", "-delete", "people.zzz"); err == nil ||
+		!strings.Contains(err.Error(), "--delete people.zzz matches no pending change") {
+		t.Errorf("--delete of a no-op = %v", err)
+	}
+
+	if _, _, err := a.run(t, "migrate:diff", "-check"); err == nil {
+		t.Error("-check passed although the models and the database differ")
+	}
+}
+
+func TestMigrateDiffCreatesTablesAndWarns(t *testing.T) {
+	t.Parallel()
+
+	a := diffSetup(t, func(s *schema.Schema) {
+		_ = s.Create("legacy_reports", func(t *schema.Table) { t.ID() })
+	})
+	a.models = append(a.models, orm.ModelOf[pullUser]())
+
+	out, _, err := a.run(t, "migrate:diff", "-o", "-", "-delete", "people.nickname", "-delete", "legacy_reports")
+	if err != nil || !strings.Contains(out, `s.Create("users"`) || !strings.Contains(out, `s.Drop("legacy_reports")`) {
+		t.Fatalf("migrate:diff = %q, %v", out, err)
+	}
+
+	// Without the table's consent it is only a warning.
+	out, errOut, err := a.run(t, "migrate:diff", "-o", "-", "-delete", "people.nickname")
+	if err != nil || strings.Contains(out, "legacy_reports") ||
+		!strings.Contains(errOut, "table legacy_reports has no model") {
+		t.Errorf("unmodelled table: out %q, stderr %q, err %v", out, errOut, err)
+	}
+}
+
+func TestMigrateDiffNoChanges(t *testing.T) {
+	t.Parallel()
+
+	a := diffSetup(t, nil)
+	a.models = []orm.ModelInfo{orm.ModelOf[noDiffModel]()}
+
+	if out, _, err := a.run(t, "migrate:diff", "-check"); err != nil || !strings.Contains(out, "No changes.") {
+		t.Errorf("-check on matching schemas = %q, %v", out, err)
+	}
+}
+
+type noDiffModel struct {
+	ID       int64  `db:"id"`
+	Email    string `db:"email"`
+	Nickname string `db:"nickname"`
+}
+
+func (noDiffModel) Table() string { return "people" }
+
+type indexedModel struct {
+	ID    int64 `db:"id"`
+	Email string
+}
+
+func (indexedModel) Table() string { return "members" }
+
+type staffModel struct {
+	ID       int64 `db:"id"`
+	Email    string
+	FullName string `db:"full_name"`
+	Bio      string
+}
+
+func (staffModel) Table() string { return "staff" }
+
+// A table that needs a Rebuild gets only the Rebuild: it absorbs the other
+// drops and the adds, and a rename must carry RenamedFrom or its data is lost.
+func TestMigrateDiffSQLiteRebuildAbsorbsTheTablesOtherChanges(t *testing.T) {
+	t.Parallel()
+
+	a := newAppRun(t)
+	a.models = []orm.ModelInfo{orm.ModelOf[staffModel]()}
+
+	db, err := database.Open(t.Context(), a.dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := schema.New(t.Context(), db).Create("staff", func(t *schema.Table) {
+		t.ID()
+		t.String("email").Unique()
+		t.String("nickname", 30)
+		t.String("phone", 30).Nullable()
+		t.String("old_name", 30)
+		t.Index("nickname")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := a.run(t, "migrate:diff", "-o", "-", "-delete", "staff.nickname", "-delete", "staff.phone",
+		"-rename", "staff.old_name:staff.full_name")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Count(out, `s.Rebuild("staff"`) != 1 || strings.Contains(out, "s.Table(") ||
+		strings.Contains(out, "DropColumn(") || strings.Contains(out, "RenameColumn(") {
+		t.Fatalf("a rebuilt table must be changed by the Rebuild alone:\n%s", out)
+	}
+
+	if !strings.Contains(out, `schema.RenamedFrom("old_name", "full_name")`) {
+		t.Errorf("the rename must keep its data through RenamedFrom:\n%s", out)
+	}
+
+	if !strings.Contains(out, `t.String("bio", 255).Nullable()`) {
+		t.Errorf("the added column must be nullable, as in the alter path:\n%s", out)
+	}
+}
+
+func TestMigrateDiffRebuildSaysWhatItDoesNotReproduce(t *testing.T) {
+	t.Parallel()
+
+	a := newAppRun(t)
+	a.models = []orm.ModelInfo{orm.ModelOf[indexedModel]()}
+
+	db, err := database.Open(t.Context(), a.dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	for _, q := range []string{
+		"CREATE TABLE members (id INTEGER PRIMARY KEY AUTOINCREMENT, email VARCHAR(255) NOT NULL DEFAULT 'a@b.c' CHECK (length(email) > 3), nickname VARCHAR(30) NOT NULL)",
+		"CREATE INDEX members_nickname ON members (nickname)",
+		"CREATE INDEX members_lower_email ON members (lower(email))",
+		"CREATE TRIGGER members_touch AFTER INSERT ON members BEGIN SELECT 1; END",
+	} {
+		if _, err := db.ExecContext(t.Context(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, errOut, err := a.run(t, "migrate:diff", "-o", "-", "-delete", "members.nickname")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		"migrate:diff did not reproduce: the default of email",
+		"the expression index members_lower_email",
+		"the CHECK constraints",
+		"the triggers members_touch",
+	} {
+		if !strings.Contains(out, want) ||
+			!strings.Contains(errOut, strings.TrimPrefix(want, "migrate:diff did not reproduce: ")) {
+			t.Errorf("missing %q in the file or the warnings:\n%s\n---\n%s", want, out, errOut)
+		}
+	}
+
+	if strings.Contains(out, `t.Index("")`) || strings.Contains(out, "lower") && strings.Contains(out, "t.Index(") {
+		t.Errorf("an expression index must never be written as a column index:\n%s", out)
+	}
+}
+
+func TestMigrateDiffSQLiteDropIndexedColumnUsesRebuild(t *testing.T) {
+	t.Parallel()
+
+	a := newAppRun(t)
+	a.models = []orm.ModelInfo{orm.ModelOf[indexedModel]()}
+
+	db, err := database.Open(t.Context(), a.dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := schema.New(t.Context(), db).Create("members", func(t *schema.Table) {
+		t.ID()
+		t.String("email").Unique()
+		t.String("nickname", 30)
+		t.Index("nickname")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := a.run(t, "migrate:diff", "-o", "-", "-delete", "members.nickname")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out, "NoTransaction: true") || !strings.Contains(out, `s.Rebuild("members"`) ||
+		strings.Contains(out, "t.DropColumn") {
+		t.Fatalf("an indexed column on SQLite must be dropped with Rebuild:\n%s", out)
+	}
+
+	golden := filepath.Join("testdata", "migratediff", "rebuild.golden")
+
+	got := regexp.MustCompile(`\d{14}`).ReplaceAllString(out, "TS")
+	if *update {
+		if err := os.MkdirAll(filepath.Dir(golden), 0o750); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.WriteFile(golden, []byte(got), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(string(want), got); diff != "" {
+		t.Errorf("rebuild migration mismatch (-want +got):\n%s", diff)
+	}
+
+	// A column without an index is a plain DropColumn.
+	b := diffSetup(t, nil)
+
+	plain, _, err := b.run(t, "migrate:diff", "-o", "-", "-delete", "people.nickname")
+	if err != nil || strings.Contains(plain, "Rebuild") || !strings.Contains(plain, `t.DropColumn("nickname")`) {
+		t.Errorf("an unindexed column should be a DropColumn:\n%s", plain)
 	}
 }

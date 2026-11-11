@@ -38,6 +38,9 @@ type Status struct {
 	RanAt   time.Time `json:"ran_at,omitzero"`
 	Changed bool      `json:"changed,omitempty"` // applied migration whose SQL changed since
 	Missing bool      `json:"missing,omitempty"` // recorded in the database but not in code
+	// OutOfOrder marks a pending migration whose ID sorts before one that
+	// already ran: it came from another branch.
+	OutOfOrder bool `json:"out_of_order,omitempty"`
 }
 
 // Migrator applies migrations to a database.
@@ -174,8 +177,9 @@ func (m *Migrator) up(ctx context.Context) ([]string, error) {
 		}
 
 		err = m.inTx(ctx, mig, func(ex database.Executor) error {
-			if err := mig.Up(New(ctx, ex)); err != nil {
-				return err
+			sch := New(ctx, ex)
+			if err := mig.Up(sch); err != nil {
+				return m.partialFailure(mig, sch.executed, err)
 			}
 
 			if mig.NoTransaction {
@@ -190,6 +194,10 @@ func (m *Migrator) up(ctx context.Context) ([]string, error) {
 			return err
 		})
 		if err != nil {
+			if _, ok := errors.AsType[*partialError](err); ok {
+				return ran, err
+			}
+
 			return ran, fmt.Errorf("schema: migrate %s: %w", mig.ID, err)
 		}
 
@@ -244,6 +252,31 @@ func (m *Migrator) checkInvalidIndexes(ctx context.Context) error {
 
 // inTx runs fn in a transaction, or on the database itself for a
 // NoTransaction migration.
+// partialError is a migration that failed after some of its statements
+// already took effect, because the database does not roll DDL back.
+type partialError struct {
+	id       string
+	executed int
+	err      error
+}
+
+func (e *partialError) Error() string {
+	return fmt.Sprintf("schema: migration %s failed after %d statement(s); this database commits DDL as it runs, "+
+		"so they were not rolled back: %v", e.id, e.executed, e.err)
+}
+
+func (e *partialError) Unwrap() error { return e.err }
+
+// partialFailure wraps err when statements already ran on a database or in a
+// migration that does not roll them back.
+func (m *Migrator) partialFailure(mig Migration, executed int, err error) error {
+	if executed == 0 || (!mig.NoTransaction && database.MustCapabilities(m.db.Dialect()).TransactionalDDL) {
+		return err
+	}
+
+	return &partialError{id: mig.ID, executed: executed, err: err}
+}
+
 func (m *Migrator) inTx(ctx context.Context, mig Migration, fn func(ex database.Executor) error) error {
 	if mig.NoTransaction {
 		return fn(m.db)
@@ -584,6 +617,74 @@ func (m *Migrator) Status(ctx context.Context) ([]Status, error) {
 	}
 
 	slices.SortFunc(out, func(a, b Status) int { return cmp.Compare(a.ID, b.ID) })
+
+	last := ""
+
+	for _, s := range out {
+		if s.Ran && s.ID > last {
+			last = s.ID
+		}
+	}
+
+	for i := range out {
+		out[i].OutOfOrder = !out[i].Ran && out[i].ID < last
+	}
+
+	return out, nil
+}
+
+// ErrUnknownMigration is returned by MarkApplied for an ID the migrator was
+// not given.
+var ErrUnknownMigration = errors.New("schema: unknown migration")
+
+// MarkApplied records the migration id as applied without running it, for a
+// database whose tables already match it (db:pull -mark-applied). It does
+// nothing when the migration is already recorded.
+func (m *Migrator) MarkApplied(ctx context.Context, id string) error {
+	i := slices.IndexFunc(m.migrations, func(mig Migration) bool { return mig.ID == id })
+	if i < 0 {
+		return fmt.Errorf("%w %q", ErrUnknownMigration, id)
+	}
+
+	done, err := m.applied(ctx)
+	if err != nil {
+		return err
+	}
+
+	if _, ok := done[id]; ok {
+		return nil
+	}
+
+	sum, err := m.Checksum(m.migrations[i])
+	if err != nil {
+		return err
+	}
+
+	batch := 1
+	for _, a := range done {
+		batch = max(batch, a.batch+1)
+	}
+
+	_, err = m.db.ExecContext(ctx, "INSERT INTO "+m.table+" (id, batch, checksum, ran_at) VALUES ("+
+		m.ph(1)+", "+m.ph(2)+", "+m.ph(3)+", "+m.ph(4)+")", id, batch, sum, time.Now().UTC())
+
+	return err
+}
+
+// Pending returns the migrations that have not run, in order.
+func (m *Migrator) Pending(ctx context.Context) ([]Migration, error) {
+	done, err := m.applied(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []Migration
+
+	for _, mig := range m.migrations {
+		if _, ok := done[mig.ID]; !ok {
+			out = append(out, mig)
+		}
+	}
 
 	return out, nil
 }
