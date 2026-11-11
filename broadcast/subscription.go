@@ -170,9 +170,10 @@ func (sub *Subscription) Here(ctx context.Context, channel string) ([]Member, er
 // Members lists the members present on a subscribed presence channel, or
 // false for other channels.
 //
-// Deprecated: use Here, which takes a context and reports store errors.
-// Members waits at most 5 seconds and returns an empty list when a shared
-// store fails.
+// Prefer Here, which takes a context and reports store errors: Members waits
+// at most 5 seconds and returns an empty list when a shared store fails. It
+// becomes deprecated once drivers/websocket moves to Here (it still builds
+// against v0.40.0, which has no Here).
 func (sub *Subscription) Members(channel string) ([]Member, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), leaveTimeout)
 	defer cancel()
