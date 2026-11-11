@@ -131,3 +131,19 @@ func TestRedisNeverAllowsKeys(t *testing.T) {
 		}
 	}
 }
+
+// The server reads command names in ASCII: a name that only Unicode
+// upper-casing turns into a listed command is not that command.
+func TestRedisCommandNamesAreASCII(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"ınfo", "pıng", "ſet", "GETı"} {
+		if err := checkRedisArgs([]string{name, "k"}, true); err == nil {
+			t.Errorf("checkRedisArgs(%q) = nil, want a refusal", name)
+		}
+	}
+
+	if err := checkRedisArgs([]string{"object", "ınfo"}, false); err == nil {
+		t.Error("an OBJECT subcommand that only Unicode upper-cases to a listed one was accepted")
+	}
+}
