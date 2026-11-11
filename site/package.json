@@ -11,7 +11,7 @@
     "last-updated": "node scripts/last-updated.ts",
     "check:mdx": "node scripts/check-mdx.ts",
     "check:last-updated": "node scripts/check-last-updated.ts",
-    "test:scripts": "node --test scripts/check-last-updated.test.ts scripts/committed-dates.test.ts scripts/legacy-path-redirect.test.ts scripts/trailing-slash.test.ts",
+    "test:scripts": "node --test scripts/check-last-updated.test.ts scripts/committed-dates.test.ts scripts/legacy-path-redirect.test.ts scripts/trailing-slash.test.ts scripts/current-equivalent.test.ts",
     "test:site": "node --test scripts/link-anchors.test.ts"
   },
   "dependencies": {

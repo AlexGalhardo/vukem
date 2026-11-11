@@ -91,6 +91,16 @@ export function getEveryDoc(): Doc[] {
   return versions.flatMap((v) => getAllDocs(v.id));
 }
 
+/**
+ * The page of the current version with the same path as doc, if any. Undefined
+ * for a current-version doc, which is its own canonical page.
+ */
+export function currentEquivalent(doc: Doc): Doc | undefined {
+  if (doc.version.id === currentVersion.id) return undefined;
+  const key = doc.slug.slice(1).join("/");
+  return getAllDocs().find((d) => d.slug.join("/") === key);
+}
+
 export function getDoc(slug: string[]): Doc | undefined {
   const key = slug.join("/");
   return getEveryDoc().find((d) => d.slug.join("/") === key);
