@@ -254,7 +254,7 @@ ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === 'event') co
 
 GraphQL subscriptions can be fed by broadcast channels (`graphql.FromBroadcast`, same authorization rules) and served over the `graphql-transport-ws` protocol or SSE: see [GraphQL subscriptions](graphql.md#subscriptions).
 
-Presence is tracked per instance: a user's several connections count as one member, and `joining`/`leaving` reach every instance through the broker, but `here` lists only the members connected to the instance serving the client. A cluster-wide member list needs a shared store (planned: Redis sets).
+Presence lives in the process unless `broadcast.Config.Presence` is set: a user's several connections count as one member, and `joining`/`leaving` reach every instance through the broker, but `here` lists only the members connected to the instance serving the client. A shared `broadcast.PresenceStore` makes `here`, `joining` and `leaving` global: each connection joins by id, so one user with tabs on two instances is announced once, and a store that expires connections (refreshed every `Config.PresenceHeartbeat`, 20 s by default) drops the members of an instance that died. A store failure on entry refuses the subscription (fail closed). `leaving` is announced only when the store confirms the last connection left: nothing is announced when `Leave` fails or when a connection expires by TTL, and the next `here` corrects the list. `Subscription.Here(ctx, channel)` lists the members; `Subscription.Members` is deprecated. A Redis store is planned in `drivers/redis`; a store you write passes `broadcast/presencetest`, and a broker passes `sse/ssetest`. `Member.Info` is JSON: with a remote store decode it, do not type-assert it.
 
 ## Vite
 

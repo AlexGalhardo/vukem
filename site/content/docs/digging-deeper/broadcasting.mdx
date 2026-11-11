@@ -251,8 +251,8 @@ What subscribers receive:
 
 One person with three tabs counts once: `joining` is sent with their first connection and `leaving` with their last. You never receive your own `joining`. Event names that start with `presence:` are reserved (`broadcast.EventHere`, `EventJoining`, `EventLeaving`), so your own events cannot use them.
 
-<Callout type="info" title="Presence lists are per instance">
-With a broker, `joining` and `leaving` reach every instance, but the `presence:here` list only knows members connected to the same instance.
+<Callout type="info" title="Presence lists are per instance by default">
+With a broker, `joining` and `leaving` reach every instance, but the `presence:here` list only knows members connected to the same instance. Set `broadcast.Config.Presence` to a shared `broadcast.PresenceStore` and `here`, `joining` and `leaving` become global: one user with tabs on two instances is announced once, and connections of an instance that died expire (the store is refreshed every `PresenceHeartbeat`, 20 seconds by default). If the store fails when a client subscribes, the subscription is refused. `leaving` is announced only when the store confirms the last connection left, so nothing is announced when `Leave` fails or a connection expires by TTL; the next `here` corrects the list. Read the list with `Subscription.Here(ctx, channel)` (`Members` is deprecated), and decode `Member.Info` instead of type-asserting it, because a remote store returns plain JSON values. A Redis store is planned in `drivers/redis`; a store of your own passes the `broadcast/presencetest` suite.
 </Callout>
 
 ### Events

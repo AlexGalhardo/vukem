@@ -5,7 +5,7 @@ How the framework itself is tested, and the testing toolkit it ships to apps. De
 ## Policy (framework)
 
 - **Every exported feature has tests.** A PR adding a feature without tests is not merged.
-- **Coverage gate:** ≥ 80% per package in core (measured on `ubuntu/stable`), ≥ 90% for `router`, `validate` (package `z`), `session`, `orm`, `schema`, `auth`, `config` and the security boundaries `api`, `auth/hash`, `auth/totp`, `authz`, `challenge`, `crypt`, `csrf`, `httpclient`, `middleware`, `ratelimit`, `security/crawlers`, `signed`, `social`, `storage`. `go run ./internal/tools/covergate coverage.out` checks it (also in `task cover`); `cmd/`, `internal/tools`, `internal/bench`, `internal/testutil`, `internal/cli` (covered by e2e tests outside `-short`) and the conformance helpers (`cachetest`, `queuetest`, `storagetest`, `dbtest`, `sessiontest`) are exempt. Every other package under `internal/` is production code and holds the 80% gate.
+- **Coverage gate:** ≥ 80% per package in core (measured on `ubuntu/stable`), ≥ 90% for `router`, `validate` (package `z`), `session`, `orm`, `schema`, `auth`, `config` and the security boundaries `api`, `auth/hash`, `auth/totp`, `authz`, `challenge`, `crypt`, `csrf`, `httpclient`, `middleware`, `ratelimit`, `security/crawlers`, `signed`, `social`, `storage`. `go run ./internal/tools/covergate coverage.out` checks it (also in `task cover`); `cmd/`, `internal/tools`, `internal/bench`, `internal/testutil`, `internal/cli` (covered by e2e tests outside `-short`) and the conformance helpers (`cachetest`, `queuetest`, `storagetest`, `dbtest`, `sessiontest`, `ssetest`, `presencetest`) are exempt. Every other package under `internal/` is production code and holds the 80% gate.
 - **Race detector** on in CI (`-race`); Windows contributors may run without it locally (needs cgo).
 - **No network, no Docker** in unit tests. Integration tests are behind `//go:build integration`.
 - **Assertions:** stdlib `testing` + `github.com/google/go-cmp/cmp`. No testify in core.
@@ -114,6 +114,7 @@ clock.Advance(24 * time.Hour)
 | Events | `events.NewFake()` with `vukem.WithEventsFake` (or as an `events.Dispatcher`) | `App.Events` records instead of running listeners; `events.Dispatched[E](fake)` |
 | Cache | `cache.NewMemory(n)` | LRU + TTL, same `cache.Store` contract (`cache/cachetest`) |
 | Storage | `storage.NewMemory(base)` | same `storage.Disk` contract (`storage/storagetest`); the app has no disk service, the starter uses `UPLOADS_DISK=memory` |
+| SSE broker | an in-process `sse.Broker` (the suite itself uses one) | every broker passes `sse/ssetest`; a shared presence store passes `broadcast/presencetest` |
 | Rate limiting | `vukem.WithRateLimiters(factory)` (e.g. over `ratelimit.NewMemory`) | replaces the `RATE_LIMIT_STORE` factory; drive time with `testing/synctest` |
 | Social login | `social.Fake(name, callback, user)` | with `vukemtest.FakeSocial` |
 | Password hashing | `hash.Fake()` | fast parameters |
