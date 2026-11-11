@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/AlexGalhardo/vukem/errs"
 )
@@ -70,9 +71,37 @@ func (c *Ctx) Problem(status int, title, detail string) error {
 	return c.writeProblem(&Problem{Status: status, Title: title, Detail: detail})
 }
 
+// problemSlug is the last path segment of a default problem type: "Not Found"
+// becomes "not-found" and "I'm a teapot" "im-a-teapot" (only a-z, 0-9 and
+// dashes survive).
+func problemSlug(status int) string {
+	slug := strings.ReplaceAll(strings.ToLower(http.StatusText(status)), " ", "-")
+
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
+			return r
+		}
+
+		return -1
+	}, slug)
+}
+
+// defaultProblemType is the "type" a problem of status gets when nothing
+// chose one: ProblemBaseURL + "/" + the status slug when the app set a base
+// URL (it asked for type URIs), "about:blank" otherwise.
+func (c *Ctx) defaultProblemType(status int) string {
+	if c.s.ProblemBaseURL != "" {
+		if slug := problemSlug(status); slug != "" {
+			return c.s.ProblemBaseURL + "/" + slug
+		}
+	}
+
+	return "about:blank"
+}
+
 func (c *Ctx) writeProblem(p *Problem) error {
 	if p.Type == "" {
-		p.Type = "about:blank"
+		p.Type = c.defaultProblemType(p.Status)
 	}
 
 	if p.Title == "" {
@@ -132,6 +161,51 @@ func WithValidationHook(ctx context.Context, hook ValidationHook) context.Contex
 	return context.WithValue(ctx, validationHookKey{}, hook)
 }
 
+// ErrorMapper replaces an error before it is rendered. It reports false when
+// the error is not its concern.
+type ErrorMapper func(c *Ctx, err error) (error, bool)
+
+// MapError registers how errors of type E are rendered, once, for the app: fn
+// receives the first E in err's chain (errors.AsType, so a wrapped one is
+// found) and returns the error to render in its place, usually an
+// *errs.HTTPError. The returned error goes through DefaultErrorHandler like
+// any other, so the negotiation (JSON, htmx, HTML, Inertia), the headers and
+// the masking are the same:
+//
+//	web.MapError(s, func(c *web.Ctx, e *billing.InsufficientFunds) error {
+//		return errs.New(http.StatusPaymentRequired, "Not enough balance.")
+//	})
+//
+// The first registered mapper that matches wins; they do not chain. The
+// original error is the one that is logged. A mapper cannot expose a server
+// fault: an error it returns with a 5xx status is rendered like any other
+// 5xx. A mapper that returns nil leaves the original error alone. Errors
+// written with Fail from a middleware are mapped too. Register mappers while
+// the app is built, before it serves requests: the list is read on every
+// request and is not locked.
+func MapError[E error](s *Services, fn func(c *Ctx, e E) error) {
+	s.ErrorMappers = append(s.ErrorMappers, func(c *Ctx, err error) (error, bool) {
+		e, ok := errors.AsType[E](err)
+		if !ok {
+			return nil, false
+		}
+
+		return fn(c, e), true
+	})
+}
+
+// mapError returns the error the registered mappers render err as, or err
+// itself when none matches.
+func (c *Ctx) mapError(err error) error {
+	for _, m := range c.s.ErrorMappers {
+		if mapped, ok := m(c, err); ok && mapped != nil {
+			return mapped
+		}
+	}
+
+	return err
+}
+
 // DefaultErrorHandler renders err according to the client:
 //   - JSON clients get RFC 9457 problem+json (422 includes field errors;
 //     z.Issues and z.FieldError errors count as validation errors);
@@ -145,6 +219,11 @@ func WithValidationHook(ctx context.Context, hook ValidationHook) context.Contex
 // 5xx details are never sent to clients unless Services.Debug is set
 // (docs/security.md, A10).
 func DefaultErrorHandler(c *Ctx, err error) {
+	// What is rendered may be a mapped error; what is logged, and shown on
+	// the debug page, is the one that happened.
+	original := err
+	err = c.mapError(err)
+
 	status := errs.Status(err)
 	he, _ := errors.AsType[*errs.HTTPError](err)
 	verr, _ := errors.AsType[*errs.ValidationError](err)
@@ -164,10 +243,10 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		verr = nil
 	}
 
-	logError(c, status, err, level)
+	logError(c, status, original, level)
 
 	if c.s.Debug && status >= 500 {
-		c.writeDebugReport(status, err)
+		c.writeDebugReport(status, original)
 	}
 
 	if c.w.Written() {
@@ -192,7 +271,7 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		detail = fmt.Sprintf("%d field(s) are invalid.", len(verr.Fields))
 		title = "Validation failed"
 	case c.s.Debug:
-		detail = err.Error()
+		detail = original.Error()
 	}
 
 	if he != nil && status < 500 && he.Title != "" && verr == nil {
@@ -225,10 +304,10 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	case verr != nil && !c.IsHTMX() && c.r.Method != http.MethodGet && c.r.Method != http.MethodHead &&
 		c.validationHook(verr):
 	case c.s.Debug && status >= 500 && !c.IsHTMX():
-		c.renderDebugPage(status, err)
+		c.renderDebugPage(status, original)
 	case c.s.ErrorPage != nil && !c.IsHTMX() && c.s.ErrorPage(c, safeErrorPage(status, title, detail, verr)):
 	default:
-		c.renderErrorPage(status, title, detail, verr, err)
+		c.renderErrorPage(status, title, detail, verr, original)
 	}
 }
 

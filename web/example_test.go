@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -68,4 +69,29 @@ func ExampleParse() {
 	// Output:
 	// 201 created Gophers
 	// 422
+}
+
+// insufficientFundsError is a domain error the app wants to answer with a 402.
+type insufficientFundsError struct{ Balance int }
+
+func (e *insufficientFundsError) Error() string { return "ledger: balance too low" }
+
+func ExampleMapError() {
+	s := &web.Services{Log: slog.New(slog.DiscardHandler)}
+
+	// Once, while the app is built: errors of this type render as a 402.
+	web.MapError(s, func(_ *web.Ctx, e *insufficientFundsError) error {
+		return errs.New(http.StatusPaymentRequired, "Not enough balance.").WithExtension("balance", e.Balance)
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/pay", http.NoBody)
+	req.Header.Set("Accept", "application/json")
+
+	rec := httptest.NewRecorder()
+	web.NewCtx(rec, req, s).Serve(func(*web.Ctx) error {
+		return fmt.Errorf("pay: %w", &insufficientFundsError{Balance: 3})
+	})
+
+	fmt.Println(rec.Code, strings.Contains(rec.Body.String(), `"balance":3`))
+	// Output: 402 true
 }
