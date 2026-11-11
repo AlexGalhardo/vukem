@@ -40,6 +40,9 @@ type relationField interface {
 // relationSetter receives eager-loaded values.
 type relationSetter interface {
 	setLoaded(values []reflect.Value)
+	// loadedItems are the addressable related structs, for the next level
+	// of a nested With.
+	loadedItems() []reflect.Value
 }
 
 // BelongsTo is a relation to the model referenced by a foreign key on this
@@ -135,6 +138,32 @@ func (r *HasOne[T]) setLoaded(vs []reflect.Value)    { r.v, r.loaded = first[T](
 func (r *HasMany[T]) setLoaded(vs []reflect.Value)   { r.items, r.loaded = all[T](vs), true }
 func (r *ManyToMany[T]) setLoaded(vs []reflect.Value) {
 	r.items, r.loaded = all[T](vs), true
+}
+
+func (r *BelongsTo[T]) loadedItems() []reflect.Value { return ptrItem(r.v) }
+func (r *HasOne[T]) loadedItems() []reflect.Value    { return ptrItem(r.v) }
+func (r *HasMany[T]) loadedItems() []reflect.Value   { return sliceItems(r.items) }
+func (r *ManyToMany[T]) loadedItems() []reflect.Value {
+	return sliceItems(r.items)
+}
+
+func ptrItem[T any](v *T) []reflect.Value {
+	if v == nil {
+		return nil
+	}
+
+	return []reflect.Value{reflect.ValueOf(v).Elem()}
+}
+
+func sliceItems[T any](items []T) []reflect.Value {
+	out := make([]reflect.Value, len(items))
+	rv := reflect.ValueOf(items)
+
+	for i := range out {
+		out[i] = rv.Index(i)
+	}
+
+	return out
 }
 
 func one[T any](v *T, loaded bool) (*T, error) {
@@ -238,30 +267,231 @@ func buildRelation(rt reflect.Type, f reflect.StructField) relation {
 	return r
 }
 
+// withSpec is one With or WithWhere call: the relation path ("Comments.User"
+// loads Comments, then User of every loaded comment) and, for WithWhere, the
+// restriction of the last relation's query.
+type withSpec struct {
+	path       []string
+	restricted bool
+	where      string // fragment with "?" placeholders; "" for none
+	args       []any
+	orders     []string
+	trashed    int
+}
+
 // With eager loads relations (by field name) for Get, First, Find,
 // Paginate and CursorPaginate: one query per relation, batched with IN, so
-// N rows cost 1 + len(relations) queries. Each does not eager load.
+// N rows cost 1 + len(relations) queries. A dotted name loads a nested
+// relation ("Comments.User": one more query for the users of every loaded
+// comment); each level loads all its rows, with no limit per parent. Each
+// does not eager load.
 func (q Query[T]) With(relations ...string) Query[T] {
 	for _, name := range relations {
-		if _, ok := q.m.relations[name]; !ok {
-			return q.fail(fmt.Errorf("orm: %s has no relation %q", q.m.typ.Name(), name))
+		if _, err := q.relationPath(name); err != nil {
+			return q.fail(err)
 		}
 	}
 
 	q = q.clone()
-	q.with = append(slices.Clip(q.with), relations...)
+
+	for _, name := range relations {
+		q.withs = append(q.withs, withSpec{path: strings.Split(name, ".")})
+	}
 
 	return q
 }
 
-// loadRelations fills the requested relations of items (a []T) in place.
-func loadRelations(ctx context.Context, ex database.Executor, m *meta, items reflect.Value, names []string) error {
+// relationPath validates a dotted relation path against the models it walks
+// and returns the last relation.
+func (q Query[T]) relationPath(name string) (relation, error) {
+	m := q.m
+
+	var rel relation
+
+	for seg := range strings.SplitSeq(name, ".") {
+		var ok bool
+		if rel, ok = m.relations[seg]; !ok {
+			return relation{}, fmt.Errorf("orm: %s has no relation %q", m.typ.Name(), seg)
+		}
+
+		m = metaOfType(rel.related)
+	}
+
+	return rel, nil
+}
+
+// WithWhere is With for one relation (a dotted path restricts its last
+// level) whose rows are narrowed by fn: the Where conditions and OrderBy of
+// the query fn returns apply to the relation's query. Limit, Offset, joins,
+// locks and projections are errors, since the rows are loaded for every
+// parent at once.
+func (q Query[T]) WithWhere[R any](relation string, fn func(Query[R]) Query[R]) Query[T] {
+	rel, err := q.relationPath(relation)
+	if err != nil {
+		return q.fail(err)
+	}
+
+	if rel.related != reflect.TypeFor[R]() {
+		return q.fail(fmt.Errorf("orm: relation %q of %s is %s, not %s",
+			relation, q.m.typ.Name(), rel.related, reflect.TypeFor[R]()))
+	}
+
+	spec := withSpec{path: strings.Split(relation, "."), restricted: true}
+
+	if slices.ContainsFunc(q.withs, func(w withSpec) bool { return w.restricted && slices.Equal(w.path, spec.path) }) {
+		return q.fail(fmt.Errorf("orm: WithWhere(%q) given more than once", relation))
+	}
+
+	if fn != nil {
+		sq := fn(QueryOf[R](q.ex))
+		if sq.err != nil {
+			return q.fail(sq.err)
+		}
+
+		if sq.limit >= 0 || sq.offset > 0 || sq.lock != "" || len(sq.joins) > 0 || len(sq.withs) > 0 ||
+			len(sq.selects) > 0 || len(sq.exprs) > 0 || len(sq.groups) > 0 || sq.distinct || len(sq.counts) > 0 {
+			return q.fail(errors.New("orm: WithWhere supports Where and OrderBy only"))
+		}
+
+		spec.trashed = sq.trashed
+		spec.orders = make([]string, len(sq.orders))
+
+		for i, o := range sq.orders {
+			spec.orders[i] = sq.resolve(o)
+		}
+
+		if len(sq.conds) > 0 {
+			frag, args := joinConds(sq.conds)
+			spec.where, spec.args = sq.resolve(frag), args
+		}
+	}
+
+	q = q.clone()
+	q.withs = append(q.withs, spec)
+
+	return q
+}
+
+// WithCount loads the number of related rows of HasMany and ManyToMany
+// relations into the int64 field tagged orm:"count:<Relation>": one query
+// per relation, counting by parent key in batches.
+func (q Query[T]) WithCount(relations ...string) Query[T] {
+	for _, name := range relations {
+		rel, ok := q.m.relations[name]
+		if !ok {
+			return q.fail(fmt.Errorf("orm: %s has no relation %q", q.m.typ.Name(), name))
+		}
+
+		if rel.kind != relHasMany && rel.kind != relManyToMany {
+			return q.fail(
+				fmt.Errorf("orm: WithCount supports HasMany and ManyToMany, not %q of %s", name, q.m.typ.Name()),
+			)
+		}
+
+		if _, ok := q.m.counts[name]; !ok {
+			return q.fail(fmt.Errorf("orm: %s has no field tagged orm:\"count:%s\"", q.m.typ.Name(), name))
+		}
+	}
+
+	q = q.clone()
+	q.counts = append(q.counts, relations...)
+
+	return q
+}
+
+// sql is the tail of an eager-loading query after "col IN (...)": the soft
+// delete filter, the restriction of a WithWhere and the order, with the
+// arguments of the restriction. A nil spec is the default: live rows by key.
+func (s *withSpec) sql(d database.Dialect, rm *meta) (string, []any) {
+	var (
+		b    strings.Builder
+		args []any
+	)
+
+	trashed := 0
+	if s != nil {
+		trashed = s.trashed
+	}
+
+	if rm.soft {
+		switch trashed {
+		case 0:
+			b.WriteString(" AND " + d.Quote("deleted_at") + " IS NULL")
+		case 2:
+			b.WriteString(" AND " + d.Quote("deleted_at") + " IS NOT NULL")
+		}
+	}
+
+	if s != nil && s.where != "" {
+		b.WriteString(" AND (" + s.where + ")")
+		args = s.args
+	}
+
+	if s != nil && len(s.orders) > 0 {
+		b.WriteString(" ORDER BY " + strings.Join(s.orders, ", "))
+	} else {
+		b.WriteString(" ORDER BY " + d.Quote(rm.pk))
+	}
+
+	return b.String(), args
+}
+
+// loadNode is a relation to load and the relations nested under it.
+type loadNode struct {
+	name     string
+	spec     *withSpec // restriction, when a WithWhere named this level
+	children []*loadNode
+}
+
+func buildLoadTree(specs []withSpec) []*loadNode {
+	var roots []*loadNode
+
+	for i := range specs {
+		level := &roots
+
+		for d, seg := range specs[i].path {
+			idx := slices.IndexFunc(*level, func(n *loadNode) bool { return n.name == seg })
+			if idx < 0 {
+				*level = append(*level, &loadNode{name: seg})
+				idx = len(*level) - 1
+			}
+
+			node := (*level)[idx]
+			if d == len(specs[i].path)-1 && specs[i].restricted {
+				node.spec = &specs[i]
+			}
+
+			level = &node.children
+		}
+	}
+
+	return roots
+}
+
+// loadRelations fills the requested relations of items (a []T) in place,
+// then the counts.
+func loadRelations(
+	ctx context.Context, ex database.Executor, m *meta, items reflect.Value, specs []withSpec, counts []string,
+) error {
 	if items.Len() == 0 {
 		return nil
 	}
 
-	for _, name := range names {
-		rel := m.relations[name]
+	elems := make([]reflect.Value, items.Len())
+	for i := range elems {
+		elems[i] = items.Index(i)
+	}
+
+	if err := loadLevel(ctx, ex, m, elems, buildLoadTree(specs)); err != nil {
+		return err
+	}
+
+	return loadCounts(ctx, ex, m, elems, counts)
+}
+
+func loadLevel(ctx context.Context, ex database.Executor, m *meta, elems []reflect.Value, nodes []*loadNode) error {
+	for _, n := range nodes {
+		rel := m.relations[n.name]
 		rm := metaOfType(rel.related)
 
 		err := m.singleKey("a relation")
@@ -270,49 +500,157 @@ func loadRelations(ctx context.Context, ex database.Executor, m *meta, items ref
 		}
 
 		if err != nil {
-			return fmt.Errorf("orm: load %s.%s: %w", m.typ.Name(), name, err)
+			return fmt.Errorf("orm: load %s.%s: %w", m.typ.Name(), n.name, err)
 		}
 
 		switch rel.kind {
 		case relBelongsTo:
-			err = loadKeyed(ctx, ex, items, rel, rm, m.byColumn[rel.fk], rm.pk)
+			err = loadKeyed(ctx, ex, elems, rel, rm, m.byColumn[rel.fk], rm.pk, n.spec)
 		case relHasOne, relHasMany:
-			err = loadKeyed(ctx, ex, items, rel, rm, m.byColumn[m.pk], rel.fk)
+			err = loadKeyed(ctx, ex, elems, rel, rm, m.byColumn[m.pk], rel.fk, n.spec)
 		case relManyToMany:
-			err = loadPivot(ctx, ex, m, items, rel, rm)
+			err = loadPivot(ctx, ex, m, elems, rel, rm, n.spec)
 		}
 
 		if err != nil {
-			return fmt.Errorf("orm: load %s.%s: %w", m.typ.Name(), name, err)
+			return fmt.Errorf("orm: load %s.%s: %w", m.typ.Name(), n.name, err)
+		}
+
+		if len(n.children) == 0 {
+			continue
+		}
+
+		var next []reflect.Value
+
+		for _, e := range elems {
+			s, _ := reflect.TypeAssert[relationSetter](e.FieldByIndex(rel.index).Addr())
+			next = append(next, s.loadedItems()...)
+		}
+
+		if err := loadLevel(ctx, ex, rm, next, n.children); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
+// loadCounts fills the orm:"count:..." fields: SELECT fk, COUNT(*) ... GROUP
+// BY fk for the parents' keys, a batch at a time.
+func loadCounts(ctx context.Context, ex database.Executor, m *meta, elems []reflect.Value, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+
+	if err := m.singleKey("WithCount"); err != nil {
+		return err
+	}
+
+	local := m.byColumn[m.pk]
+	d := ex.Dialect()
+
+	keys := make([]any, 0, len(elems))
+
+	for _, e := range elems {
+		if k, ok := keyOf(e.FieldByIndex(local.index)); ok {
+			keys = append(keys, k)
+		}
+	}
+
+	keys = uniq(keys)
+
+	for _, name := range names {
+		rel := m.relations[name]
+		rm := metaOfType(rel.related)
+		counts := map[any]int64{}
+
+		for chunk := range slices.Chunk(keys, eagerChunk) {
+			err := eachRow(
+				ctx,
+				ex,
+				rebind(relationCountSQL(d, rel, rm, len(chunk)), d),
+				chunk,
+				func(rows *sql.Rows) error {
+					var (
+						k any
+						n int64
+					)
+
+					if err := rows.Scan(&k, &n); err != nil {
+						return err
+					}
+
+					counts[normKey(k)] = n
+
+					return nil
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("orm: count %s.%s: %w", m.typ.Name(), name, err)
+			}
+		}
+
+		field := m.counts[name]
+
+		for _, e := range elems {
+			var n int64
+			if k, ok := keyOf(e.FieldByIndex(local.index)); ok {
+				n = counts[k]
+			}
+
+			e.FieldByIndex(field).SetInt(n)
+		}
+	}
+
+	return nil
+}
+
+// relationCountSQL counts the related rows of a HasMany or ManyToMany relation by
+// parent key; soft-deleted related rows are not counted.
+func relationCountSQL(d database.Dialect, rel relation, rm *meta, n int) string {
+	if rel.kind == relManyToMany {
+		q := "SELECT " + d.Quote(rel.pivot+"."+rel.fk) + ", COUNT(*) FROM " + d.Quote(rel.pivot) +
+			" INNER JOIN " + d.Quote(rm.table) + " ON " + d.Quote(rm.table+"."+rm.pk) + " = " +
+			d.Quote(rel.pivot+"."+rel.rk) + " WHERE " + d.Quote(rel.pivot+"."+rel.fk) + " IN (" + marks(n) + ")"
+		if rm.soft {
+			q += " AND " + d.Quote(rm.table+".deleted_at") + " IS NULL"
+		}
+
+		return q + " GROUP BY " + d.Quote(rel.pivot+"."+rel.fk)
+	}
+
+	q := "SELECT " + d.Quote(rel.fk) + ", COUNT(*) FROM " + d.Quote(rm.table) +
+		" WHERE " + d.Quote(rel.fk) + " IN (" + marks(n) + ")"
+	if rm.soft {
+		q += " AND " + d.Quote("deleted_at") + " IS NULL"
+	}
+
+	return q + " GROUP BY " + d.Quote(rel.fk)
+}
+
 // loadKeyed loads related rows whose column relCol matches the value of
 // local in each item.
-func loadKeyed(ctx context.Context, ex database.Executor, items reflect.Value, rel relation, rm *meta,
-	local field, relCol string,
+func loadKeyed(ctx context.Context, ex database.Executor, items []reflect.Value, rel relation, rm *meta,
+	local field, relCol string, spec *withSpec,
 ) error {
 	if local.index == nil {
 		return fmt.Errorf("missing local column %q", rel.fk)
 	}
 
-	keys := make([]any, 0, items.Len())
-	for i := range items.Len() {
-		if k, ok := keyOf(items.Index(i).FieldByIndex(local.index)); ok {
+	keys := make([]any, 0, len(items))
+	for i := range items {
+		if k, ok := keyOf(items[i].FieldByIndex(local.index)); ok {
 			keys = append(keys, k)
 		}
 	}
 
-	byKey, err := selectIn(ctx, ex, rm, relCol, uniq(keys))
+	byKey, _, err := selectIn(ctx, ex, rm, relCol, uniq(keys), spec)
 	if err != nil {
 		return err
 	}
 
-	for i := range items.Len() {
-		item := items.Index(i)
+	for i := range items {
+		item := items[i]
 
 		var vals []reflect.Value
 		if k, ok := keyOf(item.FieldByIndex(local.index)); ok {
@@ -325,12 +663,14 @@ func loadKeyed(ctx context.Context, ex database.Executor, items reflect.Value, r
 	return nil
 }
 
-func loadPivot(ctx context.Context, ex database.Executor, m *meta, items reflect.Value, rel relation, rm *meta) error {
+func loadPivot(
+	ctx context.Context, ex database.Executor, m *meta, items []reflect.Value, rel relation, rm *meta, spec *withSpec,
+) error {
 	local := m.byColumn[m.pk]
 
-	keys := make([]any, 0, items.Len())
-	for i := range items.Len() {
-		if k, ok := keyOf(items.Index(i).FieldByIndex(local.index)); ok {
+	keys := make([]any, 0, len(items))
+	for i := range items {
+		if k, ok := keyOf(items[i].FieldByIndex(local.index)); ok {
 			keys = append(keys, k)
 		}
 	}
@@ -363,18 +703,28 @@ func loadPivot(ctx context.Context, ex database.Executor, m *meta, items reflect
 		}
 	}
 
-	byKey, err := selectIn(ctx, ex, rm, rm.pk, uniq(relKeys))
+	byKey, order, err := selectIn(ctx, ex, rm, rm.pk, uniq(relKeys), spec)
 	if err != nil {
 		return err
 	}
 
-	for i := range items.Len() {
-		item := items.Index(i)
+	rank := make(map[any]int, len(order))
+	for i, k := range order {
+		rank[k] = i
+	}
+
+	for i := range items {
+		item := items[i]
 
 		var vals []reflect.Value
 
 		if k, ok := keyOf(item.FieldByIndex(local.index)); ok {
-			for _, rk := range links[k] {
+			// The related rows in the order the query returned them (a
+			// WithWhere OrderBy), not in the order of the pivot rows.
+			rks := slices.Clone(links[k])
+			slices.SortStableFunc(rks, func(a, b any) int { return rank[a] - rank[b] })
+
+			for _, rk := range rks {
 				vals = append(vals, byKey[rk]...)
 			}
 		}
@@ -393,15 +743,19 @@ func selectIn(
 	rm *meta,
 	col string,
 	keys []any,
-) (map[any][]reflect.Value, error) {
+	spec *withSpec,
+) (map[any][]reflect.Value, []any, error) {
 	out := map[any][]reflect.Value{}
+
+	var order []any // the keys of col in the order the rows came back
+
 	if len(keys) == 0 {
-		return out, nil
+		return out, order, nil
 	}
 
 	f, ok := rm.byColumn[col]
 	if !ok {
-		return nil, fmt.Errorf("%s has no column %q", rm.table, col)
+		return nil, nil, fmt.Errorf("%s has no column %q", rm.table, col)
 	}
 
 	d := ex.Dialect()
@@ -414,15 +768,14 @@ func selectIn(
 	for chunk := range slices.Chunk(keys, eagerChunk) {
 		q := "SELECT " + strings.Join(cols, ", ") + " FROM " + d.Quote(rm.table) + " WHERE " + d.Quote(col) +
 			" IN (" + marks(len(chunk)) + ")"
-		if rm.soft {
-			q += " AND " + d.Quote("deleted_at") + " IS NULL"
-		}
 
-		q += " ORDER BY " + d.Quote(rm.pk)
+		tail, extra := spec.sql(d, rm)
+		q += tail
+		args := append(slices.Clone(chunk), extra...)
 
 		var scan func(*sql.Rows, reflect.Value) error
 
-		err := eachRow(ctx, ex, rebind(q, d), chunk, func(rows *sql.Rows) error {
+		err := eachRow(ctx, ex, rebind(q, d), args, func(rows *sql.Rows) error {
 			if scan == nil {
 				var err error
 				if scan, err = rm.scanner(rows, ex); err != nil {
@@ -436,17 +789,21 @@ func selectIn(
 			}
 
 			if k, ok := keyOf(v.FieldByIndex(f.index)); ok {
+				if len(out[k]) == 0 {
+					order = append(order, k)
+				}
+
 				out[k] = append(out[k], v)
 			}
 
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	return out, nil
+	return out, order, nil
 }
 
 func setRelation(item reflect.Value, rel relation, vals []reflect.Value) {
