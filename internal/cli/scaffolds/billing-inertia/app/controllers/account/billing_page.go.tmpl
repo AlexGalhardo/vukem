@@ -2,10 +2,10 @@ package account
 
 import (
 	"github.com/AlexGalhardo/vukem/auth"
-	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/web"
 
 	"{{.Module}}/app/models"
+	"{{.Module}}/app/pages"
 )
 
 // Show renders the plans and the current subscription.
@@ -20,10 +20,15 @@ func (h *BillingHandlers) Show(c *web.Ctx) error {
 		return err
 	}
 
-	return inertia.Render(c, "Billing", inertia.Props{
-		"plans":        page.Plans,
-		"subscription": page.Subscription,
-		"subscribed":   page.Subscribed,
-		"checkout":     c.Query("checkout") == "success",
+	plans := make([]pages.BillingPlan, len(page.Plans))
+	for i, p := range page.Plans {
+		plans[i] = pages.BillingPlan(p)
+	}
+
+	return pages.Billing.Render(c, pages.BillingProps{
+		Plans:        plans,
+		Subscription: (*pages.BillingSubscription)(page.Subscription),
+		Subscribed:   page.Subscribed,
+		Checkout:     c.Query("checkout") == "success",
 	})
 }

@@ -1,0 +1,20 @@
+package pages
+
+import "github.com/AlexGalhardo/vukem/inertia"
+
+// The typed pages of vukem install:auth.
+var (
+	Login          = inertia.Define[struct{}]("Auth/Login")
+	Register       = inertia.Define[struct{}]("Auth/Register")
+	ForgotPassword = inertia.Define[struct{}]("Auth/ForgotPassword")
+	CheckEmail     = inertia.Define[struct{}]("Auth/CheckEmail")
+	VerifyEmail    = inertia.Define[struct{}]("Auth/VerifyEmail")
+	Dashboard      = inertia.Define[struct{}]("Dashboard")
+	ResetPassword  = inertia.Define[ResetPasswordProps]("Auth/ResetPassword")
+)
+
+// ResetPasswordProps are the props of Auth/ResetPassword.
+type ResetPasswordProps struct {
+	Token string `json:"token"`
+	Email string `json:"email"`
+}

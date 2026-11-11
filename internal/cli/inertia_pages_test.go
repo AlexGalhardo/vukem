@@ -39,3 +39,39 @@ func TestInertiaStartersPagePropsAreInSync(t *testing.T) {
 		})
 	}
 }
+
+func TestAddLocalImport(t *testing.T) {
+	t.Parallel()
+
+	const module = "example.com/app"
+
+	tests := []struct {
+		name, in, want string
+	}{
+		{
+			name: "sorted inside the local group",
+			in:   "package b\n\nimport (\n\tvukem \"x/vukem\"\n\n\t\"example.com/app/app/jobs\"\n\t\"example.com/app/database\"\n)\n",
+			want: "package b\n\nimport (\n\tvukem \"x/vukem\"\n\n\t\"example.com/app/app/jobs\"\n\t\"example.com/app/app/pages\"\n\t\"example.com/app/database\"\n)\n",
+		},
+		{
+			name: "after the last local import",
+			in:   "package b\n\nimport (\n\tvukem \"x/vukem\"\n\n\t\"example.com/app/app/jobs\"\n)\n",
+			want: "package b\n\nimport (\n\tvukem \"x/vukem\"\n\n\t\"example.com/app/app/jobs\"\n\t\"example.com/app/app/pages\"\n)\n",
+		},
+		{
+			name: "a new group when the project has no local import",
+			in:   "package b\n\nimport (\n\tvukem \"x/vukem\"\n)\n",
+			want: "package b\n\nimport (\n\tvukem \"x/vukem\"\n\n\t\"example.com/app/app/pages\"\n)\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := string(addLocalImport([]byte(tt.in), module, module+"/app/pages")); got != tt.want {
+				t.Errorf("addLocalImport() =\n%s\nwant\n%s", got, tt.want)
+			}
+		})
+	}
+}

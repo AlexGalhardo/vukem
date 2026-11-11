@@ -137,6 +137,8 @@ func installBilling(set *flag.FlagSet) func(context.Context, *Env, []string) err
 			{"database/migrations/registry.go", "All", "m" + data["TS5"] + "AddBillingTables()"},
 			{"routes/registry.go", "All", "Billing"},
 		}
+		regs = append(regs, pageRegistrations(env, "Billing")...)
+
 		if err := finishInstall(ctx, env, regs); err != nil {
 			return err
 		}

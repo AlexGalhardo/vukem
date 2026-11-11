@@ -9,6 +9,8 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
 
 // inertiaReplaced lists the HTMX starter files an Inertia project drops;
@@ -95,6 +97,38 @@ func inertiaFramework(env *Env) string {
 	return ""
 }
 
+// pageRegistrations lists the typed pages an installer adds to pages.All in
+// an Inertia project, for the codemod; other projects have none.
+func pageRegistrations(env *Env, pages ...string) []registration {
+	if inertiaFramework(env) == "" {
+		return nil
+	}
+
+	regs := make([]registration, len(pages))
+	for i, p := range pages {
+		regs[i] = registration{"app/pages/pages.go", "All", p + ".Info()"}
+	}
+
+	return regs
+}
+
+// refreshPageProps regenerates resources/js/page-props.ts after an installer
+// added typed pages. It only warns on failure: the install itself worked, and
+// vukem codegen:pages (or vukem serve) writes the file later.
+func refreshPageProps(ctx context.Context, env *Env) {
+	if !exists(env, filepath.Join("resources", "js", "page-props.ts")) {
+		return
+	}
+
+	if err := tool(ctx, env, "go", "run", "./cmd/app", "codegen:pages"); err != nil {
+		fmt.Fprintf(
+			env.Stdout,
+			"note: could not regenerate resources/js/page-props.ts (%v); run vukem codegen:pages\n",
+			err,
+		)
+	}
+}
+
 // authScaffolds are the install:auth pages for the project's frontend.
 func authScaffolds(env *Env) []string {
 	if fw := inertiaFramework(env); fw != "" {
@@ -170,8 +204,6 @@ func applyInertia(env *Env, framework string) error {
 func patchInertiaApp(src []byte, module string) ([]byte, error) {
 	const config = "vukem.WithInertia(inertia.Config{Pages: pages.All(), SharedType: reflect.TypeFor[pages.Shared]()}),"
 
-	pagesImport := "\t\"" + module + "/app/pages\"\n"
-
 	src = bytes.Replace(src, []byte("\t\tvukem.WithVite(resources.Public()),\n"),
 		[]byte("\t\tvukem.WithVite(resources.Public()),\n\t\t"+config+"\n"), 1)
 	src = bytes.Replace(
@@ -183,15 +215,7 @@ func patchInertiaApp(src []byte, module string) ([]byte, error) {
 		1,
 	)
 
-	// The starter lists app/listeners before app/views; keep the pages in
-	// the same group, or after the framework imports when it is not there.
-	listeners := []byte("\t\"" + module + "/app/listeners\"\n")
-	if bytes.Contains(src, listeners) {
-		src = bytes.Replace(src, listeners, append(listeners, pagesImport...), 1)
-	} else {
-		inertiaImport := []byte("\t\"github.com/AlexGalhardo/vukem/inertia\"\n")
-		src = bytes.Replace(src, inertiaImport, append(inertiaImport, pagesImport...), 1)
-	}
+	src = addLocalImport(src, module, module+"/app/pages")
 
 	if !bytes.Contains(src, []byte("vukem.WithInertia(")) {
 		return nil, errors.New("bootstrap/app.go: no vukem.WithVite(resources.Public()) line to add Inertia after")
@@ -207,4 +231,47 @@ func patchInertiaApp(src []byte, module string) ([]byte, error) {
 	}
 
 	return out, nil
+}
+
+// addLocalImport adds path to the import block of src in the group of the
+// project's own packages (the last one in the gci layout of the starters), in
+// sorted order. A block without such a group gets one at the end.
+func addLocalImport(src []byte, module, path string) []byte {
+	const open = "import (\n"
+
+	start := bytes.Index(src, []byte(open))
+	if start < 0 {
+		return src
+	}
+
+	start += len(open)
+
+	end := start + bytes.Index(src[start:], []byte("\n)"))
+	lines := strings.Split(string(src[start:end]), "\n")
+	line := "\t\"" + path + "\""
+	prefix := "\t\"" + module + "/"
+
+	at, last := -1, -1
+
+	for i, l := range lines {
+		if !strings.HasPrefix(l, prefix) {
+			continue
+		}
+
+		last = i
+		if at < 0 && l > line {
+			at = i
+		}
+	}
+
+	switch {
+	case at >= 0:
+		lines = slices.Insert(lines, at, line)
+	case last >= 0:
+		lines = slices.Insert(lines, last+1, line)
+	default:
+		lines = append(lines, "", line)
+	}
+
+	return slices.Concat(src[:start], []byte(strings.Join(lines, "\n")), src[end:])
 }
