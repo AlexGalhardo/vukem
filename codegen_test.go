@@ -519,3 +519,26 @@ func TestOpenAPIExport_RunWithoutFlags(t *testing.T) {
 		t.Errorf("openapi:export without flags = %s", got)
 	}
 }
+
+func TestRoutesTypeScriptIncludesHost(t *testing.T) {
+	t.Parallel()
+
+	got := routesTypeScript([]router.RouteInfo{
+		{Name: "api.users", Method: "GET", Path: "/users", Host: "api.example.com"},
+		{Name: "home", Method: "GET", Path: "/{$}"},
+	})
+
+	for _, want := range []string{
+		`"api.users": { method: "GET", path: "/users", host: "api.example.com" },`,
+		`"home": { method: "GET", path: "/" },`,
+		`"//" + spec.host`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q", want)
+		}
+	}
+
+	if n := strings.Count(got, "host:"); n != 1 {
+		t.Errorf("host keys = %d, want 1 (only the route with a host)", n)
+	}
+}

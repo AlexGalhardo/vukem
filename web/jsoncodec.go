@@ -71,11 +71,20 @@ func decodeJSONReader(r io.Reader, v any, strict bool) error {
 		return err
 	}
 
-	if _, err := dec.ReadToken(); !errors.Is(err, io.EOF) {
+	switch _, err := dec.ReadToken(); {
+	case errors.Is(err, io.EOF):
+		return nil
+	case err == nil:
 		return errTrailingJSON
-	}
+	default:
+		// A syntax error here is a second, malformed value; read errors (a
+		// body over the limit, a dropped connection) keep their type.
+		if _, ok := errors.AsType[*jsontext.SyntacticError](err); ok {
+			return errTrailingJSON
+		}
 
-	return nil
+		return err
+	}
 }
 
 // unknownField reports the object member RejectUnknownMembers refused.

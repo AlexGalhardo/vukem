@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -299,7 +300,8 @@ func bodyError(err error) error {
 func FormToMap(values url.Values) map[string]any {
 	root := map[string]any{}
 
-	for key, vals := range values {
+	for _, key := range slices.Sorted(maps.Keys(values)) {
+		vals := values[key]
 		parts := splitKey(key)
 		if len(parts) == 0 || len(parts) > maxInputDepth {
 			continue

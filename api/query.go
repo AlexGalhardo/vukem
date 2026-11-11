@@ -71,8 +71,12 @@ func Fields(cols ...string) Option { return func(s *spec) { s.fields = cols } }
 
 // PerPage sets the default and maximum ?per_page (larger values are
 // capped); the maximum also replaces orm.DefaultMaxPerPage for the query.
+// Values below 1 are raised to 1; def is capped at maxPerPage.
 func PerPage(def, maxPerPage int) Option {
-	return func(s *spec) { s.perPage, s.maxPerPage = def, maxPerPage }
+	return func(s *spec) {
+		s.maxPerPage = max(maxPerPage, 1)
+		s.perPage = min(max(def, 1), s.maxPerPage)
+	}
 }
 
 // Request is a query refined by the allowlisted conventions.

@@ -36,7 +36,8 @@ type RouteArgs<N extends RouteName> = RouteParams[N] extends Record<string, neve
 export function route<N extends RouteName>(name: N, ...args: RouteArgs<N>): string {
   const params = (args[0] ?? {}) as Record<string, RouteParam | undefined>;
   const query = args[1];
-  let url = (routes[name].path as string).replace(/\{([^}]+)\}/g, (_match: string, wild: string): string => {
+  const spec = routes[name] as { path: string; host?: string };
+  let url = spec.path.replace(/\{([^}]+)\}/g, (_match: string, wild: string): string => {
     const multi = wild.slice(-3) === "...";
     const key = multi ? wild.slice(0, -3) : wild;
     const value = params[key];
@@ -46,6 +47,9 @@ export function route<N extends RouteName>(name: N, ...args: RouteArgs<N>): stri
     const raw = String(value);
     return multi ? raw.split("/").map(encodeURIComponent).join("/") : encodeURIComponent(raw);
   });
+  if (spec.host) {
+    url = "//" + spec.host + url;
+  }
   if (query) {
     const parts: string[] = [];
     for (const key of Object.keys(query)) {

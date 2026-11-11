@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"testing/iotest"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -1165,5 +1166,62 @@ func TestSecurity_A01_ClientIPFollowsTrustedProxies(t *testing.T) {
 
 	if got := ClientIP(r); got != "10.0.0.1" {
 		t.Errorf("ClientIP without services = %q, want the peer", got)
+	}
+}
+
+func TestFormToMapIsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	for _, values := range []url.Values{
+		{"a": {"1"}, "a[b]": {"2"}},
+		{"x[0]": {"p"}, "x": {"q"}},
+	} {
+		first := FormToMap(values)
+
+		for range 200 {
+			if diff := cmp.Diff(first, FormToMap(values)); diff != "" {
+				t.Fatalf("FormToMap(%v) changed between calls (-first +got):\n%s", values, diff)
+			}
+		}
+	}
+}
+
+func TestDecodeJSONReaderKeepsReadErrors(t *testing.T) {
+	t.Parallel()
+
+	tooLarge := &http.MaxBytesError{Limit: 8}
+
+	tests := []struct {
+		name string
+		r    io.Reader
+		want func(error) bool
+	}{
+		{
+			"read error after the value",
+			io.MultiReader(strings.NewReader(`{"a":1}`), iotest.ErrReader(tooLarge)),
+			func(err error) bool { _, ok := errors.AsType[*http.MaxBytesError](err); return ok },
+		},
+		{
+			"second value",
+			strings.NewReader(`{"a":1} {"b":2}`),
+			func(err error) bool { return errors.Is(err, errTrailingJSON) },
+		},
+		{
+			"trailing garbage",
+			strings.NewReader(`{"a":1} }`),
+			func(err error) bool { return errors.Is(err, errTrailingJSON) },
+		},
+		{"trailing whitespace", strings.NewReader("{\"a\":1}\n"), func(err error) bool { return err == nil }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var v map[string]any
+			if err := decodeJSONReader(tt.r, &v, false); !tt.want(err) {
+				t.Errorf("decodeJSONReader() error = %v", err)
+			}
+		})
 	}
 }
