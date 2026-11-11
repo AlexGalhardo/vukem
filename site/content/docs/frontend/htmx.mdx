@@ -187,6 +187,53 @@ Under the hood:
 - `web.WithStatus(code)` changes the status (default `200`), for example `web.WithStatus(http.StatusCreated)`.
 - `c.Fragment` ignores the request type. Use it for endpoints that only ever serve htmx.
 
+## Typed views and view:check
+
+`c.Render(name, data any)` accepts any value, so a misspelt field, a renamed route or an `hx-target` with no matching element only fails at runtime. `view.Of[T]` declares the data type of a view, and `vukem view:check` compares the template with it.
+
+```go title="app/views/views.go"
+type PostsIndexData struct {
+	Posts  []models.Post
+	Search string
+}
+
+var PostsIndex = view.Of[PostsIndexData]("posts/index", "post-list")
+
+func All() []view.Decl { return []view.Decl{PostsIndex.Decl()} }
+```
+
+```go title="app/controllers/post_controller.go"
+return views.PostsIndex.Render(c, views.PostsIndexData{Posts: posts, Search: c.Query("q")}, web.Block("post-list"))
+```
+
+Register them with `vukem.WithViewPages(views.All()...)`, which needs `WithViews`. Rendering does not change and untyped `c.Render` calls keep working. Run the check locally and in CI:
+
+```sh
+vukem view:check
+```
+
+```text
+posts/index.html:15:49: V002: field or method "Titel" not found in models.Post
+posts/index.html:9:92: V005: hx-target "#post-lst": no element with that id in this view
+view:check: 2 problem(s) in 1 view(s)
+```
+
+`vukem serve` runs it after every rebuild and only warns. The flags are `-strict` (also list warnings) and `-json`; see the [reference](/docs/cli/reference-runtime#vukem-viewcheck).
+
+| Code | Meaning |
+| --- | --- |
+| `V001` | a declared view does not exist |
+| `V002` | field or method not found in the data type |
+| `V003` | `{{route "name"}}` names a route that is not registered |
+| `V004` | wrong or missing route parameter |
+| `V005` | `hx-target`, `hx-select`, `hx-indicator` or `hx-include` points to a `#id` no element of the view has: a warning by default, an error with `-strict` |
+| `V006` | a block declared in `view.Of` is not defined |
+| `V007` | `-strict` warning: a view has no typed declaration |
+| `V008` | `-strict` warning: an expression whose type is not known statically |
+| `V009` | `{{template "x"}}` names a template that is not defined |
+
+The check never runs a template or calls a method, and when in doubt it says nothing. It does not check untyped `c.Render` calls, `any` and `map[string]any` data, the values of `dict`, `flash`, `json`, `old` and `errors`, functions that return an interface, `call`, `and`, `or`, ids and attributes built by an action (`id="row-{{.ID}}"`, which keeps a missing `#id` a warning even with `-strict`), selectors other than a plain `#id` (`closest li`, `this`), route names passed in a variable, or templ views.
+
 ## Steering the browser
 
 `c.HTMX()` returns a `*htmx.Response` that writes response headers. Every method returns the same value, so calls chain:

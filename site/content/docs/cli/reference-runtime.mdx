@@ -5,7 +5,7 @@ description: Manual for key, maintenance mode, route:list, about, queue, schedul
 
 This page covers the commands you use while an app runs and while you ship it: keys, maintenance mode, inspection, queues, the scheduler, OpenAPI and client generation. The first group is **global**; the rest are **app** commands, which `vukem` builds from `cmd/app` and runs for you. Back to the [command cheat sheet](/docs/cli/reference).
 
-For app commands, flags go **before** positional arguments, and the app boots first (a boot error such as `vukem: APP_DEBUG must be false when APP_ENV=production` exits with 1). `openapi:export`, `codegen:types`, `codegen:routes` and `codegen:client` run in **warmup** mode instead: they register the routes but open no database, boot no provider and do not need `APP_KEY`.
+For app commands, flags go **before** positional arguments, and the app boots first (a boot error such as `vukem: APP_DEBUG must be false when APP_ENV=production` exits with 1). `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:client` and `view:check` run in **warmup** mode instead: they register the routes but open no database, boot no provider and do not need `APP_KEY`.
 
 ## `vukem hash:make`
 
@@ -435,6 +435,28 @@ The last lines of the real output:
 ```
 
 See [Inertia](/docs/frontend/inertia).
+
+## `vukem view:check`
+
+Check the typed `html/template` views against the Go types they receive, the registered routes and the htmx `#id` targets. **App**, warmup mode, opens no connections. The views come from `vukem.WithViewPages`; without any, the command fails with `view:check: no typed views: list them with vukem.WithViewPages`.
+
+```text
+vukem view:check [-strict] [-json]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-strict` | bool | `false` | Also list unchecked expressions (`V008`) and views without a declaration (`V007`), as warnings that do not change the exit code, and make a missing htmx target (`V005`) an error. |
+| `-json` | bool | `false` | Print the problems as a JSON array. |
+
+```text
+posts/index.html:15:49: V002: field or method "Titel" not found in models.Post
+posts/index.html:9:18: V003: route "posts.indx" is not registered
+posts/index.html:9:92: V005: hx-target "#post-lst": no element with that id in this view
+view:check: 3 problem(s) in 1 view(s)
+```
+
+Problems go to stdout, one per line as `file:line:col: code: message` (warnings carry `warning:` before the code and never change the exit code); the summary goes to stderr and the exit code is 1 when there are errors. A `#id` that an `hx-*` attribute points to but the view does not define (`V005`) is a warning unless you pass `-strict`. `vukem serve` runs the check after every rebuild and only prints the problems as a warning. See [htmx](/docs/frontend/htmx#typed-views-and-viewcheck) for the codes and for what is not checked.
 
 ## `vukem codegen:client`
 
