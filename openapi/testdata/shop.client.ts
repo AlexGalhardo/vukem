@@ -98,7 +98,7 @@ export type ApiProblem = {
   [extension: string]: unknown;
 };
 
-/** ApiError is thrown for every non-2xx response. */
+/** ApiError is thrown with throwHttpError, and by the TanStack helpers, for a non-2xx response. */
 export class ApiError extends Error {
   readonly status: number;
   readonly problem: ApiProblem | undefined;
@@ -116,6 +116,23 @@ export class ApiError extends Error {
   }
 }
 
+/** HttpErrorStatus lists the error statuses the client narrows on. A status outside it is returned as it is: the type is an approximation. */
+export type HttpErrorStatus =
+  | 400 | 401 | 402 | 403 | 404 | 405 | 406 | 408 | 409 | 410 | 412 | 413 | 415
+  | 422 | 423 | 425 | 428 | 429 | 431 | 451 | 500 | 501 | 502 | 503 | 504;
+
+/** ApiResult is what every client method resolves to: data on 2xx, error otherwise. A failed fetch (network, abort) is not a result: it rejects. */
+export type ApiResult<T, E> =
+  | { data: T; error: null; status: number; headers: Headers; response: Response }
+  | { data: null; error: E; status: number; headers: Headers; response: Response };
+
+export type CallOptions = {
+  /** signal aborts the request (AbortController). */
+  signal?: AbortSignal;
+  /** headers are added to this request only, over the client's. */
+  headers?: HeadersInit;
+};
+
 export type ClientOptions = {
   /** baseUrl prefixes every path; "" (the default) keeps requests on the page's origin. */
   baseUrl?: string;
@@ -125,6 +142,12 @@ export type ClientOptions = {
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
   /** credentials defaults to "same-origin" (cookies only for the same origin). */
   credentials?: RequestCredentials;
+  /** onRequest runs before the request is sent; a RequestInit it returns is merged, member by member, over the one built (a returned headers replaces the whole headers). */
+  onRequest?: (path: string, init: RequestInit) => RequestInit | void | Promise<RequestInit | void>;
+  /** onResponse runs after every response, before the body is read. */
+  onResponse?: (response: Response) => void | Promise<void>;
+  /** throwHttpError makes methods throw ApiError on a non-2xx response instead of returning error. */
+  throwHttpError?: boolean;
 };
 
 type RequestArgs = { params?: object; query?: object; body?: unknown };
@@ -169,9 +192,15 @@ function requester(options: ClientOptions) {
   const baseUrl = (options.baseUrl ?? "").replace(/\/+$/, "");
   const doFetch = options.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init));
 
-  return async function request<T>(method: string, path: string, args: RequestArgs = {}): Promise<T> {
+  return async function request<T, E>(
+    method: string,
+    path: string,
+    args: RequestArgs = {},
+    call: CallOptions = {},
+  ): Promise<ApiResult<T, E>> {
     const extra = typeof options.headers === "function" ? await options.headers() : options.headers;
     const headers = new Headers(extra);
+    new Headers(call.headers).forEach((value: string, key: string) => headers.set(key, value));
     if (!headers.has("Accept")) {
       headers.set("Accept", "application/json");
     }
@@ -180,12 +209,22 @@ function requester(options: ClientOptions) {
       body = JSON.stringify(args.body);
       headers.set("Content-Type", "application/json");
     }
-    const res = await doFetch(baseUrl + buildPath(path, args.params) + buildQuery(args.query), {
+    const url = baseUrl + buildPath(path, args.params) + buildQuery(args.query);
+    let init: RequestInit = {
       method,
       headers,
       body,
       credentials: options.credentials ?? "same-origin",
-    });
+      signal: call.signal,
+    };
+    const patch = options.onRequest ? await options.onRequest(url, init) : undefined;
+    if (patch) {
+      init = { ...init, ...patch };
+    }
+    const res = await doFetch(url, init);
+    if (options.onResponse) {
+      await options.onResponse(res);
+    }
     let data: unknown;
     try {
       data = await readBody(res);
@@ -194,52 +233,95 @@ function requester(options: ClientOptions) {
         throw err;
       }
     }
-    if (!res.ok) {
-      const problem = typeof data === "object" && data !== null ? (data as ApiProblem) : undefined;
+    const meta = { status: res.status, headers: res.headers, response: res };
+    if (res.ok) {
+      return { data: data as T, error: null, ...meta };
+    }
+    const problem = typeof data === "object" && data !== null ? (data as ApiProblem) : undefined;
+    if (options.throwHttpError) {
       throw new ApiError(res.status, problem);
     }
-    return data as T;
+    return { data: null, error: { status: res.status, value: problem } as unknown as E, ...meta };
   };
 }
+
+export type LegacyError =
+  | { status: HttpErrorStatus; value: ApiProblem | undefined };
+
+export type ProductsDestroyError =
+  | { status: HttpErrorStatus; value: ApiProblem | undefined };
+
+export type ProductsIndexError =
+  | { status: 422; value: Problem }
+  | { status: Exclude<HttpErrorStatus, 422>; value: ApiProblem | undefined };
+
+export type ProductsStoreError =
+  | { status: 401; value: Problem }
+  | { status: 422; value: Problem }
+  | { status: Exclude<HttpErrorStatus, 401 | 422>; value: ApiProblem | undefined };
+
+export type WebhooksReceiveError =
+  | { status: HttpErrorStatus; value: ApiProblem | undefined };
+
 
 /** Client has one method per API operation. */
 export interface Client {
   /**
    * GET /api/v1/legacy/{path}
    */
-  legacy(args: { params: LegacyParams }): Promise<unknown>;
+  legacy(
+    args: { params: LegacyParams },
+    options?: CallOptions,
+  ): Promise<ApiResult<unknown, LegacyError>>;
 
   /**
    * DELETE /api/v1/products/{id}
    * @deprecated
    */
-  productsDestroy(args: { params: ProductsDestroyParams }): Promise<ProductsDestroyResponse>;
+  productsDestroy(
+    args: { params: ProductsDestroyParams },
+    options?: CallOptions,
+  ): Promise<ApiResult<ProductsDestroyResponse, ProductsDestroyError>>;
 
   /**
    * GET /api/v1/products: List products
    */
-  productsIndex(args?: { query?: ProductsIndexQuery }): Promise<ProductsIndexResponse>;
+  productsIndex(
+    args?: { query?: ProductsIndexQuery },
+    options?: CallOptions,
+  ): Promise<ApiResult<ProductsIndexResponse, ProductsIndexError>>;
 
   /**
    * POST /api/v1/shops/{shop}/products: Create a product
    */
-  productsStore(args: { params: ProductsStoreParams; body: ProductsStoreBody }): Promise<ProductsStoreResponse>;
+  productsStore(
+    args: { params: ProductsStoreParams; body: ProductsStoreBody },
+    options?: CallOptions,
+  ): Promise<ApiResult<ProductsStoreResponse, ProductsStoreError>>;
 
   /**
    * POST /api/v1/webhooks/{provider}
    */
-  webhooksReceive(args: { params: WebhooksReceiveParams; body?: WebhooksReceiveBody }): Promise<unknown>;
+  webhooksReceive(
+    args: { params: WebhooksReceiveParams; body?: WebhooksReceiveBody },
+    options?: CallOptions,
+  ): Promise<ApiResult<unknown, WebhooksReceiveError>>;
 }
 
-/** createClient returns a typed client; methods throw ApiError on non-2xx responses. */
+/** createClient returns a typed client; methods resolve to { data, error, status, headers, response }. */
 export function createClient(options: ClientOptions = {}): Client {
   const request = requester(options);
 
   return {
-    legacy: (args) => request<unknown>("GET", "/api/v1/legacy/{path}", args),
-    productsDestroy: (args) => request<ProductsDestroyResponse>("DELETE", "/api/v1/products/{id}", args),
-    productsIndex: (args) => request<ProductsIndexResponse>("GET", "/api/v1/products", args),
-    productsStore: (args) => request<ProductsStoreResponse>("POST", "/api/v1/shops/{shop}/products", args),
-    webhooksReceive: (args) => request<unknown>("POST", "/api/v1/webhooks/{provider}", args),
+    legacy: (args, options) =>
+      request<unknown, LegacyError>("GET", "/api/v1/legacy/{path}", args, options),
+    productsDestroy: (args, options) =>
+      request<ProductsDestroyResponse, ProductsDestroyError>("DELETE", "/api/v1/products/{id}", args, options),
+    productsIndex: (args, options) =>
+      request<ProductsIndexResponse, ProductsIndexError>("GET", "/api/v1/products", args, options),
+    productsStore: (args, options) =>
+      request<ProductsStoreResponse, ProductsStoreError>("POST", "/api/v1/shops/{shop}/products", args, options),
+    webhooksReceive: (args, options) =>
+      request<unknown, WebhooksReceiveError>("POST", "/api/v1/webhooks/{provider}", args, options),
   };
 }
