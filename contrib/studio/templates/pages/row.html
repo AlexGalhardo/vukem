@@ -1,0 +1,13 @@
+{{define "title"}}{{.Table.Name}} row - vukem-studio{{end}}
+{{define "content"}}
+<div class="mb-4 flex flex-wrap items-center gap-3">
+	<h1 class="text-2xl font-semibold">{{.Source}} / {{.Table.Name}}</h1>
+	<a class="btn btn-ghost" href="/s/{{path .Source}}/t/{{path .Table.Name}}">Back to the rows</a>
+</div>
+<dl class="card grid gap-2 sm:grid-cols-[12rem_1fr]">
+	{{range .Fields}}<dt class="text-sm font-medium">{{.Name}} <span class="text-xs text-muted-foreground">{{.Type}}</span></dt>
+	<dd class="text-sm break-words">{{if .Null}}<span class="null-cell">NULL</span>{{else}}<pre class="whitespace-pre-wrap">{{.Text}}</pre>{{end}}</dd>{{end}}
+</dl>
+{{if .Table.ForeignKeys}}<h2 class="mt-6 mb-2 text-lg font-semibold">References</h2>
+<ul class="text-sm">{{range .Table.ForeignKeys}}<li>{{range .Columns}}{{.}} {{end}}to <a class="underline" href="/s/{{path $.Source}}/t/{{path .RefTable}}">{{.RefTable}}</a></li>{{end}}</ul>{{end}}
+{{end}}

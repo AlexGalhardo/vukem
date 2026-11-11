@@ -1,0 +1,19 @@
+{{define "title"}}{{.Table.Name}} - vukem-studio{{end}}
+{{define "content"}}
+<div class="mb-4 flex flex-wrap items-center gap-3">
+	<h1 class="text-2xl font-semibold">{{.Source}} / {{.Table.Name}}</h1>
+	<a class="btn btn-ghost" data-nav="tables" href="/s/{{path .Source}}">Tables</a>
+	<a class="btn btn-secondary ml-auto" data-nav="console" href="/s/{{path .Source}}/console">Console</a>
+</div>
+<form method="get" class="mb-4 flex items-end gap-2">
+	<label class="flex flex-col gap-1 text-sm font-medium">Filter
+		<input class="input" name="f" data-filter placeholder="column:op:value" autocomplete="off">
+	</label>
+	{{range .Filters}}<input type="hidden" name="f" value="{{.}}">{{end}}
+	<button class="btn btn-default">Apply</button>
+</form>
+{{if .Filters}}<p class="mb-3 text-sm text-muted-foreground">Filters: {{range .Filters}}<code>{{.}}</code> {{end}}</p>{{end}}
+{{if .Rows}}{{template "partials/table" (dict "Head" .Head "Rows" .Rows)}}
+{{else}}{{template "partials/empty" (dict "Title" "No rows" "Text" "Nothing matches this view.")}}{{end}}
+{{template "partials/pager" (dict "Prev" .Prev "Next" .Next)}}
+{{end}}
