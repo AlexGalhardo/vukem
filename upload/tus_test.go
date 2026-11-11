@@ -11,9 +11,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -464,5 +467,98 @@ func TestTusCompletionErrorIsLogged(t *testing.T) {
 
 	if log := env.log.String(); !strings.Contains(log, "insert upload: connection refused") {
 		t.Errorf("log = %q, want the OnComplete error", log)
+	}
+}
+
+func TestTusZeroLengthUploadCompletes(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	env := newTus(t, func(c *TusConfig) {
+		c.OnComplete = func(context.Context, TusInfo, func() (io.ReadCloser, error)) error {
+			calls.Add(1)
+			return nil
+		}
+	})
+
+	res := env.do(t, http.MethodPost, "/files/", nil, map[string]string{"Upload-Length": "0"})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("POST = %d, want 201", res.StatusCode)
+	}
+
+	if n := calls.Load(); n != 1 {
+		t.Errorf("OnComplete calls = %d, want 1 without any PATCH", n)
+	}
+
+	if res := env.do(t, http.MethodHead, res.Header.Get("Location"), nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("HEAD after completion = %d, want 404 (partial data removed)", res.StatusCode)
+	}
+}
+
+func TestTusCleanupRemovesOrphanInfo(t *testing.T) {
+	t.Parallel()
+
+	var dir string
+
+	env := newTus(t, func(c *TusConfig) {
+		c.Expiry = time.Hour
+		dir = c.Dir
+	})
+
+	expiredLoc := env.create(t, 10, "a.png")
+	old := strings.TrimPrefix(expiredLoc, "/files/")
+
+	if err := os.Remove(filepath.Join(dir, old+".bin")); err != nil {
+		t.Fatal(err)
+	}
+
+	env.mu.Lock()
+	env.now = env.now.Add(30 * time.Minute)
+	env.mu.Unlock()
+
+	young := strings.TrimPrefix(env.create(t, 10, "b.png"), "/files/")
+	if err := os.Remove(filepath.Join(dir, young+".bin")); err != nil {
+		t.Fatal(err)
+	}
+
+	env.mu.Lock()
+	env.now = env.now.Add(45 * time.Minute)
+	env.mu.Unlock()
+
+	n, err := env.h.Cleanup(t.Context())
+	if err != nil || n != 1 {
+		t.Fatalf("Cleanup() = %d, %v, want 1", n, err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, old+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expired orphan .json still there: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, young+".json")); err != nil {
+		t.Errorf("unexpired orphan .json removed: %v", err)
+	}
+}
+
+func TestTusZeroLengthCompletionFailureLeavesNoFiles(t *testing.T) {
+	t.Parallel()
+
+	var dir string
+
+	env := newTus(t, func(c *TusConfig) {
+		dir = c.Dir
+		c.OnComplete = func(context.Context, TusInfo, func() (io.ReadCloser, error)) error {
+			return errors.New("boom")
+		}
+	})
+
+	res := env.do(t, http.MethodPost, "/files/", nil, map[string]string{"Upload-Length": "0"})
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("POST = %d, want 500", res.StatusCode)
+	}
+
+	left, err := os.ReadDir(dir)
+	if err != nil || len(left) != 0 {
+		t.Errorf("files left after a failed completion = %v, %v, want none", left, err)
 	}
 }

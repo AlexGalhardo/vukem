@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"io/fs"
 	"net"
@@ -1095,6 +1096,44 @@ func TestKeyGenerateIfMissingForms(t *testing.T) {
 						t.Fatalf("ParseKey(written key) = %v", err)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestMakeMailIsAtomic(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		args     []string
+		existing string
+	}{
+		{"view", []string{"make:mail", "WelcomeMail"}, "resources/views/mail/welcome.html"},
+		{"react", []string{"make:mail", "WelcomeMail", "--react"}, "resources/js/emails/welcome.tsx"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := project(t)
+			existing := filepath.Join(dir, filepath.FromSlash(tt.existing))
+
+			if err := os.MkdirAll(filepath.Dir(existing), 0o750); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := os.WriteFile(existing, []byte("mine"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if code, _, _ := vukem(t, dir, tt.args...); code == 0 {
+				t.Fatal("make:mail over an existing file succeeded, want a failure")
+			}
+
+			if _, err := os.Stat(filepath.Join(dir, "app", "mail", "welcome.go")); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("app/mail/welcome.go was left behind: %v", err)
 			}
 		})
 	}

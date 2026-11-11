@@ -217,7 +217,13 @@ func (h *TusHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A zero-length upload is complete on creation; clients send no PATCH.
+	if info.Length == 0 && !h.completeOrFail(w, r, info) {
+		return
+	}
+
 	w.Header().Set("Location", h.cfg.BasePath+info.ID)
+	w.Header().Set("Upload-Offset", "0")
 	w.Header().Set("Upload-Expires", info.Expires.UTC().Format(http.TimeFormat))
 	w.WriteHeader(http.StatusCreated)
 }
@@ -391,21 +397,30 @@ func (h *TusHandler) patch(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	if info.Offset == info.Length {
-		if err := h.complete(r.Context(), info); err != nil {
-			status := errs.Status(err)
-			if status >= http.StatusInternalServerError {
-				logger(r.Context()).ErrorContext(r.Context(), "upload: tus completion failed",
-					"id", info.ID, "status", status, "err", err)
-			}
-
-			tusError(w, status, clientMessage(err, status))
-
-			return
-		}
+	if info.Offset == info.Length && !h.completeOrFail(w, r, info) {
+		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// completeOrFail runs complete and answers the error itself; it reports
+// whether the upload completed.
+func (h *TusHandler) completeOrFail(w http.ResponseWriter, r *http.Request, info TusInfo) bool {
+	err := h.complete(r.Context(), info)
+	if err == nil {
+		return true
+	}
+
+	status := errs.Status(err)
+	if status >= http.StatusInternalServerError {
+		logger(r.Context()).ErrorContext(r.Context(), "upload: tus completion failed",
+			"id", info.ID, "status", status, "err", err)
+	}
+
+	tusError(w, status, clientMessage(err, status))
+
+	return false
 }
 
 // logger is the request's logger (web.Services) or slog.Default.
@@ -456,7 +471,16 @@ func (h *TusHandler) Cleanup(ctx context.Context) (int, error) {
 		}
 
 		id, ok := strings.CutSuffix(e.Name(), ".bin")
-		if !ok || !validID(id) || !h.lock(id) {
+		if !ok {
+			// An info file whose data file is gone is cleaned by its own entry.
+			if id, ok = strings.CutSuffix(e.Name(), ".json"); ok && validID(id) {
+				removed += h.cleanOrphanInfo(id, now)
+			}
+
+			continue
+		}
+
+		if !validID(id) || !h.lock(id) {
 			continue
 		}
 
@@ -478,6 +502,33 @@ func (h *TusHandler) Cleanup(ctx context.Context) (int, error) {
 	}
 
 	return removed, nil
+}
+
+// cleanOrphanInfo removes <id>.json when <id>.bin is missing and the info is
+// expired or unreadable; it returns 1 when it removed it.
+func (h *TusHandler) cleanOrphanInfo(id string, now time.Time) int {
+	if !h.lock(id) {
+		return 0
+	}
+	defer h.unlock(id)
+
+	if _, err := h.root.Stat(id + ".bin"); !errors.Is(err, fs.ErrNotExist) {
+		return 0
+	}
+
+	b, err := h.root.ReadFile(id + ".json")
+	if err != nil {
+		return 0
+	}
+
+	var info TusInfo
+	if json.Unmarshal(b, &info) == nil && now.Before(info.Expires) {
+		return 0
+	}
+
+	h.remove(id)
+
+	return 1
 }
 
 func validID(id string) bool {
