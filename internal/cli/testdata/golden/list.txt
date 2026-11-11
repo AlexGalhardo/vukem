@@ -6,6 +6,7 @@ Usage:
   new <name>                   Create a project from the HTMX + SQLite starter
   serve                        Run the app (HTTP, scheduler) and restart it when Go files change
   build                        Build assets (Vite) and a production binary in bin/
+  studio                       Open vukem-studio, the read-only data browser for the project's databases
   version                      Print the vukem version
   bench [url]                  Load test a URL or the project's scenarios (throughput, latency percentiles, thresholds)
   doctor                       Report the optional tools the project uses (Betterleaks) and project checks

@@ -69,6 +69,7 @@ func commands() []command {
 		{"new", "<name>", "Create a project from the HTMX + SQLite starter", newProject},
 		{"serve", "", "Run the app (HTTP, scheduler) and restart it when Go files change", serveCmd},
 		{"build", "", "Build assets (Vite) and a production binary in bin/", buildCmd},
+		{"studio", "", "Open vukem-studio, the read-only data browser for the project's databases", studioCmd},
 		{"version", "", "Print the vukem version", nil},
 		{
 			"bench",
