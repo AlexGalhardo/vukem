@@ -8,6 +8,12 @@ vars:
   # Same pin as the apidiff job in .github/workflows/ci.yml (x/exp has no tags).
   APIDIFF_VERSION: v0.0.0-20261014143641-f0251eb4aa3e
 
+env:
+  # One golangci-lint cache per worktree: a cache shared by worktrees and by
+  # concurrent runs makes gosec miss G703 and nolintlint report its directives
+  # as unused. A GOLANGCI_LINT_CACHE already in the environment (CI) wins.
+  GOLANGCI_LINT_CACHE: '{{default (printf "%s/.cache/golangci-lint" (toSlash .ROOT_DIR)) .GOLANGCI_LINT_CACHE}}'
+
 tasks:
   default:
     cmds:
@@ -44,7 +50,7 @@ tasks:
     desc: Run golangci-lint on every module
     cmds:
       - for: { var: MODULES }
-        cmd: cd {{.ITEM}} && golangci-lint run ./...
+        cmd: cd {{.ITEM}} && golangci-lint run --allow-parallel-runners ./...
 
   lint:md:
     desc: Run markdownlint
