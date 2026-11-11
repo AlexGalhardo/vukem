@@ -529,11 +529,16 @@ type codegenTarget struct {
 	path    string
 	command func() Command
 	args    []string // always passed, before the ones the file header records
+	// models marks the target that needs vukem.WithModels: an app without it
+	// does not use the file, so it is skipped. The header does not record
+	// -pkg; the package line of the file does.
+	models bool
 }
 
 var codegenTargets = []codegenTarget{
 	{path: defaultRoutesTS, command: codegenRoutesCommand},
 	{path: defaultPagesTS, command: codegenPagesCommand},
+	{path: defaultColsGo, command: codegenModelsCommand, models: true},
 	{path: defaultClientTS, command: codegenClientCommand},
 	{path: defaultClientGo, command: codegenClientCommand, args: []string{"-lang", "go"}},
 }
@@ -593,12 +598,20 @@ func runCodegenTarget(ctx context.Context, app *App, t codegenTarget, check bool
 
 	cmd := t.command()
 
+	if t.models && len(app.modelList) == 0 {
+		return nil
+	}
+
 	name, recorded, ok := generatedArgs(first)
 	if !ok || name != cmd.Name() {
 		return fmt.Errorf("codegen: %s has no %s header; remove it or run vukem %s", t.path, cmd.Name(), cmd.Name())
 	}
 
 	args := slices.Concat(t.args, recorded, []string{"-o", t.path})
+	if t.models {
+		args = append(args, "-pkg", packageOf(filepath.FromSlash(t.path)))
+	}
+
 	if check {
 		args = append(args, "-check")
 	}
@@ -935,4 +948,21 @@ func modelsGo(pkg string, models []orm.ModelInfo) ([]byte, error) {
 	}
 
 	return src, nil
+}
+
+var packageLineRe = regexp.MustCompile(`(?m)^package ([A-Za-z_][A-Za-z0-9_]*)`)
+
+// packageOf is the package name a generated Go file declares, or "" (the
+// command then names the package after the directory).
+func packageOf(path string) string {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	if m := packageLineRe.FindSubmatch(src); m != nil {
+		return string(m[1])
+	}
+
+	return ""
 }
