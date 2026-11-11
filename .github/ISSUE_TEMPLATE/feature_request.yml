@@ -1,7 +1,21 @@
 name: Feature request
 description: Suggest an idea or an improvement.
-labels: [enhancement]
+title: "feat: "
+labels: [enhancement, needs-triage]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. One feature per issue. Security problems go to a
+        [private advisory](https://github.com/AlexGalhardo/vukem/security/advisories/new), never here.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: The package or part of the framework. It becomes the commit scope.
+      options: [router, ctx, config, validate, session, view, htmx, orm, schema, database, auth, authz, mail, cache, storage, event, queue, schedule, inertia, vite, cli, postgres, redis, mongo, otel, websocket, graphql, docs, repo, other]
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
@@ -13,8 +27,22 @@ body:
     id: proposal
     attributes:
       label: Proposal
-      description: The API or behaviour you would like. Code sketches welcome.
+      description: The API or behaviour you would like. A code sketch of how a user would call it is the most useful part.
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Would this break existing code?
+      options: [No, Yes, Not sure]
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues and found no duplicate.
+          required: true
