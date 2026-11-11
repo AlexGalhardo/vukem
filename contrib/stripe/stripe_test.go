@@ -343,3 +343,24 @@ func TestWebhookHandlerProcessesOnce(t *testing.T) {
 		t.Error("handler without an event store accepted")
 	}
 }
+
+func TestConstructEventRejectsEventWithoutIDOrType(t *testing.T) {
+	t.Parallel()
+
+	for name, body := range map[string]string{"empty object": `{}`, "no type": `{"id":"evt_1"}`} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			b := []byte(body)
+
+			_, err := stripe.ConstructEvent(b, stripe.SignForTest(b, secret, now), secret, stripe.DefaultTolerance, now)
+			if err == nil {
+				t.Fatal("ConstructEvent = nil, want error")
+			}
+
+			if strings.Contains(err.Error(), "%!w") {
+				t.Errorf("error = %q, contains a formatting artifact", err)
+			}
+		})
+	}
+}

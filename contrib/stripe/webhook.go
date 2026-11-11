@@ -110,8 +110,12 @@ func ConstructEvent(payload []byte, header, secret string, tolerance time.Durati
 	}
 
 	var e Event
-	if err := json.Unmarshal(payload, &e); err != nil || e.ID == "" || e.Type == "" {
+	if err := json.Unmarshal(payload, &e); err != nil {
 		return Event{}, fmt.Errorf("stripe: webhook payload is not an event: %w", err)
+	}
+
+	if e.ID == "" || e.Type == "" {
+		return Event{}, errors.New("stripe: webhook payload is not an event: missing id or type")
 	}
 
 	return e, nil
