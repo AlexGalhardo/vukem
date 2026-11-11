@@ -113,7 +113,14 @@ func watch(ctx context.Context, env *Env, interval time.Duration, codegen bool, 
 
 	defer check.stop()
 
+	// A codegen of the previous build is stopped before the next one: on
+	// Windows it holds the binary the rebuild is about to replace.
+	gen := codegenRun{enabled: codegen}
+
+	defer gen.stop()
+
 	start := func() {
+		gen.stop()
 		check.stop()
 
 		if hasTempl(env) {
@@ -142,8 +149,6 @@ func watch(ctx context.Context, env *Env, interval time.Duration, codegen bool, 
 			return
 		}
 
-		refreshGenerated(ctx, env, bin, codegen)
-
 		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir, cmd.Stdout, cmd.Stderr = env.Dir, env.Stdout, env.Stderr
 
@@ -153,6 +158,8 @@ func watch(ctx context.Context, env *Env, interval time.Duration, codegen bool, 
 		}
 
 		proc = cmd
+
+		gen.start(ctx, env, bin)
 
 		check.start(ctx, env, bin)
 	}
@@ -187,24 +194,66 @@ func watch(ctx context.Context, env *Env, interval time.Duration, codegen bool, 
 	}
 }
 
-// refreshGenerated runs the codegen step when enabled and reports a failure
-// without stopping the restart.
-func refreshGenerated(ctx context.Context, env *Env, bin string, enabled bool) {
-	if !enabled {
+// codegenRun is the codegen of one build, running beside the app.
+type codegenRun struct {
+	enabled bool
+	cancel  context.CancelFunc
+	done    chan struct{}
+}
+
+// start runs the built app's codegen in the background: the restart does not
+// wait for it, and a failure or a timeout is a warning, never an error of the
+// serve.
+func (g *codegenRun) start(ctx context.Context, env *Env, bin string) {
+	if !g.enabled {
 		return
 	}
 
-	if err := runCodegen(ctx, env, bin); err != nil && ctx.Err() == nil {
-		fmt.Fprintln(env.Stderr, "vukem serve: codegen failed:", err)
+	rctx, cancel := context.WithTimeout(ctx, codegenTimeout)
+	g.cancel, g.done = cancel, make(chan struct{})
+
+	go func() {
+		defer close(g.done)
+
+		err := runCodegen(rctx, env, bin)
+
+		switch {
+		case errors.Is(rctx.Err(), context.DeadlineExceeded):
+			fmt.Fprintf(env.Stderr, "vukem serve: codegen timed out after %s; the app was restarted without waiting\n",
+				codegenTimeout)
+		case ctx.Err() != nil || rctx.Err() != nil:
+			// Stopped by a newer rebuild or by the end of the serve.
+		case err != nil:
+			fmt.Fprintln(env.Stderr, "vukem serve: codegen failed:", err)
+		}
+	}()
+}
+
+// stop cancels the run and waits for the process to be gone.
+func (g *codegenRun) stop() {
+	if g.cancel != nil {
+		g.cancel()
+		<-g.done
+
+		g.cancel = nil
 	}
 }
 
 // runCodegen runs the built app's "codegen" command, which rewrites a
 // generated file only when its bytes change, so the Go files it may touch
-// cause at most one more rebuild and not a loop.
+// cause at most one more rebuild and not a loop. PORT is zeroed so a binary
+// that does not understand the command and starts its server instead takes a
+// free port, not the one of the app that is running.
 func runCodegen(ctx context.Context, env *Env, bin string) error {
 	cmd := exec.CommandContext(ctx, bin, "codegen")
 	cmd.Dir, cmd.Stdout, cmd.Stderr = env.Dir, env.Stdout, env.Stderr
+	cmd.Env = append(os.Environ(), "PORT=0")
+	cmd.WaitDelay = 2 * time.Second
 
 	return cmd.Run()
 }
+
+// codegenTimeout bounds one codegen run: it only loads the app's routes and
+// writes a few files, seconds at most, so a minute means the binary does not
+// understand the command. A variable for the tests.
+var codegenTimeout = 60 * time.Second
