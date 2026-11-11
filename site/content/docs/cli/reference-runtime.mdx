@@ -532,12 +532,13 @@ Two differences from `ssr:start`: the server is restarted after **any** exit, a 
 Write static HTML by calling the app's HTTP handler in process. **App.** This does not run the Inertia SSR server, and it does not crawl registered routes. Only each `-path` is rendered. See [Static site generation](/docs/digging-deeper/static-site-generation).
 
 ```text
-vukem ssg:generate [-out dir] -path /page [-path /other]
+vukem ssg:generate [-out dir] [-no-clean] -path /page [-path /other]
 ```
 
 | Flag | Type | Default | What it does |
 | --- | --- | --- | --- |
-| `-out` | string | `dist` | Directory to write into. Created when it is missing. |
+| `-out` | string | `dist` | Directory to write into. Created when it is missing; replaced when empty or marked `.vukem-ssg`, otherwise refused. |
+| `-no-clean` | bool | `false` | Write in place and keep files from earlier runs. |
 | `-path` | string |  | Absolute URL path to prerender. Repeat the flag. At least one is required. |
 
 `/` becomes `index.html`. `/about` becomes `about/index.html`. A missing `-path` or an extra argument is a usage error and exits 2. A path such as `../` or `https://example.com/x`, or a response that is not 200, exits 1 and writes nothing for that page.

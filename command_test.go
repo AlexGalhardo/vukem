@@ -288,3 +288,35 @@ func TestSSGGenerateCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestSSGGenerateNoCleanFlag(t *testing.T) {
+	app := newTestApp(t, WithRoutes(func(r *router.Router, _ *App) error {
+		r.Get("/a", func(c *web.Ctx) error { return c.String(http.StatusOK, "a") })
+		r.Get("/b", func(c *web.Ctx) error { return c.String(http.StatusOK, "b") })
+
+		return nil
+	}))
+
+	for _, noClean := range []bool{false, true} {
+		dir := filepath.Join(t.TempDir(), "dist")
+		extra := []string{}
+
+		if noClean {
+			extra = []string{"-no-clean"}
+		}
+
+		first := append([]string{"-out", dir, "-path", "/a", "-path", "/b"}, extra...)
+		second := append([]string{"-out", dir, "-path", "/a"}, extra...)
+
+		for _, args := range [][]string{first, second} {
+			if err := app.Call(t.Context(), "ssg:generate", args); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		_, err := os.Stat(filepath.Join(dir, "b", "index.html"))
+		if kept := err == nil; kept != noClean {
+			t.Errorf("noClean=%v: page b kept = %v", noClean, kept)
+		}
+	}
+}

@@ -665,8 +665,9 @@ func runKeyGenerate(args []string, opts []Option) error {
 
 func ssgGenerateCommand() Command {
 	var (
-		out   string
-		paths []string
+		out     string
+		paths   []string
+		noClean bool
 	)
 
 	return CommandFunc{
@@ -674,7 +675,9 @@ func ssgGenerateCommand() Command {
 		Desc:        "Prerender handler paths to static HTML (not Inertia SSR)",
 		DefineFlags: func(fs *flag.FlagSet) {
 			paths = nil
+			noClean = false
 			fs.StringVar(&out, "out", "dist", "directory to write static files into")
+			fs.BoolVar(&noClean, "no-clean", false, "write in place and keep files from earlier runs")
 			fs.Func("path", "absolute URL path to prerender (repeatable)", func(s string) error {
 				paths = append(paths, s)
 
@@ -700,7 +703,7 @@ func ssgGenerateCommand() Command {
 				pages[i] = ssg.Page{Path: p}
 			}
 
-			report, err := ssg.Generate(ctx, h, pages, ssg.Options{OutDir: out})
+			report, err := ssg.Generate(ctx, h, pages, ssg.Options{OutDir: out, NoClean: noClean})
 			if err != nil {
 				return fmt.Errorf("ssg:generate: %w", err)
 			}
