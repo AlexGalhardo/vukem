@@ -1,0 +1,46 @@
+# type
+bug|d73a4a|Something does not work as documented
+enhancement|a2eeef|New feature or improvement
+documentation|0075ca|Docs are wrong, missing or unclear
+task|5319e7|Planned work with a done criterion
+tracking|0E8A16|Long-lived tracking issue
+ci-failure|B60205|A scheduled or main-branch workflow failed
+# state
+needs-triage|fbca04|Not yet reviewed by a maintainer
+needs-repro|fbca04|Waiting for a minimal reproduction
+blocked|000000|Cannot proceed until something else lands
+breaking|b60205|Changes or removes public behaviour
+# priority
+priority:p1|b60205|Fix before the next release
+priority:p2|d93f0b|Fix soon
+priority:p3|fef2c0|Nice to have
+# area (same list as the commit scopes in docs/tooling.md)
+area:router|c5def5|router
+area:ctx|c5def5|ctx
+area:config|c5def5|config
+area:validate|c5def5|validate
+area:session|c5def5|session
+area:view|c5def5|view
+area:htmx|c5def5|htmx
+area:orm|c5def5|orm
+area:schema|c5def5|schema
+area:database|c5def5|database
+area:auth|c5def5|auth
+area:authz|c5def5|authz
+area:mail|c5def5|mail
+area:cache|c5def5|cache
+area:storage|c5def5|storage
+area:event|c5def5|event
+area:queue|c5def5|queue
+area:schedule|c5def5|schedule
+area:inertia|c5def5|inertia
+area:vite|c5def5|vite
+area:cli|c5def5|cli
+area:postgres|c5def5|postgres
+area:redis|c5def5|redis
+area:mongo|c5def5|mongo
+area:otel|c5def5|otel
+area:websocket|c5def5|websocket
+area:graphql|c5def5|graphql
+area:docs|c5def5|docs
+area:repo|c5def5|repo
