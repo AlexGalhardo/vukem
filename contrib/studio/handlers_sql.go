@@ -2,6 +2,7 @@ package studio
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -212,6 +213,11 @@ func (s *Studio) sqlConsole(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{"Source": src.Name(), "CanWrite": s.cfg.Write}
 
 	if r.Method == http.MethodPost {
+		if !isLoopbackRequest(r) {
+			http.Error(w, "SQL console POST is only allowed from localhost", http.StatusForbidden)
+			return
+		}
+
 		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 
 		text, explain := r.FormValue("sql"), r.FormValue("explain") == "1"
@@ -258,6 +264,16 @@ func clientMessage(err error) string {
 	}
 
 	return "The statement failed."
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func truncateBytes(s string, n int) string {
