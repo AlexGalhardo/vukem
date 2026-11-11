@@ -99,6 +99,11 @@ tasks:
       - go fix -diff ./...
       - go run ./internal/tools/fixinline
 
+  labels:sync:
+    desc: "Create or update the GitHub labels listed in .github/labels.txt (needs gh auth)"
+    cmds:
+      - go run ./internal/tools/labelsync .github/labels.txt
+
   mod:check:
     desc: Fail when a nested module cannot be resolved from its own go.mod (GOWORK=off, test files included)
     cmds:
