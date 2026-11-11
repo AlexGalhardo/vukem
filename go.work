@@ -16,6 +16,7 @@ use (
 	./drivers/postgres
 	./drivers/redis
 	./drivers/s3
+	./drivers/turso
 	./drivers/websocket
 	./internal/bench
 )
