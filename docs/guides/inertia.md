@@ -104,7 +104,7 @@ defineProps<{ version: string }>();
 <h1 class="text-2xl font-semibold">About (v{version})</h1>
 ```
 
-Props can be lazy, optional, deferred or merged (`inertia.Optional`, `inertia.Defer`, `inertia.Merge`), and `inertia.Share` adds per-request shared props; see [frontend.md](../frontend.md#inertia-v3-beta). `vukem codegen:routes` writes typed route helpers to `resources/js/routes.ts` so pages can call `route("posts.show", { post: 7 })`.
+Props can be lazy, optional, deferred or merged (`inertia.Optional`, `inertia.Defer`, `inertia.Merge`), and `inertia.Share` adds per-request shared props; see [frontend.md](../frontend.md#inertia-v3-beta). `vukem codegen:routes` writes typed route helpers to `resources/js/routes.ts` so pages can call `route("posts.show", { post: 7 })`. To type the props too, declare each page with `inertia.Define[Props]("Posts/Index")` and run `vukem codegen:pages`: it writes `resources/js/page-props.ts`, and a page takes `Page<"Posts/Index">` as its props type (see [frontend.md](../frontend.md#typed-pages)).
 
 ## Add a model and a migration
 
@@ -113,7 +113,7 @@ vukem make:model Comment -m -f -c
 vukem migrate
 ```
 
-The model, migration and factory are the same as in the [HTMX guide](htmx.md#add-a-model-and-a-migration). The generated controller is plain Go: return `inertia.Render(c, "Comments/Index", inertia.Props{"comments": comments})` from its actions, add the pages under `resources/js/pages/Comments/` and the prop shape to `types.ts`. Validation errors are flashed and redirected back with `303`, and arrive in the page as `props.errors`.
+The model, migration and factory are the same as in the [HTMX guide](htmx.md#add-a-model-and-a-migration). The generated controller is plain Go: return `inertia.Render(c, "Comments/Index", inertia.Props{"comments": comments})` from its actions, add the pages under `resources/js/pages/Comments/` and the prop shape to `types.ts` (or declare the props in Go with `inertia.Define` and let `vukem codegen:pages` write the TypeScript). Validation errors are flashed and redirected back with `303`, and arrive in the page as `props.errors`.
 
 ## Authentication
 

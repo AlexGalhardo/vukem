@@ -1,7 +1,7 @@
 import { Link, usePage } from "@inertiajs/react";
 import type { ReactNode } from "react";
 
-import type { SharedProps } from "../types";
+import type { SharedProps } from "../page-props";
 
 const link = "text-indigo-600 hover:underline dark:text-indigo-400";
 

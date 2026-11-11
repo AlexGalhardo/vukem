@@ -1,13 +1,14 @@
 package account
 
 import (
+	"github.com/AlexGalhardo/vukem/examples/saas/app/pages"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/requests"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
 // ShowForgot renders the reset link request page.
-func (*Handlers) ShowForgot(c *web.Ctx) error { return inertia.Render(c, "Auth/ForgotPassword", nil) }
+func (*Handlers) ShowForgot(c *web.Ctx) error { return pages.ForgotPassword.Render(c, struct{}{}) }
 
 // SendResetLink emails a reset link; the answer is the same whether or not
 // the email has an account.
@@ -28,7 +29,7 @@ func (h *Handlers) SendResetLink(c *web.Ctx) error {
 
 // ShowReset renders the new password page.
 func (*Handlers) ShowReset(c *web.Ctx) error {
-	return inertia.Render(c, "Auth/ResetPassword", inertia.Props{"token": c.Param("token"), "email": c.Query("email")})
+	return pages.ResetPassword.Render(c, pages.ResetPasswordProps{Token: c.Param("token"), Email: c.Query("email")})
 }
 
 // Reset sets the new password.

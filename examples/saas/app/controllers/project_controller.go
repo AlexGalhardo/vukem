@@ -7,6 +7,7 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/models"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/pages"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/policies"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/requests"
 	"github.com/AlexGalhardo/vukem/inertia"
@@ -40,10 +41,10 @@ func (pc *ProjectController) Index(c *web.Ctx) error {
 		return err
 	}
 
-	return inertia.Render(c, "Projects/Index", inertia.Props{
-		"projects":  projects,
-		"filters":   map[string]string{"q": c.Query("q")},
-		"freeLimit": policies.FreeProjects,
+	return pages.ProjectsIndex.Render(c, pages.ProjectsIndexProps{
+		Projects:  projects,
+		Filters:   pages.ProjectFilters{Q: c.Query("q")},
+		FreeLimit: policies.FreeProjects,
 	})
 }
 
@@ -53,7 +54,7 @@ func (*ProjectController) Create(c *web.Ctx) error {
 		return denyCreate(c, err)
 	}
 
-	return inertia.Render(c, "Projects/Create", nil)
+	return pages.ProjectsCreate.Render(c, struct{}{})
 }
 
 // Store validates and saves a new project.
@@ -89,7 +90,7 @@ func (pc *ProjectController) Show(c *web.Ctx) error {
 		return err
 	}
 
-	return inertia.Render(c, "Projects/Show", inertia.Props{"project": project})
+	return pages.ProjectsShow.Render(c, pages.ProjectProps{Project: project})
 }
 
 // Edit shows the edit form.
@@ -99,7 +100,7 @@ func (pc *ProjectController) Edit(c *web.Ctx) error {
 		return err
 	}
 
-	return inertia.Render(c, "Projects/Edit", inertia.Props{"project": project})
+	return pages.ProjectsEdit.Render(c, pages.ProjectProps{Project: project})
 }
 
 // Update validates and saves changes.
