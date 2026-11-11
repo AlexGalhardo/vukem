@@ -325,7 +325,7 @@ app.Router.Services().ProblemDecorator = func(c *web.Ctx, p *web.Problem) {
 
 The decorator may change any member, and `p.Extensions` is its own copy, so editing it never changes the error value. It runs for 5xx problems too: never add the cause or other internal details there (CWE-209).
 
-The format is [RFC 9457 problem details](https://www.rfc-editor.org/rfc/rfc9457). `type` is `about:blank`, except for validation errors when `APP_PROBLEM_BASE_URL` is set: then it is `<base>/validation`. `instance` is the request path and `request_id` the id from the [request id middleware](/docs/basics/middleware).
+The format is [RFC 9457 problem details](https://www.rfc-editor.org/rfc/rfc9457). `type` is `about:blank` until you set `APP_PROBLEM_BASE_URL`. With it set, every problem that has no `type` of its own gets `<base>/<status>`, where the status is its text in lower case with dashes (`/not-found`, `/internal-server-error`), and validation errors get `<base>/validation`. A `type` you set with `WithType`, or in a `ProblemDecorator`, always wins. `instance` is the request path and `request_id` the id from the [request id middleware](/docs/basics/middleware).
 
 The htmx fragment is one line of HTML, wrapped here to fit. htmx 4 swaps 4xx responses into the target, so the visitor sees it where the content would have gone:
 
@@ -403,6 +403,27 @@ services.ErrorPage = func(c *web.Ctx, e web.ErrorPage) bool {
 	return c.String(e.Status, text) == nil
 }
 ```
+
+## Mapping errors by type
+
+Replacing the whole handler to answer one error type means repeating the triage the framework already does. `web.MapError` registers the mapping once, for the app:
+
+```go title="app/bootstrap/errors.go"
+web.MapError(app.Router.Services(),
+	func(c *web.Ctx, e *billing.PaymentRequiredError) error {
+		return errs.New(http.StatusPaymentRequired, "Upgrade to the "+e.Plan+" plan.").
+			WithType("https://example.com/problems/payment-required").
+			WithExtension("plan", e.Plan)
+	})
+```
+
+The function receives the first error of that type in the chain ([`errors.AsType`](https://pkg.go.dev/errors#AsType) looks through wrapping, so `fmt.Errorf("pay: %w", err)` is found) and returns the error to render instead, usually an `*errs.HTTPError`. That error goes through `web.DefaultErrorHandler`, so the format (JSON, htmx, HTML, Inertia), the headers and the masking are the ones every other error gets.
+
+- The first registered mapper that matches wins; they do not chain. A mapper that returns `nil` leaves the original error alone.
+- The log has the **original** error: the mapped one only decides what the client sees.
+- A mapper cannot expose a server fault: an error it returns with a 5xx status is rendered like any other 5xx, with no detail.
+- Errors that middleware writes with `web.Fail` are mapped too.
+- Register mappers while you build the app. The list is read on every request and is not locked, so registering one while the app serves is a data race.
 
 ## Replacing the error handler
 
@@ -486,7 +507,7 @@ JSON clients keep getting problem JSON, now with the error text as `detail`, and
 | --- | --- | --- | --- |
 | `APP_DEBUG` | bool | `false` | Debug page, error text in 5xx `detail`, colour report on stderr; ignored in production |
 | `APP_ENV` | string | — | `production` disables debug output |
-| `APP_PROBLEM_BASE_URL` | URL | empty | Validation problem `type` becomes `<base>/validation` |
+| `APP_PROBLEM_BASE_URL` | URL | empty | Problem `type` becomes `<base>/<status>` (`<base>/validation` for validation errors) |
 | `Services.Errors` | `web.ErrorHandler` | `nil` | Replaces `web.DefaultErrorHandler` |
 | `Services.ErrorPage` | `web.ErrorPageFunc` | `nil` (Inertia's with `WithInertia`) | Renders the error page in another format |
 | `Services.ProblemDecorator` | `func(*web.Ctx, *web.Problem)` | `nil` | Edits every problem+json response before it is written |
