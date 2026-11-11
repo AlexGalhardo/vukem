@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -13,7 +12,6 @@ import (
 	"net/netip"
 	neturl "net/url"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
 	"sync"
@@ -25,7 +23,6 @@ import (
 	"github.com/AlexGalhardo/vukem/csrf"
 	"github.com/AlexGalhardo/vukem/devtools"
 	"github.com/AlexGalhardo/vukem/i18n"
-	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/ratelimit"
@@ -1061,67 +1058,6 @@ func (r *certReloader) load() (*tls.Certificate, error) {
 	return &cert, nil
 }
 
-// BuildFunc builds the application; bootstrap.New implements it.
-type BuildFunc func(opts ...Option) (*App, error)
-
-// RunMain is the testable body of main: it builds the app with the given
-// environment and runs the command in args (default "serve").
-func RunMain(ctx context.Context, args []string, getenv func(string) (string, bool), build BuildFunc,
-	opts ...Option,
-) error {
-	cmd, rest := "serve", []string(nil)
-	if len(args) > 1 {
-		cmd, rest = args[1], args[2:]
-	}
-
-	if cmd == keyGenerateName {
-		return runKeyGenerate(rest, opts)
-	}
-
-	base := []Option{WithEnv(osDirFS("."), getenv)}
-	switch {
-	case isWarmupCommand(cmd):
-		base = append(base, WithKind(KindWarmup))
-	case cmd != "serve":
-		base = append(base, WithKind(KindConsole))
-	}
-
-	app, err := build(append(base, opts...)...)
-	if err != nil {
-		return err
-	}
-
-	switch cmd {
-	case "serve":
-		if err := serveFlags(app, rest); err != nil {
-			return err
-		}
-
-		return app.Run(ctx)
-	default:
-		return runCommand(ctx, app, cmd, rest)
-	}
-}
-
-// Main runs the application from os.Args and the process environment and
-// returns the exit code. Use it as: func main() { os.Exit(vukem.Main(bootstrap.New)) }.
-func Main(build BuildFunc) int {
-	ctx, stop := signalContext()
-	defer stop()
-
-	if err := RunMain(ctx, osArgs(), lookupEnv, build); err != nil {
-		if errors.Is(err, errUsage) {
-			return 2
-		}
-
-		fmt.Fprintln(stderr(), err)
-
-		return 1
-	}
-
-	return 0
-}
-
 // sessionPruner is a session store that keeps expired rows until pruned.
 type sessionPruner interface {
 	Prune(ctx context.Context) (int64, error)
@@ -1161,163 +1097,6 @@ func (a *App) databaseSessionStore() (session.Store, error) {
 }
 
 func configLoad[T any](a *App) (T, error) { return config.Load[T](a.Source) }
-
-func ssrCommands() []Command { return []Command{ssrStartCommand(), ssrCheckCommand()} }
-
-// ssrStartCommand supervises the Inertia SSR server: it runs the bundle with
-// node and restarts it when it crashes, until the command is stopped.
-func ssrStartCommand() Command {
-	var (
-		bundle, runtime *string
-		delay           *time.Duration
-	)
-
-	return CommandFunc{
-		CommandName: "ssr:start",
-		Desc:        "Run the Inertia SSR server (node bootstrap/ssr/ssr.js) and restart it if it crashes",
-		DefineFlags: func(fs *flag.FlagSet) {
-			bundle = fs.String("bundle", "bootstrap/ssr/ssr.js", "SSR bundle built by vite build --ssr")
-			runtime = fs.String("runtime", "node", "JavaScript runtime that runs the bundle")
-			delay = fs.Duration("restart-delay", time.Second, "wait before restarting a crashed server")
-		},
-		Fn: func(ctx context.Context, app *App, _ []string) error {
-			if err := checkSSRBundle("ssr:start", *bundle); err != nil {
-				return err
-			}
-
-			return app.superviseSSR(ctx, ssrProcess{*bundle, *runtime, *delay, false, ssrMinUptime})
-		},
-	}
-}
-
-// ssrProcess is how ssr:start and `serve -with-ssr` run the SSR server.
-type ssrProcess struct {
-	bundle, runtime string
-	delay           time.Duration
-	// always restarts after a clean exit too: under serve the app keeps
-	// rendering pages, so the server must come back.
-	always bool
-	// minUptime is ssrMinUptime outside tests.
-	minUptime time.Duration
-}
-
-// ssrMinUptime separates a bundle that never served (exits at once) from a
-// server stopped with POST /shutdown.
-const ssrMinUptime = 2 * time.Second
-
-// errSSRNoServer reports an SSR bundle that exited without serving.
-var errSSRNoServer = errors.New("ssr:start: the SSR bundle did not start a server " +
-	"(call createInertiaApp at the top level of resources/js/ssr.ts(x), do not export it, and rebuild)")
-
-func checkSSRBundle(cmd, bundle string) error {
-	if _, err := os.Stat(bundle); err != nil {
-		return fmt.Errorf("%s: SSR bundle %s not found (run npm run build): %w", cmd, bundle, err)
-	}
-
-	return nil
-}
-
-// superviseSSR runs the SSR bundle and restarts it when it exits, until ctx
-// is done.
-func (a *App) superviseSSR(ctx context.Context, p ssrProcess) error {
-	for {
-		cmd := exec.CommandContext(ctx, p.runtime, p.bundle) //nolint:gosec // G204: developer-supplied flags
-		cmd.Stdout, cmd.Stderr = a.stdout, os.Stderr
-		cmd.WaitDelay = 5 * time.Second
-
-		start := time.Now()
-		err := cmd.Run()
-
-		// A bundle that exits cleanly at once never started a server (an
-		// entry that exports createInertiaApp instead of calling it): fail
-		// loudly rather than exit 0 with no output.
-		if ctx.Err() == nil && err == nil && !p.always && time.Since(start) < p.minUptime {
-			return fmt.Errorf("%w: %s exited at once", errSSRNoServer, p.bundle)
-		}
-
-		// Stopped (Ctrl+C), or a clean exit (POST /shutdown) under ssr:start.
-		if ctx.Err() != nil || err == nil && !p.always {
-			return nil //nolint:nilerr // the process was killed on purpose
-		}
-
-		a.Log.WarnContext(ctx, "ssr: server exited, restarting", "err", err, "delay", p.delay)
-
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(p.delay):
-		}
-	}
-}
-
-// serveFlags parses the flags of the serve command: -with-ssr adds the
-// "ssr" runner, which supervises the SSR server like ssr:start.
-func serveFlags(app *App, args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	fs.SetOutput(app.stderr)
-
-	withSSR := fs.Bool("with-ssr", false, "also run and supervise the Inertia SSR server (like ssr:start)")
-	bundle := fs.String("ssr-bundle", "bootstrap/ssr/ssr.js", "SSR bundle built by vite build --ssr")
-	runtime := fs.String("ssr-runtime", "node", "JavaScript runtime that runs the SSR bundle")
-	delay := fs.Duration("ssr-restart-delay", time.Second, "wait before restarting the SSR server")
-
-	if err := fs.Parse(args); err != nil {
-		return errUsage
-	}
-
-	if !*withSSR {
-		return nil
-	}
-
-	if err := checkSSRBundle("serve -with-ssr", *bundle); err != nil {
-		return err
-	}
-
-	p := ssrProcess{*bundle, *runtime, *delay, true, ssrMinUptime}
-	app.AddRunner("ssr", RunnerFunc(func(ctx context.Context) error { return app.superviseSSR(ctx, p) }))
-
-	return nil
-}
-
-func ssrCheckCommand() Command {
-	var url *string
-
-	return CommandFunc{
-		CommandName: "ssr:check",
-		Desc:        "Check that the Inertia SSR server answers /health (exit 1 otherwise)",
-		DefineFlags: func(fs *flag.FlagSet) {
-			url = fs.String("url", inertia.DefaultSSRURL, "SSR server URL")
-		},
-		Fn: func(ctx context.Context, app *App, _ []string) error {
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-
-			req, err := http.NewRequestWithContext(
-				ctx,
-				http.MethodGet,
-				strings.TrimSuffix(*url, "/")+"/health",
-				http.NoBody,
-			)
-			if err != nil {
-				return err
-			}
-
-			res, err := http.DefaultClient.Do(req)
-			if err != nil {
-				return fmt.Errorf("ssr:check: %w", err)
-			}
-			defer res.Body.Close()
-
-			if res.StatusCode != http.StatusOK {
-				return errors.New("ssr:check: " + res.Status)
-			}
-
-			_, err = fmt.Fprintln(app.stdout, "SSR server is healthy")
-
-			return err
-		},
-	}
-}
 
 // WithOpenAPI makes App.OpenAPI (and so /openapi.json, openapi:export,
 // codegen:types, codegen:client and vukemtest.AssertMatchesOpenAPI) build

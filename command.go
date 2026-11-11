@@ -10,7 +10,9 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -20,10 +22,12 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/ssg"
 )
@@ -715,6 +719,163 @@ func ssgGenerateCommand() Command {
 			}
 
 			return nil
+		},
+	}
+}
+
+func ssrCommands() []Command { return []Command{ssrStartCommand(), ssrCheckCommand()} }
+
+// ssrStartCommand supervises the Inertia SSR server: it runs the bundle with
+// node and restarts it when it crashes, until the command is stopped.
+func ssrStartCommand() Command {
+	var (
+		bundle, jsRuntime *string
+		delay             *time.Duration
+	)
+
+	return CommandFunc{
+		CommandName: "ssr:start",
+		Desc:        "Run the Inertia SSR server (node bootstrap/ssr/ssr.js) and restart it if it crashes",
+		DefineFlags: func(fs *flag.FlagSet) {
+			bundle = fs.String("bundle", "bootstrap/ssr/ssr.js", "SSR bundle built by vite build --ssr")
+			jsRuntime = fs.String("runtime", "node", "JavaScript runtime that runs the bundle")
+			delay = fs.Duration("restart-delay", time.Second, "wait before restarting a crashed server")
+		},
+		Fn: func(ctx context.Context, app *App, _ []string) error {
+			if err := checkSSRBundle("ssr:start", *bundle); err != nil {
+				return err
+			}
+
+			return app.superviseSSR(ctx, ssrProcess{*bundle, *jsRuntime, *delay, false, ssrMinUptime})
+		},
+	}
+}
+
+// ssrProcess is how ssr:start and `serve -with-ssr` run the SSR server.
+type ssrProcess struct {
+	bundle, runtime string
+	delay           time.Duration
+	// always restarts after a clean exit too: under serve the app keeps
+	// rendering pages, so the server must come back.
+	always bool
+	// minUptime is ssrMinUptime outside tests.
+	minUptime time.Duration
+}
+
+// ssrMinUptime separates a bundle that never served (exits at once) from a
+// server stopped with POST /shutdown.
+const ssrMinUptime = 2 * time.Second
+
+// errSSRNoServer reports an SSR bundle that exited without serving.
+var errSSRNoServer = errors.New("ssr:start: the SSR bundle did not start a server " +
+	"(call createInertiaApp at the top level of resources/js/ssr.ts(x), do not export it, and rebuild)")
+
+func checkSSRBundle(cmd, bundle string) error {
+	if _, err := os.Stat(bundle); err != nil {
+		return fmt.Errorf("%s: SSR bundle %s not found (run npm run build): %w", cmd, bundle, err)
+	}
+
+	return nil
+}
+
+// superviseSSR runs the SSR bundle and restarts it when it exits, until ctx
+// is done.
+func (a *App) superviseSSR(ctx context.Context, p ssrProcess) error {
+	for {
+		cmd := exec.CommandContext(ctx, p.runtime, p.bundle) //nolint:gosec // G204: developer-supplied flags
+		cmd.Stdout, cmd.Stderr = a.stdout, os.Stderr
+		cmd.WaitDelay = 5 * time.Second
+
+		start := time.Now()
+		err := cmd.Run()
+
+		// A bundle that exits cleanly at once never started a server (an
+		// entry that exports createInertiaApp instead of calling it): fail
+		// loudly rather than exit 0 with no output.
+		if ctx.Err() == nil && err == nil && !p.always && time.Since(start) < p.minUptime {
+			return fmt.Errorf("%w: %s exited at once", errSSRNoServer, p.bundle)
+		}
+
+		// Stopped (Ctrl+C), or a clean exit (POST /shutdown) under ssr:start.
+		if ctx.Err() != nil || err == nil && !p.always {
+			return nil //nolint:nilerr // the process was killed on purpose
+		}
+
+		a.Log.WarnContext(ctx, "ssr: server exited, restarting", "err", err, "delay", p.delay)
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(p.delay):
+		}
+	}
+}
+
+// serveFlags parses the flags of the serve command: -with-ssr adds the
+// "ssr" runner, which supervises the SSR server like ssr:start.
+func serveFlags(app *App, args []string) error {
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags.SetOutput(app.stderr)
+
+	withSSR := flags.Bool("with-ssr", false, "also run and supervise the Inertia SSR server (like ssr:start)")
+	bundle := flags.String("ssr-bundle", "bootstrap/ssr/ssr.js", "SSR bundle built by vite build --ssr")
+	jsRuntime := flags.String("ssr-runtime", "node", "JavaScript runtime that runs the SSR bundle")
+	delay := flags.Duration("ssr-restart-delay", time.Second, "wait before restarting the SSR server")
+
+	if err := flags.Parse(args); err != nil {
+		return errUsage
+	}
+
+	if !*withSSR {
+		return nil
+	}
+
+	if err := checkSSRBundle("serve -with-ssr", *bundle); err != nil {
+		return err
+	}
+
+	p := ssrProcess{*bundle, *jsRuntime, *delay, true, ssrMinUptime}
+	app.AddRunner("ssr", RunnerFunc(func(ctx context.Context) error { return app.superviseSSR(ctx, p) }))
+
+	return nil
+}
+
+func ssrCheckCommand() Command {
+	var url *string
+
+	return CommandFunc{
+		CommandName: "ssr:check",
+		Desc:        "Check that the Inertia SSR server answers /health (exit 1 otherwise)",
+		DefineFlags: func(fs *flag.FlagSet) {
+			url = fs.String("url", inertia.DefaultSSRURL, "SSR server URL")
+		},
+		Fn: func(ctx context.Context, app *App, _ []string) error {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+
+			req, err := http.NewRequestWithContext(
+				ctx,
+				http.MethodGet,
+				strings.TrimSuffix(*url, "/")+"/health",
+				http.NoBody,
+			)
+			if err != nil {
+				return err
+			}
+
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("ssr:check: %w", err)
+			}
+			defer res.Body.Close()
+
+			if res.StatusCode != http.StatusOK {
+				return errors.New("ssr:check: " + res.Status)
+			}
+
+			_, err = fmt.Fprintln(app.stdout, "SSR server is healthy")
+
+			return err
 		},
 	}
 }

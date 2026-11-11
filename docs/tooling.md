@@ -130,7 +130,7 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 
 | Workflow | Trigger | Jobs |
 | --- | --- | --- |
-| `ci.yml` | push to `main`, PRs | lint (`go vet`, `go fix`, `fixinline`, `modcheck`, `snippetcheck`, `//nolint:gocognit` budget of 6), OpenAPI golden lint, markdownlint, test matrix (`-race`, e2e, coverage gate), govulncheck, one integration job per driver and contrib module, `apidiff` ([API compatibility](#api-compatibility)) |
+| `ci.yml` | push to `main`, PRs | lint (`go vet`, `go fix`, `fixinline`, `modcheck`, `snippetcheck`, `//nolint:gocognit` budget of 4), OpenAPI golden lint, markdownlint, test matrix (`-race`, e2e, coverage gate), govulncheck, one integration job per driver and contrib module, `apidiff` ([API compatibility](#api-compatibility)) |
 | `vuln.yml` | weekly, manual | govulncheck on the core and every module (`drivers/*`, `contrib/*`, `examples/*`, `internal/bench`) with `GOWORK=off` |
 | `fuzz.yml` | weekly, manual | every `Fuzz*` target for an hour; crashers uploaded as artifacts |
 | `ci-failure.yml` | `Fuzz`, `Vulnerabilities (weekly)`, `Scorecard`, `Secrets` or `CodeQL` failed | opens or comments on a `ci-failure` issue ([maintenance](maintenance.md#security-review-routine)) |

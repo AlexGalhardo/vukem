@@ -35,20 +35,9 @@ func describeLiteral(v *value) string {
 
 // coerceLiteral converts an AST value to t (spec §5.6.1 rules applied to
 // literals). vars holds coerced variable values; nil in constant context.
-//
-//nolint:gocognit // one case per GraphQL literal kind; mirrors the spec's coercion table
 func coerceLiteral(v *value, t *gtype, vars map[string]any) (any, error) {
 	if v.kind == valVariable {
-		val, ok := vars[v.raw]
-		if !ok {
-			return nil, errAbsent
-		}
-
-		if val == nil && t.kind == kindNonNull {
-			return nil, fmt.Errorf("expected non-null value of type %s, found null from $%s", t, v.raw)
-		}
-
-		return val, nil
+		return variableLiteral(v, t, vars)
 	}
 
 	if t.kind == kindNonNull {
@@ -64,39 +53,7 @@ func coerceLiteral(v *value, t *gtype, vars map[string]any) (any, error) {
 	}
 
 	if t.kind == kindList {
-		if v.kind != valList {
-			item, err := coerceLiteral(v, t.ofType, vars)
-			if errors.Is(err, errAbsent) {
-				return []any{nil}, nil
-			}
-
-			if err != nil {
-				return nil, err
-			}
-
-			return []any{item}, nil
-		}
-
-		out := make([]any, 0, len(v.list))
-
-		for i, it := range v.list {
-			item, err := coerceLiteral(it, t.ofType, vars)
-			if errors.Is(err, errAbsent) {
-				if t.ofType.kind == kindNonNull {
-					return nil, fmt.Errorf("[%d]: expected non-null value of type %s", i, t.ofType)
-				}
-
-				item, err = nil, nil
-			}
-
-			if err != nil {
-				return nil, fmt.Errorf("[%d]: %w", i, err)
-			}
-
-			out = append(out, item)
-		}
-
-		return out, nil
+		return coerceListLiteral(v, t, vars)
 	}
 
 	n := t.named
@@ -104,18 +61,73 @@ func coerceLiteral(v *value, t *gtype, vars map[string]any) (any, error) {
 	case kindInputObject:
 		return coerceObjectLiteral(v, n, vars)
 	case kindEnum:
-		if v.kind != valEnum {
-			return nil, fmt.Errorf("enum %q cannot represent non-enum value: %s", n.name, describeLiteral(v))
-		}
-
-		if n.enumMap[v.raw] == nil {
-			return nil, fmt.Errorf("value %q does not exist in %q enum", v.raw, n.name)
-		}
-
-		return v.raw, nil
+		return enumLiteral(v, n)
 	}
 
 	return scalarLiteral(v, n, vars)
+}
+
+// variableLiteral is the value of a variable reference used as a literal.
+func variableLiteral(v *value, t *gtype, vars map[string]any) (any, error) {
+	val, ok := vars[v.raw]
+	if !ok {
+		return nil, errAbsent
+	}
+
+	if val == nil && t.kind == kindNonNull {
+		return nil, fmt.Errorf("expected non-null value of type %s, found null from $%s", t, v.raw)
+	}
+
+	return val, nil
+}
+
+// coerceListLiteral coerces v to the list type t; a single item is a list of one.
+func coerceListLiteral(v *value, t *gtype, vars map[string]any) (any, error) {
+	if v.kind != valList {
+		item, err := coerceLiteral(v, t.ofType, vars)
+		if errors.Is(err, errAbsent) {
+			return []any{nil}, nil
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		return []any{item}, nil
+	}
+
+	out := make([]any, 0, len(v.list))
+
+	for i, it := range v.list {
+		item, err := coerceLiteral(it, t.ofType, vars)
+		if errors.Is(err, errAbsent) {
+			if t.ofType.kind == kindNonNull {
+				return nil, fmt.Errorf("[%d]: expected non-null value of type %s", i, t.ofType)
+			}
+
+			item, err = nil, nil
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		out = append(out, item)
+	}
+
+	return out, nil
+}
+
+func enumLiteral(v *value, n *namedType) (any, error) {
+	if v.kind != valEnum {
+		return nil, fmt.Errorf("enum %q cannot represent non-enum value: %s", n.name, describeLiteral(v))
+	}
+
+	if n.enumMap[v.raw] == nil {
+		return nil, fmt.Errorf("value %q does not exist in %q enum", v.raw, n.name)
+	}
+
+	return v.raw, nil
 }
 
 func coerceObjectLiteral(v *value, n *namedType, vars map[string]any) (any, error) {
@@ -305,8 +317,6 @@ func literalToGeneric(v *value, vars map[string]any) (any, error) {
 
 // coerceVariable converts a JSON (or Go) variable value to t (spec
 // §5.6.1 CoerceVariableValues / input coercion).
-//
-//nolint:gocognit // one case per GraphQL variable type; mirrors the spec's coercion table
 func coerceVariable(v any, t *gtype) (any, error) {
 	if t.kind == kindNonNull {
 		if v == nil {
@@ -321,66 +331,14 @@ func coerceVariable(v any, t *gtype) (any, error) {
 	}
 
 	if t.kind == kindList {
-		rv := reflect.ValueOf(v)
-		if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
-			item, err := coerceVariable(v, t.ofType)
-			if err != nil {
-				return nil, err
-			}
-
-			return []any{item}, nil
-		}
-
-		out := make([]any, rv.Len())
-
-		for i := range rv.Len() {
-			item, err := coerceVariable(rv.Index(i).Interface(), t.ofType)
-			if err != nil {
-				return nil, fmt.Errorf("at index %d: %w", i, err)
-			}
-
-			out[i] = item
-		}
-
-		return out, nil
+		return coerceListVariable(v, t)
 	}
 
 	n := t.named
 
 	switch n.kind { //nolint:exhaustive // the remaining kinds take the common path below
 	case kindInputObject:
-		m, ok := v.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("expected type %q to be an object", n.name)
-		}
-
-		for _, k := range sortedKeys(m) {
-			if n.inputMap[k] == nil {
-				return nil, fmt.Errorf("field %q is not defined by type %q", k, n.name)
-			}
-		}
-
-		out := map[string]any{}
-
-		for _, iv := range n.inputs {
-			fv, present := m[iv.name]
-
-			switch {
-			case !present && iv.hasDefault:
-				out[iv.name] = iv.defValue
-			case !present && iv.typ.kind == kindNonNull:
-				return nil, fmt.Errorf("field %q of required type %q was not provided", iv.name, iv.typ)
-			case present:
-				c, err := coerceVariable(fv, iv.typ)
-				if err != nil {
-					return nil, fmt.Errorf("at %q: %w", iv.name, err)
-				}
-
-				out[iv.name] = c
-			}
-		}
-
-		return out, nil
+		return coerceObjectVariable(v, n)
 	case kindEnum:
 		s, ok := v.(string)
 		if !ok || n.enumMap[s] == nil {
@@ -391,6 +349,67 @@ func coerceVariable(v any, t *gtype) (any, error) {
 	}
 
 	return scalarInput(n, v)
+}
+
+// coerceListVariable coerces v to the list type t; a single item is a list of one.
+func coerceListVariable(v any, t *gtype) (any, error) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		item, err := coerceVariable(v, t.ofType)
+		if err != nil {
+			return nil, err
+		}
+
+		return []any{item}, nil
+	}
+
+	out := make([]any, rv.Len())
+
+	for i := range rv.Len() {
+		item, err := coerceVariable(rv.Index(i).Interface(), t.ofType)
+		if err != nil {
+			return nil, fmt.Errorf("at index %d: %w", i, err)
+		}
+
+		out[i] = item
+	}
+
+	return out, nil
+}
+
+func coerceObjectVariable(v any, n *namedType) (any, error) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("expected type %q to be an object", n.name)
+	}
+
+	for _, k := range sortedKeys(m) {
+		if n.inputMap[k] == nil {
+			return nil, fmt.Errorf("field %q is not defined by type %q", k, n.name)
+		}
+	}
+
+	out := map[string]any{}
+
+	for _, iv := range n.inputs {
+		fv, present := m[iv.name]
+
+		switch {
+		case !present && iv.hasDefault:
+			out[iv.name] = iv.defValue
+		case !present && iv.typ.kind == kindNonNull:
+			return nil, fmt.Errorf("field %q of required type %q was not provided", iv.name, iv.typ)
+		case present:
+			c, err := coerceVariable(fv, iv.typ)
+			if err != nil {
+				return nil, fmt.Errorf("at %q: %w", iv.name, err)
+			}
+
+			out[iv.name] = c
+		}
+	}
+
+	return out, nil
 }
 
 func scalarInput(n *namedType, v any) (any, error) {

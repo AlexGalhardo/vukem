@@ -278,3 +278,64 @@ func (s *HTTPServer) Run(ctx context.Context) error {
 
 	return nil
 }
+
+// BuildFunc builds the application; bootstrap.New implements it.
+type BuildFunc func(opts ...Option) (*App, error)
+
+// RunMain is the testable body of main: it builds the app with the given
+// environment and runs the command in args (default "serve").
+func RunMain(ctx context.Context, args []string, getenv func(string) (string, bool), build BuildFunc,
+	opts ...Option,
+) error {
+	cmd, rest := "serve", []string(nil)
+	if len(args) > 1 {
+		cmd, rest = args[1], args[2:]
+	}
+
+	if cmd == keyGenerateName {
+		return runKeyGenerate(rest, opts)
+	}
+
+	base := []Option{WithEnv(osDirFS("."), getenv)}
+	switch {
+	case isWarmupCommand(cmd):
+		base = append(base, WithKind(KindWarmup))
+	case cmd != "serve":
+		base = append(base, WithKind(KindConsole))
+	}
+
+	app, err := build(append(base, opts...)...)
+	if err != nil {
+		return err
+	}
+
+	switch cmd {
+	case "serve":
+		if err := serveFlags(app, rest); err != nil {
+			return err
+		}
+
+		return app.Run(ctx)
+	default:
+		return runCommand(ctx, app, cmd, rest)
+	}
+}
+
+// Main runs the application from os.Args and the process environment and
+// returns the exit code. Use it as: func main() { os.Exit(vukem.Main(bootstrap.New)) }.
+func Main(build BuildFunc) int {
+	ctx, stop := signalContext()
+	defer stop()
+
+	if err := RunMain(ctx, osArgs(), lookupEnv, build); err != nil {
+		if errors.Is(err, errUsage) {
+			return 2
+		}
+
+		fmt.Fprintln(stderr(), err)
+
+		return 1
+	}
+
+	return 0
+}
