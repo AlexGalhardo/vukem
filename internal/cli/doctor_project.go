@@ -311,7 +311,7 @@ func checkAppEnv(env *Env, vals map[string]string) doctorCheck {
 		appEnv = strings.TrimSpace(v)
 	}
 
-	switch strings.ToLower(appEnv) {
+	switch appEnv { // case-sensitive, like checkConfig: "Production" does not boot
 	case "development", "test", "production":
 		return doctorCheck{Name: "app_env", Status: "ok", Detail: appEnv}
 	case "":
