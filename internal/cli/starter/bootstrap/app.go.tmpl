@@ -7,6 +7,7 @@ import (
 
 	"{{.Module}}/app/jobs"
 	"{{.Module}}/app/listeners"
+	"{{.Module}}/app/views"
 	"{{.Module}}/database/migrations"
 	"{{.Module}}/database/seeders"
 	"{{.Module}}/resources"
@@ -25,6 +26,7 @@ func New(opts ...vukem.Option) (*vukem.App, error) {
 		vukem.WithJobsFunc(jobs.All),
 		vukem.WithSchedule(routes.Schedule),
 		vukem.WithViews(resources.Views()),
+		vukem.WithViewPages(views.All()...),
 		vukem.WithVite(resources.Public()),
 	}
 

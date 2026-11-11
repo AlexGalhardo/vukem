@@ -10,6 +10,7 @@ import (
 
 	"{{.Module}}/app/models"
 	"{{.Module}}/app/requests"
+	"{{.Module}}/app/views"
 )
 
 // PostController is the example CRUD: forms with validation, flash
@@ -39,11 +40,11 @@ func (pc *PostController) Index(c *web.Ctx) error {
 		return c.JSON(http.StatusOK, map[string]any{"data": posts})
 	}
 
-	return c.Render("posts/index", map[string]any{"Posts": posts, "Search": c.Query("q")}, web.Block("post-list"))
+	return views.PostsIndex.Render(c, views.PostsIndexData{Posts: posts, Search: c.Query("q")}, web.Block("post-list"))
 }
 
 // Create shows the form for a new post.
-func (*PostController) Create(c *web.Ctx) error { return c.Render("posts/create", nil) }
+func (*PostController) Create(c *web.Ctx) error { return views.PostsCreate.Render(c, struct{}{}) }
 
 // Store validates and saves a new post. Invalid input redirects back with
 // the errors and old input flashed to the session.
@@ -78,7 +79,7 @@ func (pc *PostController) Show(c *web.Ctx) error {
 		return c.JSON(http.StatusOK, post)
 	}
 
-	return c.Render("posts/show", post)
+	return views.PostsShow.Render(c, post)
 }
 
 // Edit shows the edit form.
@@ -88,7 +89,7 @@ func (pc *PostController) Edit(c *web.Ctx) error {
 		return err
 	}
 
-	return c.Render("posts/edit", post)
+	return views.PostsEdit.Render(c, post)
 }
 
 // Update validates and saves changes.

@@ -56,6 +56,21 @@ const minimalBuildTags = `# Go build tags for vukem build and vukem serve (see d
 vukem_nosqlite
 `
 
+// minimalViews is app/views/views.go without the post and upload pages,
+// whose models and templates the minimal starter drops.
+const minimalViews = `// Package views declares the data type of each typed html/template view, so
+// ` + "`app view:check`" + ` can compare the templates with it.
+package views
+
+import "github.com/AlexGalhardo/vukem/view"
+
+// Home is the welcome page.
+var Home = view.Of[struct{}]("home")
+
+// All lists the typed views for vukem.WithViewPages.
+func All() []view.Decl { return []view.Decl{Home.Decl()} }
+`
+
 // makeMinimalStarter turns the starter into a database-less HTMX app.
 func makeMinimalStarter(env *Env) error {
 	for _, rel := range minimalStarterRemove {
@@ -85,6 +100,10 @@ func makeMinimalStarter(env *Env) error {
 		if err := writeFile(p, bytes.Replace(src, old, []byte(e.new), 1)); err != nil {
 			return err
 		}
+	}
+
+	if err := writeFile(env.path(filepath.Join("app", "views", "views.go")), []byte(minimalViews)); err != nil {
+		return err
 	}
 
 	return writeFile(env.path(buildTagsFile), []byte(minimalBuildTags))
