@@ -3,6 +3,7 @@ package studio
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,7 +37,8 @@ func (s *SQLDB) Query(ctx context.Context, text string, write bool) (ResultSet, 
 
 	if !write && !readOnlyStatement(text, fam) {
 		return ResultSet{}, inputError(
-			"read-only: only SELECT, WITH, SHOW, EXPLAIN, DESCRIBE, TABLE and VALUES statements run; " +
+			"read-only: only SELECT, WITH, SHOW, EXPLAIN, DESCRIBE, TABLE and VALUES statements run, without INTO " +
+				"and without functions that lock, sleep, signal or read files (pg_sleep, GET_LOCK, LOAD_FILE...); " +
 				"anything else needs --write and the write switch")
 	}
 
@@ -138,17 +140,20 @@ var readVerbs = map[string]bool{
 	"table": true, "values": true,
 }
 
-// readOnlyStatement reports whether text starts with a read verb and holds no
-// INTO (SELECT ... INTO creates a table or writes a file). SQLite also runs
-// PRAGMA, which its read-only connection holds back from writing. Comments
-// and parentheses before the verb are skipped, strings and quoted names are
-// not read. It does not inspect functions: a read-only transaction does not
-// stop a function with side effects either.
+// readOnlyStatement reports whether text starts with a read verb, holds no
+// INTO (SELECT ... INTO creates a table or writes a file) and calls none of the
+// functions in deniedFunctions. SQLite also runs PRAGMA, which its read-only
+// connection holds back from writing. Comments and parentheses before the verb
+// are skipped, strings are not read, and a quoted name counts as a function
+// name when a "(" follows it ("pg_sleep"(1)).
 func readOnlyStatement(text, family string) bool {
 	first, ok := "", true
 
-	if !lex(text, family == "mysql", func(w string) {
+	if !lex(text, family == "mysql", func(w string, call, quoted bool) {
 		switch {
+		case call && deniedFunction(w, family):
+			ok = false
+		case quoted:
 		case first == "":
 			first = w
 		case w == "into":
@@ -161,6 +166,39 @@ func readOnlyStatement(text, family string) bool {
 	return ok && (readVerbs[first] || family == "sqlite" && first == "pragma")
 }
 
+// deniedFunctions are functions that have a side effect a READ ONLY
+// transaction does not stop (a lock, a signal, a sleep, a file or a setting)
+// or that read the server's files.
+//
+// shortcut: a deny list is not exhaustive (an extension or a user-defined
+// function can do the same), so it is only a second layer. The barriers that
+// hold are the read verb above and the read-only transaction or connection.
+// Upgrade to an allow list of functions if the console ever needs to be open
+// to untrusted users; today it is a loopback tool behind a session token.
+var deniedFunctions = map[string][]string{
+	"postgres": {
+		"pg_terminate_backend", "pg_cancel_backend", "pg_reload_conf", "pg_rotate_logfile", "pg_read_file",
+		"pg_read_binary_file", "pg_ls_dir", "pg_stat_file", "lo_import", "lo_export", "set_config", "pg_notify",
+		"txid_current", "nextval", "setval",
+	},
+	"mysql": {
+		"get_lock", "release_lock", "release_all_locks", "sleep", "benchmark", "load_file", "sys_exec", "sys_eval",
+	},
+	"sqlite": {"load_extension", "readfile", "writefile"},
+}
+
+// deniedFunction reports whether calling name is refused in family. PostgreSQL
+// also refuses the dblink and pg_sleep families and the advisory lock calls.
+func deniedFunction(name, family string) bool {
+	if slices.Contains(deniedFunctions[family], name) {
+		return true
+	}
+
+	return family == "postgres" &&
+		(strings.HasPrefix(name, "dblink") || strings.HasPrefix(name, "pg_sleep") ||
+			strings.HasPrefix(name, "pg_") && strings.Contains(name, "advisory") && strings.Contains(name, "lock"))
+}
+
 // singleStatement reports whether text is one SQL statement, optionally ended
 // by a semicolon. A backslash escapes the next character only where backslash
 // is true (MySQL); elsewhere it is an ordinary character, as the server reads it.
@@ -169,9 +207,10 @@ func singleStatement(text string, backslash bool) bool { return lex(text, backsl
 // lex walks text and reports whether it is one statement. It reads quoted
 // strings and identifiers, comments and PostgreSQL dollar quoting, and fails
 // closed: anything it cannot follow (an unterminated quote, a MySQL "/*!"
-// comment that the server runs) is "no". word, when set, receives each
-// unquoted word in lower case.
-func lex(text string, backslash bool, word func(string)) bool {
+// comment that the server runs) is "no". word, when set, receives each word
+// and each double-quoted or backtick-quoted name in lower case, with whether a
+// "(" follows it.
+func lex(text string, backslash bool, word func(w string, call, quoted bool)) bool {
 	ended := false
 
 	for i := 0; i < len(text); {
@@ -201,6 +240,10 @@ func lex(text string, backslash bool, word func(string)) bool {
 				return false
 			}
 
+			if word != nil && c != '\'' {
+				word(strings.ToLower(text[i+1:j]), callFollows(text, j+1), true)
+			}
+
 			i = j + 1
 		case c == '$':
 			j := dollarEnd(text, i)
@@ -212,7 +255,7 @@ func lex(text string, backslash bool, word func(string)) bool {
 		case isWordStart(c):
 			j := wordEnd(text, i)
 			if word != nil {
-				word(strings.ToLower(text[i:j]))
+				word(strings.ToLower(text[i:j]), callFollows(text, j), false)
 			}
 
 			i = j
@@ -250,6 +293,26 @@ func commentEnd(text string, i int, backslash bool) int {
 	}
 
 	return notComment
+}
+
+// callFollows reports whether the next token after text[:i], past spaces and
+// comments, is an opening parenthesis: a name followed by one is a call.
+func callFollows(text string, i int) bool {
+	for i < len(text) {
+		if text[i] <= ' ' {
+			i++
+			continue
+		}
+
+		if end := commentEnd(text, i, false); end >= 0 {
+			i = end
+			continue
+		}
+
+		return text[i] == '('
+	}
+
+	return false
 }
 
 // wordEnd returns the index after the word that starts at text[i].
