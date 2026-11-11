@@ -133,7 +133,7 @@ func (s *SQLDB) DB() *database.DB { return s.db }
 
 // Explain implements SQLSource.
 func (s *SQLDB) Explain(text string) string {
-	if s.db.Dialect() == database.SQLite {
+	if s.family() == "sqlite" {
 		return "EXPLAIN QUERY PLAN " + text
 	}
 
