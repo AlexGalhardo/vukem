@@ -29,7 +29,7 @@ Supported syntax: `KEY=value`, `export KEY=value`, single/double quotes, `\n` es
 // config/app.go (user app)
 type App struct {
 	Name  string         `env:"APP_NAME"  default:"Vukem"`
-	Env   config.Env     `env:"APP_ENV"   default:"development"` // development | production | test
+	Env   config.Env     `env:"APP_ENV"   default:"production"` // development | production | test
 	Debug bool           `env:"APP_DEBUG" default:"false"`
 	URL   string         `env:"APP_URL"   validate:"required,url"`
 	Key   config.Secret  `env:"APP_KEY"`                                // decode with config.ParseKey (32+ bytes); see APP_KEY below
@@ -53,7 +53,7 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 
 ## `APP_KEY`
 
-- Required in production and whenever `APP_ENV` is unset or empty. Only with an explicit `APP_ENV=development` or `test` does an app boot without it (development logs one warning), and every key-derived feature fails closed on use: cookie sessions (`SESSION_DRIVER=cookie`, the default, so `DefaultMiddleware` is still a boot error), `app.Crypt` (nil; `Decrypt` and `SetCookie` return `crypt.ErrNoKey`, `Encrypt` panics), `app.Key.Derive` (panics), `app.DeriveKey` (returns `config.ErrKeyMissing`), encrypted ORM columns (`orm.ErrNoEncrypter`) and the maintenance bypass cookie (disabled). An API-only app with token auth and no encryption runs without a key. A malformed key is always a boot error.
+- Required in production and whenever `APP_ENV` is unset or empty (an unset `APP_ENV` is production). Only with an explicit `APP_ENV=development` or `test` does an app boot without it (development logs one warning), and every key-derived feature fails closed on use: cookie sessions (`SESSION_DRIVER=cookie`, the default, so `DefaultMiddleware` is still a boot error), `app.Crypt` (nil; `Decrypt` and `SetCookie` return `crypt.ErrNoKey`, `Encrypt` panics), `app.Key.Derive` (panics), `app.DeriveKey` (returns `config.ErrKeyMissing`), encrypted ORM columns (`orm.ErrNoEncrypter`) and the maintenance bypass cookie (disabled). An API-only app with token auth and no encryption runs without a key. A malformed key is always a boot error.
 - `vukem key:generate` writes a 32-byte random key (`crypto/rand`), base64-encoded, to `.env`. The app binary's `key:generate` prints one instead (never writes files) and runs before the app is built, so Docker/CI images without the global CLI can create a key: `APP_KEY=$(./app key:generate)`.
 - Sub-keys for cookies, sessions and encryption are derived with `crypto/hkdf` using distinct `info` labels, so the raw key is never used directly.
 - `APP_PREVIOUS_KEYS` (optional) lists former `APP_KEY` values, comma-separated, in the same `base64:` format. They only open or verify; everything new is sealed or signed with `APP_KEY`. They cover `app.Crypt` (encrypted cookies, `orm.Encrypted` columns, queued mail), cookie sessions (re-sealed with the new key on their next request), the maintenance bypass cookie, and, through `app.DerivePreviousKeys(purpose, n)`, signed URLs and social login state (`signed.New(key).WithPreviousKeys(...)`, `social.New(key).WithPreviousKeys(...)`). A malformed entry is a boot error.
@@ -63,7 +63,7 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 
 | Setting | Default | Notes |
 | --- | --- | --- |
-| `APP_ENV` | `development` | Must be `development`, `test` or `production` (anything else is a boot error) |
+| `APP_ENV` | `production` | Must be `development`, `test` or `production` (anything else is a boot error). Unset or empty means production, so set `APP_ENV=development` for local work: the `vukem new` scaffolds write it to `.env` |
 | `APP_DEBUG` | `false` | Debug error page only when true **and** env ≠ production |
 | Cookies | `HttpOnly`, `Secure` (unless `APP_ENV=development`), `SameSite=Lax` | Session cookie uses `__Host-` prefix over HTTPS |
 | CORS | deny all | Explicit origins required |
