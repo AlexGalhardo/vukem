@@ -124,6 +124,11 @@ type Server struct {
 
 	mu    sync.RWMutex
 	rules map[kind][]rule
+
+	decMu   sync.Mutex
+	decData string
+	decEnv  envelope
+	decOK   bool
 }
 
 // New returns a server; Close releases its hub.
@@ -452,6 +457,27 @@ type envelope struct {
 	Event   string          `json:"event"`
 	Data    json.RawMessage `json:"data"`
 	Origin  string          `json:"origin,omitempty"`
+}
+
+// decodeEnvelope parses data once per published message: every
+// subscription of a channel receives the same string. It remembers only the
+// last one, which is the one the other subscriptions are about to ask for.
+func (s *Server) decodeEnvelope(data string) (envelope, bool) {
+	s.decMu.Lock()
+	defer s.decMu.Unlock()
+
+	if s.decOK && s.decData == data {
+		return s.decEnv, true
+	}
+
+	var env envelope
+	if json.Unmarshal([]byte(data), &env) != nil {
+		return envelope{}, false
+	}
+
+	s.decData, s.decEnv, s.decOK = data, env, true
+
+	return env, true
 }
 
 // Broadcast publishes event on each of its channels.

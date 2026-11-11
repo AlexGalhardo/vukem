@@ -678,3 +678,45 @@ func TestSubscribeFailsWhenHubCannotSubscribe(t *testing.T) {
 		t.Errorf("published = %d, want no presence event for a failed subscription", broker.published)
 	}
 }
+
+// BenchmarkFanOut100 publishes one 1 KiB message to a channel with 100
+// subscriptions and waits for every delivery.
+func BenchmarkFanOut100(b *testing.B) {
+	const subs = 100
+
+	srv := broadcast.New(broadcast.Config{})
+	b.Cleanup(srv.Close)
+
+	if err := srv.Public("posts"); err != nil {
+		b.Fatal(err)
+	}
+
+	got := make(chan struct{}, subs)
+
+	for range subs {
+		sub, err := srv.Subscribe(b.Context(), "posts")
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		go func() {
+			for range sub.Messages() {
+				got <- struct{}{}
+			}
+		}()
+	}
+
+	payload := strings.Repeat("x", 1<<10)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if err := srv.Publish(b.Context(), "posts", "created", payload); err != nil {
+			b.Fatal(err)
+		}
+
+		for range subs {
+			<-got
+		}
+	}
+}
