@@ -18,6 +18,9 @@ type AnySchema interface {
 	GoType() reflect.Type
 	parseAny(c *pctx, path string, in any, present bool) (v any, set, ok bool)
 	optional() bool
+	// asOptional returns a copy of the schema that accepts an absent key; it
+	// lets Partial relax the schemas of a struct without knowing their types.
+	asOptional() AnySchema
 }
 
 // Schema is a schema that produces values of type T.
@@ -35,6 +38,46 @@ type Schema[T any] interface {
 type pctx struct {
 	issues Issues
 	coerce bool
+
+	depth  int  // Lazy schemas being followed, to bound recursion
+	unions int  // Union attempts being made, one inside the other
+	work   *int // attempts made inside another attempt, shared by a parse
+}
+
+const (
+	// maxLazyDepth bounds how many Lazy schemas one path may follow: far
+	// deeper than any real document, short of the stack of a cyclic input.
+	maxLazyDepth = 1000
+	// maxNestedUnionWork bounds the Union attempts made inside another
+	// attempt in one parse. Two variants that both recurse into the union
+	// otherwise cost 2^depth when the input fails at the leaf.
+	maxNestedUnionWork = 10_000
+)
+
+// fork returns a scratch context for one attempt of a Union: its issues are
+// its own, while the depth and the work budget carry on.
+func (c *pctx) fork() *pctx {
+	if c.work == nil {
+		c.work = new(int)
+	}
+
+	return &pctx{coerce: c.coerce, depth: c.depth, unions: c.unions + 1, work: c.work}
+}
+
+// spendNested counts an attempt made inside another one and reports whether
+// the budget lasts.
+func (c *pctx) spendNested() bool {
+	if c.unions == 0 {
+		return true
+	}
+
+	if c.work == nil {
+		c.work = new(int)
+	}
+
+	*c.work++
+
+	return *c.work <= maxNestedUnionWork
 }
 
 func (c *pctx) add(path, code string, msg string, params map[string]any) {

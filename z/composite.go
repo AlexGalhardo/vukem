@@ -143,6 +143,8 @@ func (s SliceSchema[E]) GoType() reflect.Type { return reflect.TypeFor[[]E]() }
 
 func (s SliceSchema[E]) optional() bool { return s.o.optional || s.o.hasDef }
 
+func (s SliceSchema[E]) asOptional() AnySchema { return s.Optional() }
+
 func (s SliceSchema[E]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) ([]E, bool) {
 		rv, ok := s.core.parse(c, path, in)
@@ -298,6 +300,8 @@ func (s MapSchema[V]) GoType() reflect.Type { return reflect.TypeFor[map[string]
 
 func (s MapSchema[V]) optional() bool { return s.o.optional || s.o.hasDef }
 
+func (s MapSchema[V]) asOptional() AnySchema { return s.Optional() }
+
 func (s MapSchema[V]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (map[string]V, bool) {
 		rv, ok := s.core.parse(c, path, in)
@@ -389,7 +393,9 @@ type structCore struct {
 	rt     reflect.Type
 	fields []structField
 	strict bool
-	o      opts[any]
+	// passthrough keeps the keys outside the shape for StructSchema.Passthrough.
+	passthrough bool
+	o           opts[any]
 }
 
 func newStructCore(rt reflect.Type, shape Shape) structCore {
@@ -425,25 +431,69 @@ func newStructCore(rt reflect.Type, shape Shape) structCore {
 			panic(fmt.Sprintf("z: %s has no field for key %q (match json/form tag or field name)", rt, key))
 		}
 
-		st, ft := schema.GoType(), f.Type
-		sf := structField{key: key, index: f.Index, schema: schema, ftype: ft}
-
-		switch {
-		case st.AssignableTo(ft):
-		case ft.Kind() == reflect.Pointer && st.AssignableTo(ft.Elem()):
-			sf.ptr = true
-		case st.ConvertibleTo(ft) && st.Kind() == ft.Kind():
-			sf.conv = true
-		case ft.Kind() == reflect.Pointer && st.ConvertibleTo(ft.Elem()) && st.Kind() == ft.Elem().Kind():
-			sf.ptr, sf.conv = true, true
-		default:
-			panic(fmt.Sprintf("z: %s.%s is %s but the schema for %q produces %s", rt, f.Name, ft, key, st))
+		sf, ok := fitField(key, f.Index, schema, f.Type)
+		if !ok {
+			panic(
+				fmt.Sprintf(
+					"z: %s.%s is %s but the schema for %q produces %s",
+					rt,
+					f.Name,
+					f.Type,
+					key,
+					schema.GoType(),
+				),
+			)
 		}
 
 		core.fields = append(core.fields, sf)
 	}
 
 	return core
+}
+
+// fitField describes how a value of schema's type is stored in a field of
+// type ft: as is, behind a pointer, or converted to a named type of the same
+// kind. ok is false when it does not fit.
+func fitField(key string, index []int, schema AnySchema, ft reflect.Type) (structField, bool) {
+	st := schema.GoType()
+	sf := structField{key: key, index: index, schema: schema, ftype: ft}
+
+	switch {
+	case st.AssignableTo(ft):
+	case ft.Kind() == reflect.Pointer && st.AssignableTo(ft.Elem()):
+		sf.ptr = true
+	case st.ConvertibleTo(ft) && st.Kind() == ft.Kind():
+		sf.conv = true
+	case ft.Kind() == reflect.Pointer && st.ConvertibleTo(ft.Elem()) && st.Kind() == ft.Elem().Kind():
+		sf.ptr, sf.conv = true, true
+	default:
+		return structField{}, false
+	}
+
+	return sf, true
+}
+
+// store sets the field of out that f describes to v, a value of the
+// schema's type.
+func (f structField) store(out reflect.Value, v any) {
+	rv := reflect.ValueOf(v)
+
+	target := f.ftype
+	if f.ptr {
+		target = f.ftype.Elem()
+	}
+
+	if f.conv {
+		rv = rv.Convert(target)
+	}
+
+	if f.ptr {
+		p := reflect.New(target)
+		p.Elem().Set(rv)
+		rv = p
+	}
+
+	out.FieldByIndex(f.index).Set(rv)
 }
 
 // fieldKeys returns the input keys a struct field answers to.
@@ -462,6 +512,24 @@ func fieldKeys(f reflect.StructField) []string {
 	}
 
 	return append(keys, f.Name, strings.ToLower(f.Name))
+}
+
+// unknownKeys returns the entries of m that no field of the shape reads.
+func (s structCore) unknownKeys(m map[string]any) map[string]any {
+	known := make(map[string]bool, len(s.fields))
+	for _, f := range s.fields {
+		known[f.key] = true
+	}
+
+	extra := map[string]any{}
+
+	for k, v := range m {
+		if !known[k] {
+			extra[k] = v
+		}
+	}
+
+	return extra
 }
 
 func (s structCore) parse(c *pctx, path string, in any) (reflect.Value, bool) {
@@ -488,24 +556,7 @@ func (s structCore) parse(c *pctx, path string, in any) (reflect.Value, bool) {
 			continue
 		}
 
-		rv := reflect.ValueOf(v)
-
-		target := f.ftype
-		if f.ptr {
-			target = f.ftype.Elem()
-		}
-
-		if f.conv {
-			rv = rv.Convert(target)
-		}
-
-		if f.ptr {
-			p := reflect.New(target)
-			p.Elem().Set(rv)
-			rv = p
-		}
-
-		out.FieldByIndex(f.index).Set(rv)
+		f.store(out, v)
 	}
 
 	if s.strict {
@@ -526,8 +577,9 @@ func (s structCore) parse(c *pctx, path string, in any) (reflect.Value, bool) {
 
 // StructSchema parses objects into T.
 type StructSchema[T any] struct {
-	core structCore
-	o    opts[T]
+	core  structCore
+	o     opts[T]
+	extra func(dst *T, extra map[string]any) // Passthrough
 }
 
 // Struct returns a schema producing T from an object whose keys are
@@ -543,6 +595,8 @@ func (StructSchema[T]) GoType() reflect.Type { return reflect.TypeFor[T]() }
 
 func (s StructSchema[T]) optional() bool { return s.o.optional || s.o.hasDef }
 
+func (s StructSchema[T]) asOptional() AnySchema { return s.Optional() }
+
 func (s StructSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (T, bool) {
 		if t, isT := in.(T); isT {
@@ -557,15 +611,48 @@ func (s StructSchema[T]) parseAny(c *pctx, path string, in any, present bool) (a
 
 		out, _ := reflect.TypeAssert[T](rv)
 
+		if s.extra != nil {
+			m, _ := in.(map[string]any)
+			s.extra(&out, s.core.unknownKeys(m))
+		}
+
 		return out, true
 	})
 
 	return v, set, ok
 }
 
-// Strict rejects keys that are not in the shape.
+// Strict rejects keys that are not in the shape. It panics after
+// [StructSchema.Passthrough], which keeps them instead.
 func (s StructSchema[T]) Strict() StructSchema[T] {
+	if s.core.passthrough {
+		panic("z: Strict cannot be combined with Passthrough")
+	}
+
 	s.core.strict = true
+
+	return s
+}
+
+// Passthrough hands the keys that are not in the shape to fn after the
+// fields are parsed, instead of dropping them: dst is the parsed value and
+// extra holds the unknown keys with their decoded input. extra is NOT
+// validated and is untrusted input, aliased from the request (the map is
+// fresh for each Parse, the values are not copied): copy it, and validate it,
+// before storing or acting on it. It panics when called after
+// [StructSchema.Strict], and when fn is nil.
+func (s StructSchema[T]) Passthrough(fn func(dst *T, extra map[string]any)) StructSchema[T] {
+	if fn == nil {
+		panic("z: Passthrough needs a function")
+	}
+
+	if s.core.strict {
+		panic("z: Passthrough cannot be combined with Strict")
+	}
+
+	s.core.passthrough = true
+	s.extra = fn
+
 	return s
 }
 
@@ -689,6 +776,8 @@ func Custom[T any](fn func(in any) (T, error)) CustomSchema[T] { return CustomSc
 func (CustomSchema[T]) GoType() reflect.Type { return reflect.TypeFor[T]() }
 
 func (s CustomSchema[T]) optional() bool { return s.o.optional || s.o.hasDef }
+
+func (s CustomSchema[T]) asOptional() AnySchema { return s.Optional() }
 
 func (s CustomSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, func(c *pctx, path string, in any) (T, bool) {

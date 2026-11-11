@@ -777,12 +777,25 @@ func TestImmutableAndConcurrent(t *testing.T) {
 }
 
 func FuzzParse(f *testing.F) {
-	for _, s := range []string{`{"title":"Hello","author":{"email":"a@b.co"}}`, `{"tags":[1,2,"x"]}`, `[]`, `null`, `"x"`} {
+	for _, s := range []string{
+		`{"title":"Hello","author":{"email":"a@b.co"}}`, `{"tags":[1,2,"x"]}`, `[]`, `null`, `"x"`,
+		`{"body":"a","replies":[{"body":"b","replies":[{"body":""}]}]}`, `[1.5,2.5]`, `[91,-181]`,
+		`{"method":"card","number":"1234567812345678"}`, `{"method":["x"]}`, `"a@b.co"`,
+	} {
 		f.Add(s)
 	}
+	comments := newCommentSchema()
+	union := Union[any](Int().Min(1), String().Email(), Slice(Int()))
+	tuple := pointSchema()
+	pay := paymentSchema()
+
 	f.Fuzz(func(_ *testing.T, data string) {
 		_, _ = ParseJSON(strings.NewReader(data), postSchema)
 		_, _ = ParseJSON(strings.NewReader(data), For[tagged]())
+		_, _ = ParseJSON(strings.NewReader(data), comments)
+		_, _ = ParseJSON(strings.NewReader(data), union)
+		_, _ = ParseJSON(strings.NewReader(data), tuple)
+		_, _ = ParseJSON(strings.NewReader(data), pay)
 	})
 }
 

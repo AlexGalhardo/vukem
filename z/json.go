@@ -35,6 +35,8 @@ func (s JSONValueSchema) GoType() reflect.Type {
 
 func (s JSONValueSchema) optional() bool { return s.o.optional || s.o.nullable }
 
+func (s JSONValueSchema) asOptional() AnySchema { return s.Optional() }
+
 func (s JSONValueSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	// emptyIsAbsent is false: "" is a JSON string, and for an object it is
 	// a type error worth reporting rather than a missing key.

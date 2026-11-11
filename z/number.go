@@ -62,6 +62,8 @@ func (NumberSchema[N]) GoType() reflect.Type { return reflect.TypeFor[N]() }
 
 func (s NumberSchema[N]) optional() bool { return s.o.optional || s.o.hasDef }
 
+func (s NumberSchema[N]) asOptional() AnySchema { return s.Optional() }
+
 func (s NumberSchema[N]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, s.core)
 	return v, set, ok

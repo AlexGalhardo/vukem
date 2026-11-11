@@ -50,6 +50,8 @@ func (StringSchema) GoType() reflect.Type { return reflect.TypeFor[string]() }
 
 func (s StringSchema) optional() bool { return s.o.optional || s.o.hasDef }
 
+func (s StringSchema) asOptional() AnySchema { return s.Optional() }
+
 func (s StringSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, s.core)
 	return v, set, ok
