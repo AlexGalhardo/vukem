@@ -1,6 +1,6 @@
 ---
 name: vukem-release
-description: End-to-end release cycle for the Vukem framework and its reference apps. Use when cutting a vukem release, tagging drivers/contrib modules, merging a batch of fix branches before a release, or bumping the quiz, rifa and marketplace apps to a new vukem version.
+description: End-to-end release cycle for the Vukem framework and its reference apps. Use when cutting a vukem release, tagging drivers/contrib modules, merging a batch of fix branches before a release, or bumping the reference apps (vukem-email, hexascore, vukem-trading, vukem-video, vukem-music, vukem-tools) to a new vukem version.
 ---
 
 # Vukem release cycle
@@ -9,7 +9,7 @@ The order matters: each step depends on the previous one being green. Never skip
 
 ## 1. Land the batch
 
-For each fix branch (one worktree per branch under `../vukem-worktrees/<name>`, created only with the owner's explicit approval):
+For each fix branch (one worktree per branch as a sibling checkout `../vukem-wt-<name>`, created only with the owner's explicit approval):
 
 1. The branch agent reports: commits, validation commands and results, public API changes, what apps must change.
 2. An independent reviewer (code-reviewer agent, read-only, clean context) reviews `git diff main...<branch>`. Security-sensitive changes always get one.
@@ -83,4 +83,4 @@ Ask each app agent to bump before any feature work, with the upgrade notes from 
 
 ## 9. Record it
 
-Update `status.md`, `framework-feedback/audit.md` and each app's `framework-feedback/*.md` entry status ("fixed in vX.Y.Z"), then triage the new open entries into the next batch.
+In the single `vukem-feedback.md` at the workspace root ([Downstream feedback queue](../../../docs/maintenance.md#downstream-feedback-queue)), mark each entry the release fixed ("fixed in vX.Y.Z"), then triage the new open entries into the next batch.
