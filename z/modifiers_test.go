@@ -3,7 +3,9 @@ package z
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -101,7 +103,7 @@ func TestModifiersEveryType(t *testing.T) {
 		{"slice nullable", func() error { _, err := Slice(Int()).Nullable().Parse(nil); return err }, ""},
 		{"slice default", func() error {
 			v, err := Slice(Int()).Default([]int{1}).Parse(nil)
-			return check(len(v.([]int)) == 1, err)
+			return check(len(v) == 1, err)
 		}, ""},
 		{"slice message describe", func() error {
 			_, err := Slice(Int()).Min(2).Message(CodeTooSmall, "more").Describe("d").Parse([]any{})
@@ -142,8 +144,76 @@ func TestModifiersEveryType(t *testing.T) {
 			return err
 		}, CodeCustom},
 
+		{"struct default", func() error {
+			v, err := Struct[pair](Shape{"a": String()}).Default(pair{A: "d"}).Parse(nil)
+			return check(v.A == "d", err)
+		}, ""},
+		{"struct message", func() error {
+			_, err := Struct[pair](Shape{"a": String()}).Message(CodeInvalidType, "obj!").Parse("x")
+			return err
+		}, CodeInvalidType},
+		{"struct message required", func() error {
+			_, err := Struct[pair](Shape{"a": String()}).Message(CodeRequired, "need").Parse(nil)
+			return err
+		}, CodeRequired},
+
 		// Custom
 		{"custom check", func() error { return Custom(func(any) (int, error) { return 1, nil }).Check(1) }, ""},
+		{"custom nullable", func() error {
+			_, err := Custom(func(any) (int, error) { return 1, nil }).Nullable().Parse(nil)
+			return err
+		}, ""},
+		{"custom default", func() error {
+			v, err := Custom(func(any) (int, error) { return 1, nil }).Default(7).Parse(nil)
+			return check(v == 7, err)
+		}, ""},
+		{"custom refine", func() error {
+			_, err := Custom(
+				func(any) (int, error) { return 1, nil },
+			).Refine(func(int) error { return never() }).
+				Parse("x")
+			return err
+		}, CodeCustom},
+		{"custom transform", func() error {
+			v, err := Custom(
+				func(any) (int, error) { return 1, nil },
+			).Transform(func(n int) int { return n + 1 }).
+				Parse("x")
+			return check(v == 2, err)
+		}, ""},
+		{"custom message describe", func() error {
+			_, err := Custom(
+				func(any) (int, error) { return 1, nil },
+			).Message(CodeRequired, "need").
+				Describe("d").
+				Parse(nil)
+			return err
+		}, CodeRequired},
+
+		// Transform on the scalar types
+		{"bool transform", func() error {
+			v, err := Bool().Transform(func(b bool) bool { return !b }).Parse(true)
+			return check(!v, err)
+		}, ""},
+		{"time transform", func() error {
+			v, err := Time().Transform(func(t time.Time) time.Time { return t.UTC() }).
+				Parse("2026-01-01T01:00:00+01:00")
+			return check(v.Location() == time.UTC && v.Hour() == 0, err)
+		}, ""},
+		{"enum transform", func() error {
+			v, err := Enum("a", "b").Transform(func(string) string { return "b" }).Parse("a")
+			return check(v == "b", err)
+		}, ""},
+
+		// JSON
+		{"json default", func() error {
+			v, err := JSON().Default(map[string]any{"k": 1}).Parse(nil)
+			return check(v != nil, err)
+		}, ""},
+		{"json transform", func() error {
+			v, err := JSON().Transform(func(any) any { return "t" }).Parse(map[string]any{})
+			return check(v == "t", err)
+		}, ""},
 	}
 
 	for _, tt := range tests {
@@ -290,4 +360,50 @@ func TestStringPreprocess_NilPanics(t *testing.T) {
 	}()
 
 	String().Preprocess(nil)
+}
+
+// TestModifierMatrix keeps every public schema on the same set of modifiers:
+// a type added later that forgets one fails here, not in a user's code.
+func TestModifierMatrix(t *testing.T) {
+	t.Parallel()
+
+	type pair struct {
+		A string `json:"a"`
+	}
+
+	all := []string{"Optional", "Nullable", "Default", "Refine", "Transform", "Message", "Describe", "Parse", "Check"}
+
+	tests := []struct {
+		name    string
+		schema  any
+		without []string // modifiers that make no sense for the type
+	}{
+		{"String", String(), nil},
+		{"Number", Int(), nil},
+		{"Bool", Bool(), nil},
+		{"Time", Time(), nil},
+		{"Enum", Enum("a"), nil},
+		{"Slice", Slice(String()), nil},
+		{"Map", Map(String()), nil},
+		{"Struct", Struct[pair](Shape{"a": String()}), nil},
+		{"Custom", Custom(func(any) (int, error) { return 0, nil }), nil},
+		{"JSON", JSON(), nil},
+		// An upload has no default and no useful null or rewritten form.
+		{"File", File(), []string{"Nullable", "Default", "Transform"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rt := reflect.TypeOf(tt.schema)
+
+			for _, m := range all {
+				_, has := rt.MethodByName(m)
+				if want := !slices.Contains(tt.without, m); has != want {
+					t.Errorf("%s.%s present = %v, want %v", rt, m, has, want)
+				}
+			}
+		})
+	}
 }

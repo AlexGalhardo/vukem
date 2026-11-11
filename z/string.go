@@ -330,15 +330,14 @@ func (s StringSchema) OmitEmpty() StringSchema {
 }
 
 // Optional allows the key to be absent (the zero value is used).
-func (s StringSchema) Optional() StringSchema { s.o = s.o.clone(); s.o.optional = true; return s }
+func (s StringSchema) Optional() StringSchema { s.o = s.o.withOptional(); return s }
 
 // Nullable allows null.
-func (s StringSchema) Nullable() StringSchema { s.o = s.o.clone(); s.o.nullable = true; return s }
+func (s StringSchema) Nullable() StringSchema { s.o = s.o.withNullable(); return s }
 
 // Default uses v when the key is absent.
 func (s StringSchema) Default(v string) StringSchema {
-	s.o = s.o.clone()
-	s.o.hasDef, s.o.def = true, v
+	s.o = s.o.withDefault(v)
 
 	return s
 }
@@ -346,8 +345,7 @@ func (s StringSchema) Default(v string) StringSchema {
 // Refine adds a custom check; return FieldError for nested paths or
 // FieldErrorKey for a translatable message.
 func (s StringSchema) Refine(fn func(string) error) StringSchema {
-	s.o = s.o.clone()
-	s.o.refines = append(s.o.refines, fn)
+	s.o = s.o.withRefine(fn)
 
 	return s
 }
@@ -355,8 +353,7 @@ func (s StringSchema) Refine(fn func(string) error) StringSchema {
 // Transform maps the value after the checks; Refine sees the result. Use
 // Preprocess to normalize before the checks.
 func (s StringSchema) Transform(fn func(string) string) StringSchema {
-	s.o = s.o.clone()
-	s.o.transforms = append(s.o.transforms, fn)
+	s.o = s.o.withTransform(fn)
 
 	return s
 }
@@ -364,20 +361,14 @@ func (s StringSchema) Transform(fn func(string) string) StringSchema {
 // Message overrides the message for an issue code (or a detailed key such
 // as "too_small.string"). Placeholders: {field}, {min}, {max}, ...
 func (s StringSchema) Message(code, message string) StringSchema {
-	s.o = s.o.clone()
-	if s.o.messages == nil {
-		s.o.messages = map[string]string{}
-	}
-
-	s.o.messages[code] = message
+	s.o = s.o.withMessage(code, message)
 
 	return s
 }
 
 // Describe sets a description used by schema exports.
 func (s StringSchema) Describe(text string) StringSchema {
-	s.o = s.o.clone()
-	s.o.desc = text
+	s.o = s.o.withDescribe(text)
 	return s
 }
 

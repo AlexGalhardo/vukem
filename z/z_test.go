@@ -475,7 +475,6 @@ func TestStructConstructionPanics(t *testing.T) {
 	mustPanic("wrong type", func() { Struct[Author](Shape{"email": Int()}) })
 	mustPanic("not a struct", func() { Struct[int](Shape{}) })
 	mustPanic("empty enum", func() { Enum() })
-	mustPanic("bad slice default", func() { Slice(Int()).Default([]string{}) })
 	mustPanic("ignored field", func() { Struct[Post](Shape{"Internal": String()}) })
 }
 
@@ -498,7 +497,7 @@ func TestSliceAndMapRules(t *testing.T) {
 		issuesOf(t, err)[0].Code != CodeNotUnique {
 		t.Error("Unique")
 	}
-	if got, err := Slice(Int()).Parse([]int{1, 2}); err != nil || len(got.([]int)) != 2 {
+	if got, err := Slice(Int()).Parse([]int{1, 2}); err != nil || len(got) != 2 {
 		t.Errorf("native slice = %v %v", got, err)
 	}
 	if _, err := Slice(Int()).Parse(map[string]any{}); err == nil {
@@ -836,7 +835,7 @@ func TestMessagesSingular(t *testing.T) {
 	str := func(s StringSchema, in string) func() error {
 		return func() error { _, err := s.Parse(in); return err }
 	}
-	list := func(s SliceSchema, in []any) func() error {
+	list := func(s SliceSchema[string], in []any) func() error {
 		return func() error { _, err := s.Parse(in); return err }
 	}
 

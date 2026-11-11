@@ -61,16 +61,28 @@ func (s JSONValueSchema) parseAny(c *pctx, path string, in any, present bool) (a
 
 // Optional allows the key to be absent.
 func (s JSONValueSchema) Optional() JSONValueSchema {
-	s.o = s.o.clone()
-	s.o.optional = true
+	s.o = s.o.withOptional()
 
 	return s
 }
 
 // Nullable allows null.
 func (s JSONValueSchema) Nullable() JSONValueSchema {
-	s.o = s.o.clone()
-	s.o.nullable = true
+	s.o = s.o.withNullable()
+
+	return s
+}
+
+// Default uses v when the key is absent.
+func (s JSONValueSchema) Default(v any) JSONValueSchema {
+	s.o = s.o.withDefault(v)
+
+	return s
+}
+
+// Transform maps the decoded value after the checks.
+func (s JSONValueSchema) Transform(fn func(any) any) JSONValueSchema {
+	s.o = s.o.withTransform(fn)
 
 	return s
 }
@@ -78,20 +90,14 @@ func (s JSONValueSchema) Nullable() JSONValueSchema {
 // Refine adds a custom check on the decoded value. It is the place to
 // validate a payload whose shape the discriminator has just decided.
 func (s JSONValueSchema) Refine(fn func(any) error) JSONValueSchema {
-	s.o = s.o.clone()
-	s.o.refines = append(s.o.refines, fn)
+	s.o = s.o.withRefine(fn)
 
 	return s
 }
 
 // Message overrides the message for an issue code.
 func (s JSONValueSchema) Message(code, message string) JSONValueSchema {
-	s.o = s.o.clone()
-	if s.o.messages == nil {
-		s.o.messages = map[string]string{}
-	}
-
-	s.o.messages[code] = message
+	s.o = s.o.withMessage(code, message)
 
 	return s
 }
@@ -100,8 +106,7 @@ func (s JSONValueSchema) Message(code, message string) JSONValueSchema {
 // says nothing about the contents, so the description is the only place a
 // reader learns what belongs in the value.
 func (s JSONValueSchema) Describe(text string) JSONValueSchema {
-	s.o = s.o.clone()
-	s.o.desc = text
+	s.o = s.o.withDescribe(text)
 
 	return s
 }

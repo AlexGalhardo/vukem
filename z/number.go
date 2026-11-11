@@ -247,51 +247,42 @@ func isMultiple[N Number](v, m N) bool {
 
 // Optional allows the key to be absent (the zero value is used). An empty
 // string from a form counts as absent.
-func (s NumberSchema[N]) Optional() NumberSchema[N] { s.o = s.o.clone(); s.o.optional = true; return s }
+func (s NumberSchema[N]) Optional() NumberSchema[N] { s.o = s.o.withOptional(); return s }
 
 // Nullable allows null.
-func (s NumberSchema[N]) Nullable() NumberSchema[N] { s.o = s.o.clone(); s.o.nullable = true; return s }
+func (s NumberSchema[N]) Nullable() NumberSchema[N] { s.o = s.o.withNullable(); return s }
 
 // Default uses v when the key is absent.
 func (s NumberSchema[N]) Default(v N) NumberSchema[N] {
-	s.o = s.o.clone()
-	s.o.hasDef, s.o.def = true, v
+	s.o = s.o.withDefault(v)
 
 	return s
 }
 
 // Refine adds a custom check.
 func (s NumberSchema[N]) Refine(fn func(N) error) NumberSchema[N] {
-	s.o = s.o.clone()
-	s.o.refines = append(s.o.refines, fn)
+	s.o = s.o.withRefine(fn)
 
 	return s
 }
 
 // Transform maps the parsed value.
 func (s NumberSchema[N]) Transform(fn func(N) N) NumberSchema[N] {
-	s.o = s.o.clone()
-	s.o.transforms = append(s.o.transforms, fn)
+	s.o = s.o.withTransform(fn)
 
 	return s
 }
 
 // Message overrides the message for an issue code or detailed key.
 func (s NumberSchema[N]) Message(code, message string) NumberSchema[N] {
-	s.o = s.o.clone()
-	if s.o.messages == nil {
-		s.o.messages = map[string]string{}
-	}
-
-	s.o.messages[code] = message
+	s.o = s.o.withMessage(code, message)
 
 	return s
 }
 
 // Describe sets a description used by schema exports.
 func (s NumberSchema[N]) Describe(text string) NumberSchema[N] {
-	s.o = s.o.clone()
-	s.o.desc = text
+	s.o = s.o.withDescribe(text)
 	return s
 }
 

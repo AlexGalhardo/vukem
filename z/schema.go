@@ -103,6 +103,59 @@ func (o opts[T]) clone() opts[T] {
 	return o
 }
 
+func (o opts[T]) withOptional() opts[T] {
+	o = o.clone()
+	o.optional = true
+
+	return o
+}
+
+func (o opts[T]) withNullable() opts[T] {
+	o = o.clone()
+	o.nullable = true
+
+	return o
+}
+
+func (o opts[T]) withDefault(v T) opts[T] {
+	o = o.clone()
+	o.hasDef, o.def = true, v
+
+	return o
+}
+
+func (o opts[T]) withRefine(fn func(T) error) opts[T] {
+	o = o.clone()
+	o.refines = append(o.refines, fn)
+
+	return o
+}
+
+func (o opts[T]) withTransform(fn func(T) T) opts[T] {
+	o = o.clone()
+	o.transforms = append(o.transforms, fn)
+
+	return o
+}
+
+func (o opts[T]) withMessage(code, message string) opts[T] {
+	o = o.clone()
+	if o.messages == nil {
+		o.messages = map[string]string{}
+	}
+
+	o.messages[code] = message
+
+	return o
+}
+
+func (o opts[T]) withDescribe(text string) opts[T] {
+	o = o.clone()
+	o.desc = text
+
+	return o
+}
+
 // issue records a problem with a message from the schema's overrides
 // (by code or by detailed key) or the defaults.
 func (o *opts[T]) issue(c *pctx, path, code, key string, params map[string]any) {

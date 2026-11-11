@@ -82,7 +82,7 @@ tasks:
     vars:
       COUNT: '{{.COUNT | default "6"}}'
     cmds:
-      - go test -run '^$' -bench . -benchmem -count {{.COUNT}} ./router ./web ./orm
+      - go test -run '^$' -bench . -benchmem -count {{.COUNT}} ./router ./web ./orm ./z
       - cd internal/bench && go test -run '^$' -bench . -benchmem -count {{.COUNT}} .
 
   cover:

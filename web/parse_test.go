@@ -217,3 +217,36 @@ func TestJSONWithChecksOutput(t *testing.T) {
 		t.Fatalf("checks disabled = %d", rec.Code)
 	}
 }
+
+// Slice and Map are z.Schema[T] like the other schemas, so they go to the
+// Parse helpers directly. A query string is an object: a Map takes it, a
+// Slice does not.
+func TestParseQueryAcceptsSliceAndMapSchemas(t *testing.T) {
+	t.Parallel()
+
+	r := httptest.NewRequestWithContext(t.Context(), "GET", "/search?a=1&b=2", http.NoBody)
+
+	var (
+		got map[string]string
+		err error
+	)
+
+	rec := runHandler(t, r, nil, func(c *Ctx) error {
+		got, err = ParseQuery(c, z.Map(z.String()).Max(2))
+		if err != nil {
+			return err
+		}
+
+		_, err = ParseQuery(c, z.Slice(z.String()))
+
+		return err
+	})
+
+	if got["a"] != "1" || got["b"] != "2" {
+		t.Errorf("ParseQuery(Map) = %v", got)
+	}
+
+	if rec.Code != http.StatusUnprocessableEntity || err == nil {
+		t.Errorf("ParseQuery(Slice) on an object = %d, %v, want 422", rec.Code, err)
+	}
+}
