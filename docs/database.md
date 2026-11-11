@@ -104,7 +104,7 @@ DATABASE_URL=mysql://app:secret@db.internal:3306/app?tls=preferred
 | `parseTime`, `loc`, `time_zone` | `true`, `UTC`, `'+00:00'` | `DATETIME` scans into `time.Time`, always in UTC |
 | `charset` | `utf8mb4` | Full Unicode |
 | `timeout` | `10s` | Dial timeout; per-query limits come from `context.Context` |
-| `clientFoundRows` | `true` | `UPDATE` counts matched rows, as on SQLite and Postgres (`orm.Update` relies on it) |
+| `clientFoundRows` | `true` | `UPDATE` counts matched rows, as on SQLite and Postgres (`orm.Update` relies on it); `mysql.DSN` refuses `clientFoundRows=false` |
 | `tls` | `false` for `localhost`/loopback, otherwise `true` (verified certificate) | Secure by default; set `tls=preferred`, `skip-verify` or a registered config name explicitly (e.g. a Docker network host) |
 
 One `mysql` dialect covers MySQL 8.0.16+ and MariaDB 10.6+ (tested on MySQL 8.4 and MariaDB 11.8), so it uses only SQL both accept:
@@ -198,7 +198,7 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 
 `OrWhere*` conditions join with `OR` and `AND` binds tighter, as in Laravel: `Where(a).OrWhere(b).Where(c)` is `a OR (b AND c)`; use `WhereGroup` / `OrWhereGroup` to group. The ORM's own conditions (soft delete, the key of `Find`, `Chunk` and cursor pagination) wrap your `OR` filter in parentheses first, so they always apply to all of it. `ILIKE` is native on PostgreSQL; on MySQL and SQLite it is sent as `LIKE`, which is case-insensitive there only for ASCII letters (and, on MySQL, by the column collation).
 
-The ORM needs MySQL to report matched rows for `UPDATE` (`clientFoundRows=true`, the default of `drivers/mysql`): with `false`, an update that changes nothing looks like a missing row (`ErrNotFound`). That includes connections wrapped with `database.FromSQL`, whose DSN the framework does not see.
+The ORM needs MySQL to report matched rows for `UPDATE` (`clientFoundRows=true`, the default of `drivers/mysql`): with `false`, an update that changes nothing looks like a missing row (`ErrNotFound`), so `mysql.DSN` refuses it at boot (`ErrInvalidURL`: remove `clientFoundRows=false` from the URL). That includes connections wrapped with `database.FromSQL`, whose DSN the framework does not see.
 
 ### Transactions
 
