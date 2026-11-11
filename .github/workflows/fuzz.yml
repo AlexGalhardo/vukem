@@ -65,6 +65,10 @@ jobs:
           - { module: contrib/stripe, pkg: ., target: FuzzConstructEvent }
           - { module: contrib/cloudflare, pkg: ., target: FuzzParseRanges }
           - { module: contrib/imaging, pkg: ., target: FuzzOrientation }
+          - { module: contrib/studio, pkg: ., target: FuzzReadOnlyStatement }
+          - { module: contrib/studio, pkg: ., target: FuzzMongoFilter }
+          - { module: contrib/studio, pkg: ., target: FuzzMongoConsole }
+          - { module: contrib/studio, pkg: ., target: FuzzRedisLine }
     env:
       FUZZTIME: ${{ inputs.fuzztime || '1h' }}
     defaults:
