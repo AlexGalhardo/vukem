@@ -434,3 +434,62 @@ func TestRemoteJWKSCancelledCallerIsUnavailable(t *testing.T) {
 		t.Errorf("Key(k) with a cancelled context = %v, want ErrKeysUnavailable (503, not 401)", got.err)
 	}
 }
+
+type rtFunc func(*http.Request) (*http.Response, error)
+
+func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestSecurity_A02_RemoteJWKSRequiresHTTPS(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+
+	client := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, http.ErrNotSupported
+	})}
+
+	// A plain http URL on a public host is refused before any request.
+	_, err := (&jwt.RemoteJWKS{URL: "http://idp.example.com/keys", Client: client}).Key(t.Context(), "k")
+	if err == nil || !strings.Contains(err.Error(), "must use https") {
+		t.Fatalf("Key() error = %v, want an https error", err)
+	}
+
+	if n := requests.Load(); n != 0 {
+		t.Fatalf("%d requests before the https check", n)
+	}
+
+	// InsecureHTTP lifts it.
+	_, _ = (&jwt.RemoteJWKS{URL: "http://idp.example.com/keys", Client: client, InsecureHTTP: true}).Key(
+		t.Context(),
+		"k",
+	)
+
+	if n := requests.Load(); n != 1 {
+		t.Errorf("InsecureHTTP made %d requests, want 1", n)
+	}
+
+	// Loopback needs no opt-out.
+	srv := newJWKSServer(t)
+	srv.publish(t, keys(t)[1])
+
+	if _, err := (&jwt.RemoteJWKS{URL: srv.URL}).Key(t.Context(), keys(t)[1].ID); err != nil {
+		t.Errorf("loopback http URL = %v, want accepted", err)
+	}
+}
+
+// Only the first URL is checked by the https rule unless every redirect hop
+// is too: a key set endpoint must not bounce the fetch to plain http.
+func TestSecurity_A02_RemoteJWKSRefusesRedirectsToHTTP(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://idp.example.com/keys", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := (&jwt.RemoteJWKS{URL: srv.URL}).Key(t.Context(), "k")
+	if err == nil || !strings.Contains(err.Error(), "must use https") {
+		t.Fatalf("Key() error = %v, want the redirect to http refused", err)
+	}
+}

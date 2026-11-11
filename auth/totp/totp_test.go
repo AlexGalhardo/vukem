@@ -3,6 +3,7 @@ package totp_test
 import (
 	"encoding/base32"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -124,8 +125,22 @@ func TestRecoveryCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(plain) != 8 || len(hashes) != 8 || len(plain[0]) != 11 || plain[0][5] != '-' {
+	format := regexp.MustCompile(`^[A-Z2-7]{4}(-[A-Z2-7]{4}){3}$`)
+
+	if len(plain) != 8 || len(hashes) != 8 {
 		t.Fatalf("codes = %v", plain)
+	}
+
+	for _, p := range plain {
+		if !format.MatchString(p) {
+			t.Fatalf("code %q is not XXXX-XXXX-XXXX-XXXX (80 bits)", p)
+		}
+	}
+
+	// A code issued before the longer format keeps working.
+	old := totp.HashRecoveryCode("ABCDE-FGHIJ")
+	if left, ok := totp.UseRecoveryCode("abcde-fghij", []string{old}); !ok || len(left) != 0 {
+		t.Errorf("legacy code = %d left, %v, want accepted", len(left), ok)
 	}
 
 	for _, h := range hashes {
@@ -219,5 +234,40 @@ func TestInvalidPeriod(t *testing.T) {
 				t.Errorf("URI() = %q, want empty only for an invalid period", uri)
 			}
 		})
+	}
+}
+
+// Recovery codes carry 80 random bits (16 base32 characters), and codes
+// issued in the shorter 10-character format keep working.
+func TestSecurity_A04_RecoveryCodesCarry80Bits(t *testing.T) {
+	t.Parallel()
+
+	plain, hashes, err := totp.RecoveryCodes(50)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	format := regexp.MustCompile(`^[A-Z2-7]{4}(-[A-Z2-7]{4}){3}$`)
+	seen := map[string]bool{}
+
+	for i, c := range plain {
+		if !format.MatchString(c) || len(strings.ReplaceAll(c, "-", "")) != 16 {
+			t.Fatalf("code %q is not XXXX-XXXX-XXXX-XXXX", c)
+		}
+
+		if seen[c] {
+			t.Fatalf("code %q repeated", c)
+		}
+
+		seen[c] = true
+
+		if totp.HashRecoveryCode(c) != hashes[i] {
+			t.Fatalf("hash of %q does not match", c)
+		}
+	}
+
+	legacy := totp.HashRecoveryCode("ABCDE-FGHIJ")
+	if left, ok := totp.UseRecoveryCode("abcde-fghij", []string{legacy}); !ok || len(left) != 0 {
+		t.Errorf("legacy 5-5 code = %d left, %v, want accepted", len(left), ok)
 	}
 }

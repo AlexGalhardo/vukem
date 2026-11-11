@@ -87,7 +87,8 @@ type RelyingParty struct {
 	// InsecureSkipUserVerification accepts ceremonies where the
 	// authenticator did not verify the user (PIN or biometrics). A passkey
 	// is then only "something you have"; keep it off when passkeys sign
-	// users in without a password.
+	// users in without a password. With it, VerifyAssertion no longer proves
+	// the user was verified: do not treat such a sign-in as a second factor.
 	InsecureSkipUserVerification bool
 }
 

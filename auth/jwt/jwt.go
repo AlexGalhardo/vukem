@@ -224,6 +224,13 @@ func claimsFrom(m map[string]any) (Claims, error) {
 	return c, nil
 }
 
+// typAccepted reports whether typ is one of types; a missing typ never is.
+func typAccepted(types []string, typ string) bool {
+	norm := func(s string) string { return strings.TrimPrefix(strings.ToLower(s), "application/") }
+
+	return typ != "" && slices.ContainsFunc(types, func(t string) bool { return norm(t) == norm(typ) })
+}
+
 type header struct {
 	Alg string `json:"alg"`
 	Typ string `json:"typ,omitempty"`
@@ -414,6 +421,12 @@ type VerifyOptions struct {
 	// per sign-in, so build the Verifier per request with the nonce the client
 	// started with.
 	Nonce string
+	// Types, when set, lists the accepted "typ" header values ("JWT",
+	// "at+jwt"), compared case-insensitively and ignoring an "application/"
+	// prefix (RFC 7515 4.1.9). A token with another typ, or none, is refused,
+	// which keeps one kind of token (an ID token) from passing as another (an
+	// access token). Empty accepts any typ.
+	Types []string
 	// Leeway tolerates clock skew (default 30s).
 	Leeway time.Duration
 	// AllowMissingExpiry accepts tokens without "exp" (off by default).
@@ -499,6 +512,10 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Claims, error) {
 
 	if !slices.Contains(v.opts.Algorithms, h.Alg) {
 		return Claims{}, invalid("algorithm %q not allowed", h.Alg)
+	}
+
+	if len(v.opts.Types) > 0 && !typAccepted(v.opts.Types, h.Typ) {
+		return Claims{}, invalid("typ %q not accepted", h.Typ)
 	}
 
 	k, err := v.keys.Key(ctx, h.Kid)

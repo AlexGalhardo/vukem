@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -46,6 +47,10 @@ type Argon2Params struct {
 	Threads uint8
 	SaltLen uint32
 	KeyLen  uint32
+	// MaxConcurrent bounds how many argon2id computations the hasher runs
+	// at once (each one allocates Memory KiB); the rest wait. 0 means
+	// runtime.GOMAXPROCS(0).
+	MaxConcurrent int
 }
 
 // DefaultArgon2Params returns the OWASP password storage recommendation
@@ -69,13 +74,35 @@ func Fake() Hasher {
 	return Argon2id(Argon2Params{Memory: 8, Time: 1, Threads: 1, SaltLen: 8, KeyLen: 16})
 }
 
-// Argon2id returns an argon2id hasher.
-func Argon2id(p Argon2Params) Hasher { return argonHasher{p: p} }
+// Argon2id returns an argon2id hasher. The limit of Argon2Params.MaxConcurrent
+// belongs to the returned hasher, so create one and reuse it: a hasher per
+// request does not bound anything.
+func Argon2id(p Argon2Params) Hasher {
+	n := p.MaxConcurrent
+	if n <= 0 {
+		n = runtime.GOMAXPROCS(0)
+	}
+
+	return argonHasher{p: p, sem: make(chan struct{}, n)}
+}
 
 // Bcrypt returns a bcrypt hasher (cost 4–31; 12 is a good default).
 func Bcrypt(cost int) Hasher { return bcryptHasher{cost: cost} }
 
-type argonHasher struct{ p Argon2Params }
+// argonHasher is copied by value; sem is a channel, so every copy shares the
+// one limit.
+type argonHasher struct {
+	p   Argon2Params
+	sem chan struct{}
+}
+
+// limit runs fn once a slot of the hasher's concurrency limit is free.
+func (h argonHasher) limit(fn func()) {
+	h.sem <- struct{}{}
+	defer func() { <-h.sem }()
+
+	fn()
+}
 
 const argonPrefix = "$argon2id$"
 
@@ -83,14 +110,30 @@ func (h argonHasher) Make(password string) (string, error) {
 	salt := make([]byte, h.p.SaltLen)
 	_, _ = rand.Read(salt) // never fails since Go 1.24
 
-	key := argon2.IDKey([]byte(password), salt, h.p.Time, h.p.Memory, h.p.Threads, h.p.KeyLen)
+	var key []byte
+
+	h.limit(func() { key = argon2.IDKey([]byte(password), salt, h.p.Time, h.p.Memory, h.p.Threads, h.p.KeyLen) })
+
 	enc := base64.RawStdEncoding
 
 	return fmt.Sprintf("%sv=%d$m=%d,t=%d,p=%d$%s$%s", argonPrefix, argon2.Version, h.p.Memory, h.p.Time, h.p.Threads,
 		enc.EncodeToString(salt), enc.EncodeToString(key)), nil
 }
 
-func (argonHasher) Verify(hash, password string) (bool, error) { return verify(hash, password) }
+func (h argonHasher) Verify(hash, password string) (bool, error) {
+	if !strings.HasPrefix(hash, argonPrefix) {
+		return verify(hash, password)
+	}
+
+	var (
+		ok  bool
+		err error
+	)
+
+	h.limit(func() { ok, err = verify(hash, password) })
+
+	return ok, err
+}
 
 func (h argonHasher) NeedsRehash(hash string) bool {
 	p, _, _, err := parseArgon(hash)
@@ -118,7 +161,8 @@ func (h bcryptHasher) NeedsRehash(hash string) bool {
 	return err != nil || cost != h.cost
 }
 
-// Verify checks password against an argon2id or bcrypt hash.
+// Verify checks password against an argon2id or bcrypt hash. It does not
+// bound concurrency: use a Hasher's Verify for that.
 func Verify(hash, password string) (bool, error) { return verify(hash, password) }
 
 func verify(hash, password string) (bool, error) {
