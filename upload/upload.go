@@ -34,10 +34,9 @@ import (
 	"path"
 	"slices"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/disposition"
 	"github.com/AlexGalhardo/vukem/storage"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -52,7 +51,6 @@ const (
 	sniffLen = 512
 	// formOverhead is the request budget for fields and part headers.
 	formOverhead = 1 << 20
-	maxNameLen   = 200
 )
 
 // Errors returned (as client-safe *errs.HTTPError values) by Receive and Save.
@@ -138,6 +136,8 @@ type Form struct {
 
 // extensions maps the types http.DetectContentType reports to the file
 // extensions that may carry them; the first one is used for stored names.
+// This is the input side (what a client may call a file); the canonical
+// output extension of a type lives in package mediatype.
 var extensions = map[string][]string{ //nolint:gochecknoglobals // read-only lookup table
 	"image/jpeg":                    {".jpg", ".jpeg"},
 	"image/png":                     {".png"},
@@ -529,40 +529,12 @@ func (c *capReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// SanitizeName returns a display-safe version of a client file name: the
-// last path element (either separator), without control and format
-// (bidi, zero-width) characters, quotes or leading dots, at most 200
-// characters; "file" when nothing is left. It is meant for metadata (Content-Disposition, listings), never
-// for storage paths.
-func SanitizeName(name string) string {
-	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
-
-	name = strings.Map(func(r rune) rune {
-		// Format characters (bidi overrides, zero-width) can disguise the
-		// extension: a right-to-left override before "fdp.exe" displays the
-		// name as "exe.pdf".
-		if r < 0x20 || r == 0x7f || r == '"' || r == '/' || r == utf8.RuneError || unicode.Is(unicode.Cf, r) {
-			return -1
-		}
-
-		return r
-	}, name)
-
-	name = strings.TrimLeft(strings.TrimSpace(name), ".")
-
-	if utf8.RuneCountInString(name) > maxNameLen {
-		ext := path.Ext(name)
-		if utf8.RuneCountInString(ext) > 16 {
-			ext = ""
-		}
-
-		runes := []rune(strings.TrimSuffix(name, ext))
-		name = string(runes[:maxNameLen-utf8.RuneCountInString(ext)]) + ext
-	}
-
-	if name == "" {
-		return "file"
-	}
-
-	return name
-}
+// SanitizeName returns a display-safe version of a client file name. It
+// applies the rules of the Content-Disposition sanitizer shared with
+// export and web.Ctx.Download: the last path element (either separator),
+// without control and format (bidi, zero-width) characters, Windows-forbidden
+// characters replaced by "_", no leading dots, no trailing dots or spaces,
+// a "_" before Windows device names, at most 200 characters keeping the
+// extension; "file" when nothing is left. It is meant for metadata
+// (Content-Disposition, listings), never for storage paths.
+func SanitizeName(name string) string { return disposition.SanitizeOr(name, "file") }

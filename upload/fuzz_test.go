@@ -21,6 +21,9 @@ import (
 	"github.com/AlexGalhardo/vukem/web"
 )
 
+// maxNameLen is the display name limit; a Windows device name gets one more "_".
+const maxNameLen = 200
+
 func FuzzSanitizeName(f *testing.F) {
 	for _, s := range []string{
 		"photo.jpg", "../../etc/passwd", `..\..\boot.ini`, "/abs/path.png", "C:\\x\\y.gif", ".htaccess",
@@ -41,8 +44,8 @@ func FuzzSanitizeName(f *testing.F) {
 			t.Fatalf("SanitizeName(%q) = %q, keeps a format (bidi or zero-width) character", name, got)
 		case strings.HasPrefix(got, "."):
 			t.Fatalf("SanitizeName(%q) = %q, is a dotfile", name, got)
-		case !utf8.ValidString(got), utf8.RuneCountInString(got) > maxNameLen:
-			t.Fatalf("SanitizeName(%q) = %q, invalid UTF-8 or longer than %d runes", name, got, maxNameLen)
+		case !utf8.ValidString(got), utf8.RuneCountInString(got) > maxNameLen+1:
+			t.Fatalf("SanitizeName(%q) = %q, invalid UTF-8 or longer than %d runes", name, got, maxNameLen+1)
 		}
 	})
 }

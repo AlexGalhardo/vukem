@@ -374,7 +374,10 @@ func TestSanitizeName(t *testing.T) {
 		".htaccess":                       "htaccess",
 		"..":                              "file",
 		"":                                "file",
-		"a\"b\r\n.txt":                    "ab.txt",
+		"a\"b\r\n.txt":                    "a_b.txt",
+		"a:b|c.txt":                       "a_b_c.txt",
+		"report.pdf..":                    "report.pdf",
+		"NUL.txt":                         "_NUL.txt",
 		strings.Repeat("é", 300) + ".png": strings.Repeat("é", 196) + ".png",
 		// Bidi overrides and zero-width characters spoof the extension.
 		"invoice\u202efdp.exe": "invoicefdp.exe",
