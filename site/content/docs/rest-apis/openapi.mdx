@@ -103,7 +103,7 @@ vukem openapi:export > openapi.json
 
 ## How types become schemas
 
-Each field of a struct becomes a property. Its **name** comes from the `json` tag, its **type** from the Go type, its **constraints** from the `validate` tag, and its **description** from a `doc` tag:
+Each field of a struct becomes a property. Its **name** comes from the `json` tag, its **type** from the Go type, its **constraints** from the `validate` tag (the same JSON Schema keywords `z` emits, so the document and the server never disagree), and its **description** from a `doc` tag. A route registered with `api.RegisterWith` is described by its `z` schema instead:
 
 ```go title="app/requests/task.go"
 type StoreTask struct {

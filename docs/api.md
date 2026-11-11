@@ -235,7 +235,7 @@ api.Register(g, "POST /products", api.Op{
 ```
 
 - Input: query string, JSON/form body (not for GET, HEAD, DELETE) and path parameters, which win over body fields; validated with the input struct's `validate` tags (422 with field errors, localized with the request locale like `web.Parse`). `struct{}` means no input.
-- `api.RegisterWith(g, pattern, op, schema, fn)` validates the input with a `z.Schema[In]` of your own instead of the input struct's `validate` tags, for the rules tags cannot express: a bound computed from a value (`z.Slice(z.String()).Max(len(abilities.All()))`) or a cross-field `z.Refine`. Everything else is `api.Register` (binding order, 422 with field errors, output handling); a nil schema panics at boot. The OpenAPI document is still generated from the input and output types, so the custom schema is invisible to it and the document is byte-identical to the one `api.Register` would produce (`TestRegisterWithKeepsTagDerivedOpenAPI`): keep the static rules in the `validate` tags and let the schema add only what they cannot say, otherwise the document under-describes what the route enforces.
+- `api.RegisterWith(g, pattern, op, schema, fn)` validates the input with a `z.Schema[In]` of your own instead of the input struct's `validate` tags, for the rules tags cannot express: a bound computed from a value (`z.Slice(z.String()).Max(len(abilities.All()))`) or a cross-field `z.Refine`. Everything else is `api.Register` (binding order, 422 with field errors, output handling); a nil schema panics at boot. The OpenAPI document describes the schema: its constraint keywords replace the tag-derived ones on the top-level inputs (path and query parameters, body properties) and `required` follows it (`TestRegisterWithSchemaReachesOpenAPI`). Nested structs keep the `$ref` derived from their tags, and a `z.Refine` or `z.Transform` has no JSON Schema form.
 
 ```go
 schema := z.Struct[requests.CreateKey](z.Shape{
@@ -334,7 +334,7 @@ apidocs.Serve(app, r, "/api/docs", apidocs.Config{SpecURL: "/api/v1/openapi.json
 
 ### Client generation
 
-`vukem codegen:client` turns the OpenAPI document of the typed routes (`api.Register`, described from their Go types and `validate` tags) into a typed client. It runs in warmup mode, so no connection is opened.
+`vukem codegen:client` turns the OpenAPI document of the typed routes (`api.Register` and `api.RegisterWith`, described from their Go types and the `z` rules that validate them) into a typed client. It runs in warmup mode, so no connection is opened.
 
 ```sh
 vukem codegen:client                                  # TypeScript → resources/js/api.ts
