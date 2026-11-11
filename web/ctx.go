@@ -92,6 +92,9 @@ type Services struct {
 	// can add a catalogue "code" and "type" in one place. It may change any
 	// member; it must not add 5xx details (CWE-209).
 	ProblemDecorator func(c *Ctx, p *Problem)
+	// ErrorMappers are applied by DefaultErrorHandler, in order, before it
+	// picks a status; see MapError.
+	ErrorMappers []ErrorMapper
 }
 
 // ErrorPageFunc renders an error page described by e. It reports whether

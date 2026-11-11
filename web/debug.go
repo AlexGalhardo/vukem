@@ -86,7 +86,7 @@ func (c *Ctx) debugData(status int, err error) debugData {
 		Type   string `json:"type"`
 		Title  string `json:"title"`
 		Status int    `json:"status"`
-	}{"about:blank", http.StatusText(status), status}, "", "  "); err == nil {
+	}{c.defaultProblemType(status), http.StatusText(status), status}, "", "  "); err == nil {
 		d.Production = string(prod)
 	}
 

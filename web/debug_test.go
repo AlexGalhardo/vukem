@@ -174,3 +174,28 @@ func TestSecurity_A09_DebugPageRedactsSecrets(t *testing.T) {
 		t.Errorf("debug page does not escape error text or source")
 	}
 }
+
+// With a problem base URL the production response carries the type the
+// client would really get.
+func TestDebugPageProductionResponseUsesTheDefaultType(t *testing.T) {
+	t.Parallel()
+
+	const base = "https://api.example.com/problems"
+
+	c, rec := newCtx(
+		t,
+		debugRequest(t),
+		&Services{Log: slog.New(slog.DiscardHandler), Debug: true, ProblemBaseURL: base},
+	)
+	c.HandleError(errors.New("boom"))
+
+	_, block, ok := strings.Cut(rec.Body.String(), "What clients see in production")
+	if !ok {
+		t.Fatal("debug page has no production panel")
+	}
+
+	block, _, _ = strings.Cut(block, "</section>")
+	if !strings.Contains(block, base+"/internal-server-error") {
+		t.Errorf("production panel = %q, want the default problem type", block)
+	}
+}
