@@ -310,7 +310,10 @@ func TestUnionWorkIsBounded(t *testing.T) {
 	start := time.Now()
 	_, err := self.Parse(in)
 
-	if d := time.Since(start); d > 5*time.Second {
+	// The bound is maxNestedUnionWork attempts (about 0.5 s here); without it
+	// the 2^60 attempts never end. The ceiling is generous because a loaded CI
+	// runner with -race and coverage once took over 5 s for the bounded work.
+	if d := time.Since(start); d > time.Minute {
 		t.Errorf("Parse took %v, want a quick refusal", d)
 	}
 
