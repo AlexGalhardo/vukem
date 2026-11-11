@@ -3,17 +3,18 @@
 package redis_test
 
 import (
-	"context"
 	"crypto/rand"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/broadcast/presencetest"
 	"github.com/AlexGalhardo/vukem/cache/cachetest"
 	"github.com/AlexGalhardo/vukem/drivers/redis"
 	"github.com/AlexGalhardo/vukem/queue/queuetest"
 	"github.com/AlexGalhardo/vukem/session/sessiontest"
+	"github.com/AlexGalhardo/vukem/sse/ssetest"
 )
 
 // open connects to REDIS_URL (task services:up starts one on :56379).
@@ -101,33 +102,8 @@ func TestRateLimiter(t *testing.T) {
 	}
 }
 
-func TestPubSubAndFlushSafety(t *testing.T) {
+func TestFlushWithoutPrefixIsRefused(t *testing.T) {
 	c := open(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	channel := unique("chan")
-
-	msgs, err := c.Subscribe(ctx, channel)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := c.Publish(ctx, channel, []byte("hello")); err != nil {
-		t.Fatal(err)
-	}
-
-	select {
-	case m := <-msgs:
-		if string(m) != "hello" {
-			t.Fatalf("message = %q", m)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no message")
-	}
-
-	cancel()
-
-	for range msgs { // drain until closed
-	}
 
 	if err := c.CacheStore("").Flush(t.Context()); err == nil {
 		t.Fatal("flush without a prefix must be refused")
@@ -177,4 +153,14 @@ func TestIncrementKeepsTTLOfExistingCounter(t *testing.T) {
 	if ttl <= 0 || ttl > 10*time.Second {
 		t.Errorf("PTTL = %v, want within (0, 10s]", ttl)
 	}
+}
+
+func TestPresenceConformance(t *testing.T) {
+	const ttl = 2 * time.Second
+
+	presencetest.Run(t, open(t).PresenceStore(unique("presence"), ttl), presencetest.Options{TTL: ttl})
+}
+
+func TestBrokerConformance(t *testing.T) {
+	ssetest.Run(t, open(t), ssetest.Options{})
 }

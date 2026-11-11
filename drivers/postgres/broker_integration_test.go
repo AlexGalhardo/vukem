@@ -14,6 +14,7 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/drivers/postgres/pgtest"
 	"github.com/AlexGalhardo/vukem/sse"
+	"github.com/AlexGalhardo/vukem/sse/ssetest"
 )
 
 // brokerAdmin mirrors open: POSTGRES_URL, else the compose service
@@ -468,4 +469,10 @@ func TestBrokerCarriesHubEventsBetweenProcesses(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the worker's event did not reach the web hub within 10s")
 	}
+}
+
+func TestBrokerConformance(t *testing.T) {
+	t.Parallel()
+
+	ssetest.Run(t, newBroker(t), ssetest.Options{MaxPayload: MaxNotifyPayload})
 }
