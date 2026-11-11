@@ -40,6 +40,7 @@ Commands marked **global** run in the `vukem` binary and work on files. Commands
 | [`vukem make:middleware`](/docs/cli/reference-make#vukem-makemiddleware) | global | Create an HTTP middleware |
 | [`vukem make:request`](/docs/cli/reference-make#vukem-makerequest) | global | Create a validated request struct |
 | [`vukem make:command`](/docs/cli/reference-make#vukem-makecommand) | global | Create an app command and register it |
+| [`vukem make:bench`](/docs/cli/reference-make#vukem-makebench) | global | Create a load-test scenario and register it |
 | [`vukem make:provider`](/docs/cli/reference-make#vukem-makeprovider) | global | Create a provider and register it |
 | [`vukem make:resource`](/docs/cli/reference-make#vukem-makeresource) | global | Create an API resource (JSON transformer) |
 | [`vukem make:factory`](/docs/cli/reference-make#vukem-makefactory) | global | Create a model factory |
@@ -89,7 +90,8 @@ Commands marked **global** run in the `vukem` binary and work on files. Commands
 | [`vukem codegen:client`](/docs/cli/reference-runtime#vukem-codegenclient) | app | Generate a typed API client in TypeScript or Go |
 | [`vukem ssr:start`](/docs/cli/reference-runtime#vukem-ssrstart-and-vukem-ssrcheck) | app | Run the Inertia SSR server and restart it on crash |
 | [`vukem ssr:check`](/docs/cli/reference-runtime#vukem-ssrstart-and-vukem-ssrcheck) | app | Check that the SSR server answers `/health` |
-| [`vukem bench`](/docs/cli/reference-runtime#vukem-bench) | global | Load test a URL: throughput, latency percentiles, open or closed model |
+| [`vukem bench`](/docs/cli/reference-runtime#vukem-bench) | global | Load test a URL or the project scenarios: throughput, latency percentiles, thresholds |
+| [`vukem bench:run`](/docs/cli/reference-runtime#vukem-benchrun) | app | Run the project scenarios against an in-process app on a temporary database |
 | [`vukem ssg:generate`](/docs/cli/reference-runtime#vukem-ssggenerate) | app | Prerender the named paths to static HTML |
 | [`vukem boost:mcp`](/docs/cli/reference-runtime#vukem-boostmcp) | app | MCP server for coding agents (started by agents) |
 | `vukem <your command>` | app | Commands you add with `vukem make:command` |

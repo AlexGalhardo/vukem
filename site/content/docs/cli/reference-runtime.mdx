@@ -581,10 +581,10 @@ wrote about/index.html (5 bytes)
 
 ## `vukem bench`
 
-Load test one URL and report throughput and latency percentiles. **Global**: it needs no project and starts nothing; point it at an app that is already running.
+Load test one URL, or the scenarios of the project, and report throughput and latency percentiles. **Global**. With a URL it needs no project and starts nothing; point it at an app that is already running. Without one it runs the project scenarios (see [`vukem bench:run`](#vukem-benchrun)).
 
 ```text
-vukem bench [flags] <url>
+vukem bench [flags] [url]
 ```
 
 | Flag | Type | Default | What it does |
@@ -606,6 +606,11 @@ vukem bench [flags] <url>
 | `-json` | bool | `false` | Print the summary as JSON (`schema_version` 1, durations in nanoseconds) instead of text. |
 | `-o` | string |  | Also write the JSON summary to this file. |
 | `-quiet` | bool | `false` | No progress line. The line is printed once a second, to stderr, only on a terminal. |
+| `-threshold` | string |  | Fail with exit code 3 unless the expression holds, such as `p95<200ms` or `error_rate<1%`. Repeat the flag. Grammar under [`vukem bench:run`](#vukem-benchrun). |
+| `-save` | string |  | Write the JSON summary to this file, creating the directory. |
+| `-compare` | string |  | Compare with a saved summary and fail with exit code 4 on a regression in p95, p99, `rps` or `http_req_failed`. |
+| `-tolerance` | string | `10%` | How much worse than the baseline `-compare` allows for latency and throughput, from 0% to 100%. The failure rate may rise by 0.5 percentage points. |
+| `-scenario`, `-model`, `-stages`, `-url`, `-database-url`, `-yes`, `-seed`, `-list` |  |  | Only without a URL: forwarded to [`vukem bench:run`](#vukem-benchrun). With a URL they are a usage error. |
 
 **Open and closed model.** With `-c` the workers send one request after another, so a slow server slows the generator down and hides its own slowness. With `-rate` requests arrive at a constant rate whether or not earlier ones finished, and `http_req_duration` runs from the instant a request was due, so a late generator or a saturated server shows in the latency.
 
@@ -620,6 +625,68 @@ vukem bench -rate 500/s -d 30s -json -o result.json http://127.0.0.1:3000/posts
 ```
 
 If `localhost` fails with `connection refused` while the app listens, the app may be on IPv4 only: use `127.0.0.1`.
+
+## `vukem bench:run`
+
+Load test the scenarios of the project against an in-process copy of the app. **App.** `vukem bench` without a URL delegates here, so you can also run `./app bench:run` (or `go run ./cmd/app bench:run`) in CI. It builds the app itself, on its own environment, so it is resolved before the app is built.
+
+```text
+./app bench:run [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-scenario` | string |  | Run only this scenario. Repeat the flag. An unknown name is a usage error. |
+| `-model` | string | `closed` | `open` or `closed`. With `-stages` it picks the model of the ramp; `-rate` is always open. |
+| `-c` | int | `10` | Closed model: virtual users. |
+| `-rate` | string |  | Open model: iterations per second, such as `50/s`. Exclusive with `-c` and `-stages`. |
+| `-d` | duration | `30s` | Duration, at most `1h`. |
+| `-stages` | string |  | Ramp such as `"30s:50,2m:50,30s:0"`: a duration and a target per stage, linear between targets, starting from 0. The target is virtual users (closed) or iterations per second (open). Replaces `-c`, `-rate` and `-d`. |
+| `-max-workers` | int | `1000` | Open model: cap on iterations in flight; arrivals past it are dropped and counted. |
+| `-timeout` | duration | `30s` | Per-request timeout. |
+| `-url` | string |  | Attack an already running app instead of booting one. The app is built only to read its routes and scenarios: nothing is booted, migrated or set up, so the scenarios must not need `Setup` data. |
+| `-allow-remote` | string |  | Allow a non-loopback host for `-url`. Repeat the flag. |
+| `-database-url` | string |  | Database for the in-process app. Refused when `APP_ENV` is `production` (or cannot be read). Anything but a SQLite file in the temporary directory needs `-yes`: it is migrated and written to. |
+| `-yes` | bool | `false` | Confirm a `-database-url` that is not a temporary SQLite file. |
+| `-seed` | bool | `false` | Run the registered seeders after migrating. |
+| `-threshold` | string |  | Fail with exit code 3 unless the expression holds. Repeat the flag. |
+| `-save` | string |  | Write the JSON summary to a file. |
+| `-compare` | string |  | Fail with exit code 4 on a regression against a saved summary. |
+| `-tolerance` | string | `10%` | Allowed regression for `-compare`, from 0% to 100%. |
+| `-json` | bool | `false` | Print the JSON summary instead of text. |
+| `-list` | bool | `false` | List the registered scenarios (`name  weight`) and exit. |
+
+**In-process app.** Unless `-url` is given, the command creates a new temporary directory, boots the app on `127.0.0.1` at a free port with a SQLite file in that directory, runs the migrations, optionally the seeders, then the `Setup` of each selected scenario, and removes the directory at the end. The configured `DATABASE_URL` is never opened. The app runs with `APP_ENV=test`, cookie sessions, the array mailer, the cache, the rate limiter and the queue in memory (`sync` for the queue) and `LOG_LEVEL=error` (unless you set one), and gets a generated `APP_KEY` when none is set. `REDIS_URL`, the S3 bucket and endpoint, the Telegram token and the mail API keys are emptied, so the load cannot reach a real service; `-list` and `-url` build the app in that same environment. Settings of your own that point elsewhere are not touched. `APP_ENV=test` and SQLite make the numbers differ from production. An app that rate-limits itself answers `429` to most of a load, which counts as failed: raise the limit in `Setup` or in the test environment.
+
+**Scenarios.** A scenario is Go code in your project: `app/benchmarks/<name>.go`, listed in `bootstrap/bench.go` and passed to `vukem.WithBench(Bench()...)`. One iteration is one run of its `Do` function and may send several requests through a `loadtest.Client`, which keeps its own cookies, sends a token with `SetToken`, resolves a named route with `Route` and numbers the user or iteration with `Seq`. `Weight` sets the share of each scenario. In the closed model a virtual user keeps its cookies across iterations; in the open model each arrival is a new visitor. Requests are named `<scenario>: <METHOD> <route name or path>` in the report.
+
+**Thresholds.** `<metric><op><value>`, with `<`, `<=`, `>` or `>=`. Durations take a unit (`200ms`, `1.5s`); `error_rate` and `iteration_error_rate` take a fraction (`0.01`) or a percentage (`1%`).
+
+| Metric | Value |
+| --- | --- |
+| `p50`, `p90`, `p95`, `p99`, `max`, `mean`, `min` | latency of `http_req_duration` |
+| `ttfb_p95`, `ttfb_p99` | latency of `http_req_waiting` |
+| `error_rate` | `http_req_failed` |
+| `rps` | throughput reached |
+| `dropped` | `dropped_iterations` |
+| `iteration_error_rate` | iterations that returned an error or panicked, over all iterations |
+
+A name restricts a threshold to one entry of the per-name breakdown: `checkout:p95<300ms`, or `"checkout: POST orders.store":p95<300ms` when it has spaces. Only latency and `error_rate` can be restricted. A name that does not exist fails the threshold, so a typo cannot pass a run.
+
+**Exit codes.** `0` ran and passed, `1` failed to run (or was interrupted: Ctrl+C prints the partial report and judges nothing), `2` usage error, `3` a threshold failed, `4` a regression against the baseline. When both fail the code is `3`. A run that sent no request fails every threshold and `-compare` with code `3` and says so: with no request there is no failure rate to pass. A baseline must hold requests, and one whose p95, p99 or `rps` is zero cannot hide a regression. `-save` and `-compare` may name the same file: the baseline is read before it is replaced. The tables are printed to stderr after the report.
+
+**Baseline.** `-save` writes the JSON summary (`schema_version` 1); `-compare` reads it and checks p95, p99, `rps` and `http_req_failed`. It warns when the model, rate, concurrency or target of the baseline differ from this run, and a baseline from another machine says little: compare runs on the same hardware.
+
+```bash
+vukem make:bench BrowsePosts
+vukem bench --stages "30s:50,2m:50,30s:0" --model open --threshold 'p95<200ms' --threshold 'error_rate<1%'
+vukem bench --save .vukem/bench/baseline.json
+vukem bench --compare .vukem/bench/baseline.json
+```
+
+```yaml
+- run: go run ./cmd/app bench:run -d 20s --threshold 'p95<250ms' --threshold 'error_rate<1%'
+```
 
 ## `vukem boost:mcp`
 
