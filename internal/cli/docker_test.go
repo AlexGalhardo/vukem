@@ -36,7 +36,7 @@ func TestWriteDocker(t *testing.T) {
 	t.Parallel()
 
 	common := []string{
-		"FROM golang:1.27.4-alpine3.24 AS build",
+		"FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build",
 		"COPY go.mod go.sum ./",
 		// .buildtags is read at build time, so later edits reach the image.
 		`.buildtags`,
@@ -61,7 +61,7 @@ func TestWriteDocker(t *testing.T) {
 			kind: "htmx",
 			pm:   "npm",
 			want: []string{
-				"FROM node:24.22.0-alpine3.24 AS assets",
+				"FROM " + nodeImage + " AS assets",
 				"COPY package.json package-lock.json* ./",
 				"&& npm ci --no-audit --no-fund",
 				"RUN npm run build",
@@ -75,7 +75,7 @@ func TestWriteDocker(t *testing.T) {
 			pm:   "bun",
 			want: []string{
 				// bun.lock* also matches the older binary bun.lockb.
-				"FROM oven/bun:1.4.4-alpine AS assets", "COPY package.json bun.lock* ./",
+				"FROM " + bunImage + " AS assets", "COPY package.json bun.lock* ./",
 				"&& bun install --frozen-lockfile", "RUN bun run build",
 			},
 		},
@@ -245,14 +245,14 @@ func TestAssetsImageStaysOffTheRuntime(t *testing.T) {
 		"bun install --frozen-lockfile",
 		"COPY --from=assets /src/resources/public/build resources/public/build",
 		"ENV CGO_ENABLED=0",
-		"FROM alpine:3.24.2",
+		"FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Dockerfile lacks %q:\n%s", want, got)
 		}
 	}
 
-	runtime := got[strings.LastIndex(got, "FROM alpine:3.24.2"):]
+	runtime := got[strings.LastIndex(got, "FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"):]
 	for _, banned := range []string{"bun", "lilypond", "ffmpeg", "debian", "bookworm"} {
 		if strings.Contains(strings.ToLower(runtime), banned) {
 			t.Errorf("runtime stage contains %q:\n%s", banned, runtime)

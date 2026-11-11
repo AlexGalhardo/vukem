@@ -132,6 +132,12 @@ tasks:
       - for: { var: MODULES }
         cmd: cd {{.ITEM}} && go mod tidy
 
+  tidy:check:
+    desc: Fail when any module's go.mod or go.sum is not tidy
+    cmds:
+      - for: { var: MODULES }
+        cmd: cd {{.ITEM}} && go mod tidy -diff
+
   site:dev:
     desc: Run the documentation site locally
     dir: site
