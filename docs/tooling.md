@@ -68,6 +68,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 - **Scopes:** package or area — `router`, `ctx`, `config`, `validate`, `session`, `view`, `htmx`, `orm`, `schema`, `database`, `auth`, `authz`, `mail`, `cache`, `storage`, `event`, `queue`, `schedule`, `inertia`, `vite`, `cli`, `postgres`, `redis`, `mongo`, `otel`, `websocket`, `graphql`, `deps`, `release`, `docs`, `repo`.
 - Description: imperative, lowercase start, no trailing period, ≤ 100 chars header.
 - Breaking changes: `!` after type/scope; describe the impact in a `BREAKING CHANGE:` footer.
+- Security changes: add a `Security: <one line on the risk closed>` footer to the `feat`, `fix`, `perf` or `refactor` commit; the changelog then lists it under Security. `docs`, `test`, `ci`, `build`, `chore` and `style` commits never reach the changelog, footer or not.
 - Allowed exceptions: `Merge …`, `Revert "…"`, `fixup!`/`squash!` (local only; blocked on push to `main`).
 
 ## Versioning
@@ -91,7 +92,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | `perf`, `refactor` | Changed |
 | `revert` | Removed |
 | footer `Deprecated:` | Deprecated |
-| body/footer mentioning `security` | Security |
+| footer `Security:` on a `feat`, `fix`, `perf` or `refactor` | Security (a body that only mentions security is not enough) |
 | `docs`, `test`, `ci`, `build`, `chore`, `style` | omitted |
 
 The template lives in `.config/cliff.toml` (git-cliff is called with `--config .config/cliff.toml`). Every entry ends with its short commit hash linked to the commit on GitHub, so each Added/Fixed/Security line points at the code that changed; the docs site renders the same file at [vukem.dev/changelog](https://vukem.dev/changelog). `task changelog` previews the next section; released sections are never edited by hand (change the template or the commit history instead). The `[Unreleased]` section exists at all times.

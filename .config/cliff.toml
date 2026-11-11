@@ -49,14 +49,14 @@ tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+'
 sort_commits = "oldest"
 commit_parsers = [
   { message = '^chore\(release\)', skip = true },
-  # Site and repository docs often mention security in the body; they are
-  # never a security change themselves.
-  { message = '^docs\((site|repo)\)', skip = true },
-  { body = "(?i)security", group = "<!-- 5 -->Security" },
   { footer = "^Deprecated", group = "<!-- 2 -->Deprecated" },
+  { message = "^(docs|test|ci|build|chore|style)", skip = true },
+  # Security is explicit: a "Security:" footer on a feat, fix, perf or
+  # refactor commit. Matching the word in the body filed unrelated commits
+  # (a feature whose test is named TestSecurity_*) under Security.
+  { footer = "^Security", group = "<!-- 5 -->Security" },
   { message = "^feat", group = "<!-- 0 -->Added" },
   { message = "^(perf|refactor)", group = "<!-- 1 -->Changed" },
   { message = "^revert", group = "<!-- 3 -->Removed" },
   { message = "^fix", group = "<!-- 4 -->Fixed" },
-  { message = "^(docs|test|ci|build|chore|style)", skip = true },
 ]
