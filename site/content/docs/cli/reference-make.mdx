@@ -153,6 +153,29 @@ vukem make:request StorePost
 created app/requests/store_post.go
 ```
 
+## `vukem make:bench`
+
+Create a load-test scenario and register it.
+
+```text
+vukem make:bench [flags] <Name>
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Overwrite the scenario file. |
+
+Writes `app/benchmarks/<snake>.go` with one function returning a `vukem.BenchScenario` and appends it to `Bench()` in `bootstrap/bench.go`, which it creates when the project has none (then add `vukem.WithBench(Bench()...)` to the options of `vukem.New`; new projects have it). Run it with `vukem bench --scenario <snake>`; see [`vukem bench:run`](/docs/cli/reference-runtime#vukem-benchrun).
+
+```bash
+vukem make:bench BrowsePosts
+```
+
+```text
+created app/benchmarks/browse_posts.go
+updated bootstrap/bench.go
+```
+
 ## `vukem make:command`
 
 Create an app command and register it in `Commands()` of `bootstrap/commands.go`. Writes `app/commands/<name>.go`. The command is named in kebab-case (`SendReports` becomes `send-reports`). Rename it to `namespace:action` when it belongs to a group.

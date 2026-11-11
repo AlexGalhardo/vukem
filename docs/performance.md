@@ -136,6 +136,18 @@ Latencies come from a fixed-size log-linear histogram, so a percentile is exact 
 
 **Reading the numbers.** They depend on the machine, and a generator on the same host as the app competes with it for CPU, so use them to compare runs on one machine, not as absolute capacity. A `connection refused` for `localhost` can mean the app listens on IPv4 only; use `127.0.0.1`. `-no-keepalive` at a high rate can exhaust ephemeral ports, which appears as `other` errors.
 
+### Scenarios, in-process mode, thresholds and baselines
+
+`vukem bench` without a URL runs the Go scenarios of the project: `vukem make:bench <Name>` creates `app/benchmarks/<name>.go` (a `vukem.BenchScenario` with a `loadtest.Scenario`, whose `Do` sends one iteration through a `loadtest.Client`, and a `Setup` that creates the data), `bootstrap/bench.go` lists them and `vukem.WithBench(Bench()...)` registers them. `bench:run` boots a copy of the app on a free loopback port with `APP_ENV=test` and a new temporary SQLite database, migrates, runs `Setup`, applies the load and deletes the database; the configured database is never used, and `--database-url` (refused in production) points it at a disposable one instead.
+
+`--stages "30s:50,2m:50,30s:0"` ramps virtual users (closed) or iterations per second (open, with `--model open`), linearly, from 0. `--threshold 'p95<200ms'` fails the run with exit code 3 when it does not hold (metrics: `p50` to `max`, `mean`, `min`, `ttfb_p95`, `ttfb_p99`, `error_rate`, `rps`, `dropped`, `iteration_error_rate`; a `"name":` prefix restricts latency and `error_rate` to one request name, and an unknown name fails). `--save` writes the JSON summary and `--compare` fails with exit code 4 when p95, p99 or `rps` is more than `--tolerance` (10%) worse, or `http_req_failed` is more than 0.5 percentage points higher. Compare runs of the same setup on the same machine. In CI:
+
+```yaml
+- run: go run ./cmd/app bench:run -d 20s --threshold 'p95<250ms' --threshold 'error_rate<1%'
+```
+
+The in-process app is not production: `APP_ENV=test`, SQLite and a mailer in memory change the numbers, and a self rate-limiting app answers `429`, which counts as failed.
+
 ## Follow-ups
 
 1. **Maintenance check per request.** Cache `readMaintenance` for a short interval (for example, stat at most once a second, or watch the file). This changes how fast `vukem down` takes effect, so it needs a decision in [brainstorming.md](brainstorming.md) and an updated maintenance test. It is the largest single cost of `DefaultMiddleware` on Windows.
