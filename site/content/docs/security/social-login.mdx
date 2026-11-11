@@ -107,7 +107,7 @@ The variable names are also appended to `.env.example`. A listed provider with a
 `GET /auth/github/redirect` (guests only, through `auth.Guest`) calls `s.Redirect(c, "github")`, which:
 
 1. creates a random `state`, PKCE verifier and nonce;
-2. seals them, with the provider name and an expiry, in the cookie `social_github`: HMAC-signed, `HttpOnly`, `SameSite=Lax`, `Secure` unless `InsecureCookies`, valid for 10 minutes (`StateTTL`);
+2. seals them, with the provider name and an expiry, in the cookie `__Host-social_github` (`social_github` with `InsecureCookies`): HMAC-signed, `HttpOnly`, `SameSite=Lax`, `Secure` unless `InsecureCookies`, valid for 10 minutes (`StateTTL`);
 3. redirects (`302`) to the provider with the state and the S256 PKCE challenge. An [htmx](/docs/frontend/htmx) request gets `HX-Redirect` instead, so the browser makes a full navigation.
 
 An unknown provider name answers `404` (`social.ErrUnknownProvider`).
