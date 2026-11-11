@@ -141,7 +141,7 @@ func TestServeViewCheckExitCodes(t *testing.T) {
 	}
 }
 
-func TestServeViewCheckOutputIsBounded(t *testing.T) {
+func TestSecurity_A04_ServeViewCheckOutputIsBounded(t *testing.T) {
 	t.Parallel()
 
 	env, bin, out := viewCheckProject(t)
@@ -158,7 +158,7 @@ func TestServeViewCheckOutputIsBounded(t *testing.T) {
 	}
 }
 
-func TestServeViewCheckStopsWhenCancelled(t *testing.T) {
+func TestSecurity_A04_ServeViewCheckStopsWhenCancelled(t *testing.T) {
 	t.Parallel()
 
 	env, bin, out := viewCheckProject(t)
