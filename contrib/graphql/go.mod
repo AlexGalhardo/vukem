@@ -1,6 +1,6 @@
 module github.com/AlexGalhardo/vukem/contrib/graphql
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/AlexGalhardo/vukem v0.40.0
