@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type RowQuery struct {
 	After   []string // keyset cursor: the primary key of the last row
 	Page    int      // 1-based; used only when Sort is not the primary key
 	PerPage int      // 1..200, default 50
+	Full    bool     // keep values up to 64 KiB instead of 200 runes (export)
 }
 
 // Cell is one value of a result, ready to show.
@@ -291,7 +293,10 @@ func (s *SQLDB) Rows(ctx context.Context, q RowQuery) (RowPage, error) {
 	}
 	defer rows.Close()
 
-	n, page := perPage(q.PerPage), RowPage{Columns: t.Columns}
+	n, page, limit := perPage(q.PerPage), RowPage{Columns: t.Columns}, gridCellRunes
+	if q.Full {
+		limit = detailCellMax
+	}
 
 	for rows.Next() {
 		if len(page.Rows) == n {
@@ -299,7 +304,7 @@ func (s *SQLDB) Rows(ctx context.Context, q RowQuery) (RowPage, error) {
 			break
 		}
 
-		cells, err := scanRow(rows, len(t.Columns), gridCellRunes)
+		cells, err := scanRow(rows, len(t.Columns), limit)
 		if err != nil {
 			return RowPage{}, &queryError{err}
 		}
@@ -394,6 +399,17 @@ func (s *SQLDB) Tables(ctx context.Context) ([]Table, error) {
 		return nil, &queryError{err}
 	}
 
+	// The catalog may hand out a cached slice; the estimates go on a copy.
+	ts = slices.Clone(ts)
+
+	// One budget for every COUNT, so a big database cannot stall the page.
+	cctx, cancel := context.WithTimeout(ctx, estimateBudget)
+	defer cancel()
+
+	for i := range ts {
+		ts[i].RowEstimate = s.count(cctx, ts[i].Name)
+	}
+
 	return ts, nil
 }
 
@@ -409,7 +425,44 @@ func (s *SQLDB) Table(ctx context.Context, name string) (Table, error) {
 		return Table{}, ErrNotFound
 	}
 
+	t.RowEstimate = -1
+
 	return t, nil
+}
+
+const estimateBudget = 2 * time.Second
+
+// count is the number of rows of a table the catalog listed, -1 when the
+// count did not finish in time.
+func (s *SQLDB) count(ctx context.Context, table string) int64 {
+	var n int64
+
+	row := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+s.db.Dialect().Quote(table))
+	if err := row.Scan(&n); err != nil {
+		return -1
+	}
+
+	return n
+}
+
+// References implements SQLSource.
+func (s *SQLDB) References(ctx context.Context, table string) ([]Reference, error) {
+	ts, err := s.catalog.Tables(ctx)
+	if err != nil {
+		return nil, &queryError{err}
+	}
+
+	var out []Reference
+
+	for _, t := range ts {
+		for _, fk := range t.ForeignKeys {
+			if fk.RefTable == table {
+				out = append(out, Reference{Table: t.Name, ForeignKey: fk})
+			}
+		}
+	}
+
+	return out, nil
 }
 
 // errNoCatalog is what a SQLDB without a schema catalog answers.

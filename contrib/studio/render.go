@@ -87,9 +87,7 @@ func (s *Studio) render(w http.ResponseWriter, r *http.Request, status int, page
 		data = map[string]any{}
 	}
 
-	data["Version"], data["Write"], data["Sources"] = s.cfg.Version, false, s.sourceViews(
-		r,
-	) // read-only: editing is a later release
+	data["Version"], data["Write"], data["Sources"] = s.cfg.Version, s.cfg.Write, s.sourceViews(r)
 
 	if _, ok := data["Current"]; !ok {
 		data["Current"] = r.PathValue("source")

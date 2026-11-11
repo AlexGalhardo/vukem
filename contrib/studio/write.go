@@ -16,6 +16,9 @@ func (s *Studio) writeRoutes() {
 	s.mux.HandleFunc("POST /s/{source}/c/{collection}", s.insertDocument)
 	s.mux.HandleFunc("POST /s/{source}/c/{collection}/d/{id}", s.changeDocument)
 	s.mux.HandleFunc("POST /s/{source}/k/{key...}", s.changeKey)
+	s.mux.HandleFunc("GET /s/{source}/t/{table}/new", s.newRowPage)
+	s.mux.HandleFunc("POST /s/{source}/t/{table}", s.insertRow)
+	s.mux.HandleFunc("POST /s/{source}/t/{table}/r", s.changeRow)
 }
 
 // audit logs one write attempt on stderr, before the response. Values never
