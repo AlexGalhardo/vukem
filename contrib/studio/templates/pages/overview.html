@@ -1,0 +1,7 @@
+{{define "title"}}Sources - vukem-studio{{end}}
+{{define "content"}}
+<h1 class="mb-4 text-2xl font-semibold">Sources</h1>
+{{if .Sources}}<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+	{{range .Sources}}{{template "partials/card" .}}{{end}}
+</div>{{else}}{{template "partials/empty" (dict "Title" "No data source" "Text" "Set DATABASE_URL, MONGO_URL or REDIS_URL in the .env of the project.")}}{{end}}
+{{end}}

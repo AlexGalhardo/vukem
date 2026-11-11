@@ -1,0 +1,4 @@
+{{/* A labelled select. Data: Name, Label, Value, Options (a list of strings). */}}
+{{define "partials/select"}}<label class="flex flex-col gap-1 text-sm font-medium">{{.Label}}
+	<select class="input" name="{{.Name}}">{{$v := .Value}}{{range .Options}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}</select>
+</label>{{end}}

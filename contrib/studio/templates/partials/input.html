@@ -1,0 +1,4 @@
+{{/* A labelled text input. Data: Name, Label, Value, Placeholder. */}}
+{{define "partials/input"}}<label class="flex flex-col gap-1 text-sm font-medium">{{.Label}}
+	<input class="input" name="{{.Name}}" value="{{.Value}}" placeholder="{{.Placeholder}}" autocomplete="off">
+</label>{{end}}

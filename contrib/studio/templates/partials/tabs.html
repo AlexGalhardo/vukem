@@ -1,0 +1,2 @@
+{{/* Tabs. Data: Tabs (a list with Label and Href) and Current (the Label of the open one). */}}
+{{define "partials/tabs"}}{{$cur := .Current}}<div class="tabs" role="navigation" aria-label="Views">{{range .Tabs}}<a class="tab" href="{{.Href}}"{{if eq .Label $cur}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}</div>{{end}}

@@ -1,0 +1,10 @@
+{{/* A source card. Data: Name, Kind, Label, Online. */}}
+{{define "partials/card"}}<article class="card">
+	<header class="flex items-center justify-between gap-2">
+		<h2 class="text-lg font-semibold">{{.Name}}</h2>
+		<span class="badge badge-muted">{{.Kind}}</span>
+	</header>
+	<p class="text-sm break-all text-muted-foreground">{{.Label}}</p>
+	<p class="text-sm">{{if .Online}}<span aria-hidden="true">&#9679;</span> online{{else}}<span aria-hidden="true">&#9675;</span> offline{{end}}</p>
+	<a class="btn btn-secondary self-start" href="/s/{{.Name}}">Open</a>
+</article>{{end}}
