@@ -219,6 +219,32 @@ An error from `decode` becomes an issue like a `Refine` error does: `z.FieldErro
 
 File rules report `too_big` (key `too_big.file`, params `max`, `max_kb`) and `invalid_file` (keys `file.type` with `types`, `file.extension` with `extensions`). Multipart forms put uploaded files in `c.Input()` (one `*multipart.FileHeader`, or a list for repeated or `name[]` fields), so `web.Parse` validates them with the other fields; `Check` runs the same rules on a header directly. For files too large to buffer, stream them with [`upload.Receive`](subsystems.md#uploads) instead.
 
+The 422 answer keeps the `errors` map (field to messages) and adds an `issues` member with the structured side of each problem:
+
+```json
+{
+  "status": 422,
+  "errors": { "title": ["The title field must be at least 3 characters."] },
+  "issues": [
+    {
+      "path": "title", "code": "too_small", "key": "too_small.string", "on": "body",
+      "message": "The title field must be at least 3 characters.", "params": { "min": 3 }
+    }
+  ]
+}
+```
+
+`key` is the message key (omitted for a custom message), `params` the values the message uses, taken from the schema and never from the input, and `on` where the value came from: `body` for `web.Parse` (the body merged over the query string), `query` for `web.ParseQuery`, `params` for `web.ParseParams`, absent for `web.ParseMap` and `web.ParseInput`. An `errs.NewValidation().Add(...)` error gets one issue per message with the code `custom`. `Issue.Err` is never sent: a `Refine` error reaches the client as `code: custom`, `key: invalid`.
+
+`z.Issues` can also be formatted: `Flatten()` returns `Form` (the root messages) and `Fields` (path to messages), `Tree()` nests them (`Properties` for keys, `Items` for list positions) and `Pretty()` renders text for a log:
+
+```text
+✖ The title field must be at least 3 characters.
+  → at title
+```
+
+`WithMessage(text)` on a string or number schema sets the message of the rule declared just before it, so two `Regex` rules can say different things: `z.String().Min(3).WithMessage("Too short.").Regex(re).WithMessage("Bad format.")`. The precedence is `WithMessage` (the rule), then `Message` (the schema), then the default; a custom text keeps the `code` and `params` of the issue but has no `key`, so it is not translated.
+
 Issues are collected for the whole input (not first-error-only). The web error handler converts them into `*errs.ValidationError` → 422 / redirect + flash / problem+json ([http.md](http.md#errors)).
 
 ## Translated messages
@@ -226,6 +252,83 @@ Issues are collected for the whole input (not first-error-only). The web error h
 Every built-in message has a key, `Issue.Key`: the detailed key when there is one (`too_small.string`, `string.email`, `too_small.positive`), else the code (`required`, `invalid_enum`). Custom messages (`Message` overrides, `z.FieldError`) have no key and are never translated (plain `Refine`/`Custom` errors get the generic key `invalid`); return `z.FieldErrorKey` instead to make them translatable.
 
 `Issues.Localize(lookup)` rebuilds messages from translated templates: it tries `lookup(Key)`, then `lookup(Code)`, and replaces `{field}` with `lookup("attributes.<last path segment>")` when present (else the humanized name). Untranslated issues keep their English message.
+
+The keys are part of the contract with clients (they come in the `issues` member of a 422): renaming one is a breaking change. `Params` are the values a message uses, taken from the schema (`min`, `max`, `options`), never from the input. Every key is in this table; `TestMessageKeys_DocumentedInValidationDocs` fails when one is missing.
+
+| Key | Code | Params | Default message |
+| --- | --- | --- | --- |
+| `invalid` | `custom` | none | The {field} field is invalid. |
+| `required` | `required` | none | The {field} field is required. |
+| `invalid_type` | `invalid_type` | `expected` | The {field} field must be {expected}. |
+| `invalid_enum` | `invalid_enum` | `options` | The selected {field} is invalid. |
+| `unrecognized_keys` | `unrecognized_keys` | none | The {field} field is not allowed. |
+| `not_multiple_of` | `not_multiple_of` | `multiple` | The {field} field must be a multiple of {multiple}. |
+| `invalid_date` | `invalid_date` | none | The {field} field must be a valid date. |
+| `not_unique` | `not_unique` | none | The {field} field must not contain duplicates. |
+| `invalid_literal` | `invalid_literal` | `expected` | The {field} field must be {expected}. |
+| `invalid_union` | `invalid_union` | none | The {field} field is invalid. |
+| `invalid_union_discriminator` | `invalid_union_discriminator` | none | The selected {field} is invalid. |
+| `too_deep` | `too_deep` | none | The {field} field is nested too deeply. |
+| `too_small.string` | `too_small` | `min` | The {field} field must be at least {min} characters. |
+| `too_small.number` | `too_small` | `min` | The {field} field must be at least {min}. |
+| `too_small.positive` | `too_small` | none | The {field} field must be greater than 0. |
+| `too_small.array` | `too_small` | `min` | The {field} field must have at least {min} items. |
+| `too_small.date` | `too_small` | `min` | The {field} field must be after {min}. |
+| `too_big.string` | `too_big` | `max` | The {field} field must not be greater than {max} characters. |
+| `too_big.number` | `too_big` | `max` | The {field} field must not be greater than {max}. |
+| `too_big.array` | `too_big` | `max` | The {field} field must not have more than {max} items. |
+| `too_big.date` | `too_big` | `max` | The {field} field must be before {max}. |
+| `exact.string` | `too_small` or `too_big` | `len` | The {field} field must be {len} characters. |
+| `exact.array` | `too_small` or `too_big` | `len` | The {field} field must have {len} items. |
+| `string.email` | `invalid_string` | none | The {field} field must be a valid email address. |
+| `string.url` | `invalid_string` | none | The {field} field must be a valid URL. |
+| `string.uuid` | `invalid_string` | none | The {field} field must be a valid UUID. |
+| `string.ulid` | `invalid_string` | none | The {field} field must be a valid ULID. |
+| `string.regex` | `invalid_string` | none | The {field} field format is invalid. |
+| `string.alpha` | `invalid_string` | none | The {field} field must only contain letters. |
+| `string.alphanum` | `invalid_string` | none | The {field} field must only contain letters and numbers. |
+| `string.numeric` | `invalid_string` | none | The {field} field must be a number. |
+| `string.starts_with` | `invalid_string` | `prefix` | The {field} field must start with {prefix}. |
+| `string.ends_with` | `invalid_string` | `suffix` | The {field} field must end with {suffix}. |
+| `string.includes` | `invalid_string` | `substring` | The {field} field must contain {substring}. |
+| `string.has_lower` | `invalid_string` | none | The {field} field must contain a lowercase letter. |
+| `string.has_upper` | `invalid_string` | none | The {field} field must contain an uppercase letter. |
+| `string.has_digit` | `invalid_string` | none | The {field} field must contain a digit. |
+| `string.has_symbol` | `invalid_string` | none | The {field} field must contain a symbol or punctuation character. |
+| `string.utf8` | `invalid_string` | none | The {field} field must be valid text. |
+| `string.ip` | `invalid_string` | none | The {field} field must be a valid IP address. |
+| `string.ipv4` | `invalid_string` | none | The {field} field must be a valid IPv4 address. |
+| `string.ipv6` | `invalid_string` | none | The {field} field must be a valid IPv6 address. |
+| `string.cidr` | `invalid_string` | none | The {field} field must be a valid CIDR range. |
+| `string.mac` | `invalid_string` | none | The {field} field must be a valid MAC address. |
+| `string.hostname` | `invalid_string` | none | The {field} field must be a valid hostname. |
+| `string.e164` | `invalid_string` | none | The {field} field must be a valid phone number. |
+| `string.slug` | `invalid_string` | none | The {field} field must only contain lowercase letters, numbers and dashes. |
+| `string.hex` | `invalid_string` | none | The {field} field must be hexadecimal. |
+| `string.base64` | `invalid_string` | none | The {field} field must be valid base64. |
+| `string.base64url` | `invalid_string` | none | The {field} field must be valid base64url. |
+| `string.jwt` | `invalid_string` | none | The {field} field must be a valid token. |
+| `string.iso_date` | `invalid_string` | none | The {field} field must be a valid date. |
+| `string.iso_time` | `invalid_string` | none | The {field} field must be a valid time. |
+| `string.iso_datetime` | `invalid_string` | none | The {field} field must be a valid date and time. |
+| `string.iso_duration` | `invalid_string` | none | The {field} field must be a valid duration. |
+| `confirmed` | `custom` | none | The {field} field confirmation does not match. |
+| `same` | `custom` | `other` | The {field} field must match {other}. |
+| `different` | `custom` | `other` | The {field} field must be different from {other}. |
+| `required_if` | `required` | `other`, `value` | The {field} field is required when {other} is {value}. |
+| `required_with` | `required` | `others` | The {field} field is required when {others} is present. |
+| `required_without` | `required` | `others` | The {field} field is required when {others} is not present. |
+| `date.after_field` | `too_small` | `other` | The {field} field must be after {other}. |
+| `date.after_or_equal_field` | `too_small` | `other` | The {field} field must be after or equal to {other}. |
+| `date.before_field` | `too_big` | `other` | The {field} field must be before {other}. |
+| `date.before_or_equal_field` | `too_big` | `other` | The {field} field must be before or equal to {other}. |
+| `too_small.date_inclusive` | `too_small` | `min` | The {field} field must be after or equal to {min}. |
+| `too_big.date_inclusive` | `too_big` | `max` | The {field} field must be before or equal to {max}. |
+| `date.future` | `too_small` | none | The {field} field must be a date in the future. |
+| `date.past` | `too_big` | none | The {field} field must be a date in the past. |
+| `too_big.file` | `too_big` | `max_kb` | The {field} field must not be greater than {max_kb} kilobytes. |
+| `file.type` | `invalid_file` | `types` | The {field} field must be a file of type: {types}. |
+| `file.extension` | `invalid_file` | `extensions` | The {field} field must have one of these extensions: {extensions}. |
 
 In an app, translation is opt-in and per request: `vukem.WithTranslations` + `DefaultMiddleware` install `i18n.Middleware`, which stores a localizer in the request context (`web.WithIssueLocalizer`). `web.Parse`, `Bind`, `ParseQuery`, `ParseParams` and `ParseMap` (an assembled map, used by `api.Register`) apply it before building the `*errs.ValidationError`; `web.ParseInput` has no request and stays English. Catalog keys live under `validation.`:
 
