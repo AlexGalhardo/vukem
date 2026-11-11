@@ -105,6 +105,17 @@ Signature: `func(http.Handler) http.Handler`. Three stacks:
 | Router | only when a route matches | `MethodOverride`, `Session`, `CSRF`, `Flash`, `Auth` init (ALPHA) |
 | Named | per route/group, may take options | `auth.Required(guards...)`, `auth.Guest()`, `ratelimit.Limit(name)`, `Timeout(d)`, `CORS(cfg)` |
 
+Where each call reaches:
+
+| Call | Reaches | Position in the chain |
+| --- | --- | --- |
+| `r.UseServer(mw)` | every request, including ones that match no route (404, 405) | outermost |
+| `r.Use(mw)` | every matched route, whether it was registered before or after the call | after the server stack |
+| `g.Use(mw)` | the routes of the group and of its nested groups, whether registered before or after the call | after router middleware, outer groups first |
+| `route.Use(mw)` | that route only | innermost, right before the handler |
+
+Chains are built when `Router.Handler()` compiles the routes, so the order of `Use` calls relative to route registration does not matter; the order of the arguments does. `TestDefaultMiddlewareOrder` and `TestMiddlewareScope` pin this contract; `Router.ServerMiddleware()` lists the server stack by name.
+
 `middleware.Gzip` passes `Flush` through, also before the first write (it sends the headers, as a first write would), so streaming handlers work behind it.
 
 `vukem make:middleware` generates the function and registers it as named middleware in `bootstrap/middleware.go`.

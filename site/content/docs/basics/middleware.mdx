@@ -457,13 +457,26 @@ r.Group("/api", func(g *router.Group) {
 })
 ```
 
+## Scope
+
+Each call reaches a different set of requests:
+
+| Call | Reaches | Position in the chain |
+| --- | --- | --- |
+| `r.UseServer(mw)` | every request, including ones that match no route (404, 405) | outermost |
+| `r.Use(mw)` | every matched route, whether it was registered before or after the call | after the server stack |
+| `g.Use(mw)` | the routes of the group and of its nested groups, whether registered before or after the call | after router middleware, outer groups first |
+| `route.Use(mw)` | that route only | innermost, right before the handler |
+
+Chains are built when `Router.Handler()` compiles the routes, so the order of `Use` calls relative to route registration does not matter; the order of the arguments does.
+
 ## The default stack
 
 Every starter calls `vukem.DefaultMiddleware(app, r)` at the top of `routes/web.go`. It installs:
 
 | Stack | Middleware, in order |
 | --- | --- |
-| Server | `Recover`, `RequestID`, `SecureHeaders`, `NoIndex` (only with `NOINDEX=true`), `Maintenance`, `Logger`, the cross-origin middleware (only with `MiddlewareOptions.CrossOrigin`), `MethodOverride`, `StripPathPrefix` (only with `MiddlewareOptions.I18n.PathPrefixes`) |
+| Server | `Recover`, `RequestID`, `SecureHeaders`, `NoIndex` (only with `NOINDEX=true`), `Maintenance`, `Logger`, `MethodOverride`, the cross-origin middleware (only with `MiddlewareOptions.CrossOrigin`), `StripPathPrefix` (only with `MiddlewareOptions.I18n.PathPrefixes`) |
 | Router | `BodyLimit(web.DefaultMaxBody)`, sessions, CSRF, then the locale resolver when the app uses `vukem.WithTranslations` |
 
 It returns configuration errors, such as invalid `CSRF_TRUSTED_ORIGINS` or an insecure session setup, so they stop the boot. Two more pieces come from the app itself: in production with an empty `TRUSTED_PROXIES`, a server middleware logs one warning when requests look like they come through a proxy; and the [devtools dashboard](/docs/digging-deeper/devtools), when enabled, adds its recorder as the outermost server middleware.
