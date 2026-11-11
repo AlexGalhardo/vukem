@@ -20,6 +20,20 @@ import (
 
 const defaultMaxBody = 1 << 20
 
+// errUnreadableBody answers a body that could not be read (a dropped
+// connection), which is not the same as one over the limit.
+var errUnreadableBody = errs.New(http.StatusBadRequest, "The request body could not be read.")
+
+// readError is the answer to a failed body read: a limit set by an outer
+// BodyLimit is still a 413, any other read error a 400.
+func readError(err error) error {
+	if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+		return errs.ErrRequestTooLarge
+	}
+
+	return errUnreadableBody
+}
+
 // StandardOptions tune Standard.
 type StandardOptions struct {
 	// MaxBody bounds the body (default 1 MiB).
@@ -60,7 +74,12 @@ func Standard(secret string, o StandardOptions) (func(http.Handler) http.Handler
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(io.LimitReader(r.Body, o.MaxBody+1))
-			if err != nil || int64(len(body)) > o.MaxBody {
+			if err != nil {
+				web.Fail(w, r, readError(err))
+				return
+			}
+
+			if int64(len(body)) > o.MaxBody {
 				web.Fail(w, r, errs.ErrRequestTooLarge)
 				return
 			}

@@ -3626,3 +3626,66 @@ func TestViteStaleHotFile(t *testing.T) {
 		}
 	}
 }
+
+// A form POST with _method=PUT is a PUT for routing, so the CrossOrigin
+// route that names PUT must see it as one: it takes the route's CORS and
+// CSRF decision, and a POST route's trust does not carry over to the
+// overridden method.
+func TestSecurity_A01_CrossOriginUsesOverriddenMethod(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		ok := func(c *web.Ctx) error { return c.String(http.StatusOK, "ok") }
+		r.Put("/widgets/{id}", ok)
+		r.Delete("/subscribe/{list}", ok)
+		r.Post("/subscribe/{list}", ok)
+
+		cors := middleware.CORSConfig{AllowedOrigins: []string{"https://site.example"}}
+
+		return DefaultMiddlewareWith(app, r, MiddlewareOptions{
+			Stateless: true,
+			CrossOrigin: []CrossOriginRoute{
+				{Pattern: "PUT /widgets/{id}", CORS: cors},
+				{Pattern: "POST /subscribe/{list}", CORS: cors},
+			},
+		})
+	}))
+
+	tests := []struct {
+		name, target, body, origin string
+		code                       int
+		allowOrigin                string
+	}{
+		{"override to the cross-origin method", "/widgets/1", "_method=PUT", "", http.StatusOK, "https://site.example"},
+		{"trust of POST does not cover DELETE", "/subscribe/x", "_method=DELETE", "", http.StatusForbidden, ""},
+		{
+			"unlisted origin is refused on the PUT route", "/widgets/1", "_method=PUT", "https://evil.example",
+			http.StatusForbidden, "",
+		},
+		{"plain POST route stays open", "/subscribe/x", "a=b", "", http.StatusOK, "https://site.example"},
+	}
+
+	for _, tt := range tests {
+		h, err := app.Handler()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, tt.target, strings.NewReader(tt.body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		origin := tt.origin
+		if origin == "" {
+			origin = "https://site.example"
+		}
+
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); rec.Code != tt.code || got != tt.allowOrigin {
+			t.Errorf("%s: %d allow-origin %q, want %d %q", tt.name, rec.Code, got, tt.code, tt.allowOrigin)
+		}
+	}
+}

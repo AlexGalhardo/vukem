@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/cache"
@@ -409,5 +410,45 @@ func TestDedupeReleasesTheEventWhenTheHandlerPanics(t *testing.T) {
 
 	if calls.Load() != 2 {
 		t.Errorf("handler calls = %d, want 2 (the event must be released after a panic)", calls.Load())
+	}
+}
+
+func TestSecurity_A08_WebhookReadErrorsAreNotBodyLimits(t *testing.T) {
+	t.Parallel()
+
+	std, err := Standard(base64.StdEncoding.EncodeToString(stdKey), StandardOptions{MaxBody: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	handlers := map[string]http.Handler{
+		"standard":   std(next),
+		"middleware": Middleware("X-Signature", secret, 8)(next),
+	}
+
+	for name, h := range handlers {
+		tests := []struct {
+			name string
+			body io.Reader
+			want int
+		}{
+			{"read error", iotest.ErrReader(io.ErrUnexpectedEOF), http.StatusBadRequest},
+			{"outer limit", iotest.ErrReader(&http.MaxBytesError{Limit: 4}), http.StatusRequestEntityTooLarge},
+			{"too large", strings.NewReader("0123456789"), http.StatusRequestEntityTooLarge},
+		}
+
+		for _, tt := range tests {
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/hook", tt.body)
+			h.ServeHTTP(
+				rec,
+				r.WithContext(web.WithServices(r.Context(), &web.Services{Log: slog.New(slog.DiscardHandler)})),
+			)
+
+			if rec.Code != tt.want {
+				t.Errorf("%s/%s = %d, want %d", name, tt.name, rec.Code, tt.want)
+			}
+		}
 	}
 }

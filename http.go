@@ -670,12 +670,14 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 		app.Log.Warn("cross-origin route", "pattern", c.Pattern, "origins", c.CORS.AllowedOrigins)
 	}
 
-	serverMW := serverMiddleware(app, secure, maintenanceConfig(app))
+	// MethodOverride runs before the cross-origin routes so they match the
+	// method the router will see, not the POST that carries _method.
+	serverMW := append(serverMiddleware(app, secure, maintenanceConfig(app)), middleware.MethodOverride())
 	if len(opts.CrossOrigin) > 0 {
 		serverMW = append(serverMW, crossMW)
 	}
 
-	r.UseServer(append(serverMW, middleware.MethodOverride())...)
+	r.UseServer(serverMW...)
 	useLocalePrefixes(app, r, opts.I18n)
 
 	r.Use(append(routerMW, csrfMW)...)

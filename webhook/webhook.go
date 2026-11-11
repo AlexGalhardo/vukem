@@ -100,7 +100,12 @@ func Middleware(header string, secret []byte, maxBody int64) func(http.Handler) 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
-			if err != nil || int64(len(body)) > maxBody {
+			if err != nil {
+				web.Fail(w, r, readError(err))
+				return
+			}
+
+			if int64(len(body)) > maxBody {
 				web.Fail(w, r, errs.ErrRequestTooLarge)
 				return
 			}

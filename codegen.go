@@ -49,8 +49,8 @@ func codegenRoutesCommand() Command {
 }
 
 type tsRoute struct {
-	name, method, path string
-	params             []string
+	name, method, path, host string
+	params                   []string
 }
 
 // routesTypeScript renders the named routes as a typed TypeScript module.
@@ -67,7 +67,10 @@ func routesTypeScript(infos []router.RouteInfo) string {
 			path = "/"
 		}
 
-		named = append(named, tsRoute{name: ri.Name, method: ri.Method, path: path, params: pathParams(path)})
+		named = append(
+			named,
+			tsRoute{name: ri.Name, method: ri.Method, path: path, host: ri.Host, params: pathParams(path)},
+		)
 	}
 
 	slices.SortFunc(named, func(a, b tsRoute) int { return strings.Compare(a.name, b.name) })
@@ -78,8 +81,13 @@ func routesTypeScript(infos []router.RouteInfo) string {
 	b.WriteString("export const routes = {\n")
 
 	for _, r := range named {
-		fmt.Fprintf(&b, "  %s: { method: %s, path: %s },\n",
-			strconv.Quote(r.name), strconv.Quote(r.method), strconv.Quote(r.path))
+		host := ""
+		if r.host != "" {
+			host = ", host: " + strconv.Quote(r.host)
+		}
+
+		fmt.Fprintf(&b, "  %s: { method: %s, path: %s%s },\n",
+			strconv.Quote(r.name), strconv.Quote(r.method), strconv.Quote(r.path), host)
 	}
 
 	b.WriteString("} as const;\n\n")
@@ -142,7 +150,8 @@ type RouteArgs<N extends RouteName> = RouteParams[N] extends Record<string, neve
 export function route<N extends RouteName>(name: N, ...args: RouteArgs<N>): string {
   const params = (args[0] ?? {}) as Record<string, RouteParam | undefined>;
   const query = args[1];
-  let url = (routes[name].path as string).replace(/\{([^}]+)\}/g, (_match: string, wild: string): string => {
+  const spec = routes[name] as { path: string; host?: string };
+  let url = spec.path.replace(/\{([^}]+)\}/g, (_match: string, wild: string): string => {
     const multi = wild.slice(-3) === "...";
     const key = multi ? wild.slice(0, -3) : wild;
     const value = params[key];
@@ -152,6 +161,9 @@ export function route<N extends RouteName>(name: N, ...args: RouteArgs<N>): stri
     const raw = String(value);
     return multi ? raw.split("/").map(encodeURIComponent).join("/") : encodeURIComponent(raw);
   });
+  if (spec.host) {
+    url = "//" + spec.host + url;
+  }
   if (query) {
     const parts: string[] = [];
     for (const key of Object.keys(query)) {
