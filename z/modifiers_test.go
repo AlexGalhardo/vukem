@@ -392,6 +392,8 @@ func TestModifierMatrix(t *testing.T) {
 		{"Union", Union[any](Int(), String()), nil},
 		{"DiscriminatedUnion", paymentSchema(), nil},
 		{"Tuple", pointSchema(), nil},
+		{"Codec", ttl(), nil},
+		{"Brand", Brand[userID](Int64()), nil},
 		{"Lazy", Lazy(func() Schema[string] { return String() }), nil},
 		// An upload has no default and no useful null or rewritten form.
 		{"File", File(), []string{"Nullable", "Default", "Transform"}},

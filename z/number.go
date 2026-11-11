@@ -92,6 +92,10 @@ func (s NumberSchema[N]) core(c *pctx, path string, in any) (N, bool) {
 
 	for _, chk := range s.checks {
 		chk(&s.o, c, path, v)
+
+		if c.bail && len(c.issues) > before {
+			break
+		}
 	}
 
 	return v, len(c.issues) == before

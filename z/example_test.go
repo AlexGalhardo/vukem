@@ -1,7 +1,9 @@
 package z_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/z"
 )
@@ -107,4 +109,59 @@ func ExamplePartial() {
 	// Output:
 	// Hello true <nil>
 	// The title field must be at least 3 characters.
+}
+
+type signUp struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func ExampleStructSchema_Confirmed() {
+	schema := z.Struct[signUp](z.Shape{
+		"email":    z.String().NormalizeEmail().Email(),
+		"password": z.String().Min(12),
+	}).Confirmed("password")
+
+	in := map[string]any{
+		"email": " Ada@Example.com ", "password": "correct horse battery",
+		"password_confirmation": "correct horse batery",
+	}
+
+	_, err := schema.Parse(in)
+	issues, _ := z.AsIssues(err)
+	fmt.Println(issues.First("password"))
+
+	in["password_confirmation"] = "correct horse battery"
+	got, err := schema.Parse(in)
+	fmt.Println(got.Email, err)
+	// Output:
+	// The password field confirmation does not match.
+	// ada@example.com <nil>
+}
+
+func ExampleCodec() {
+	ttl := z.Codec(z.Int64().Min(0),
+		func(sec int64) (time.Duration, error) { return time.Duration(sec) * time.Second, nil },
+		func(d time.Duration) (int64, error) { return int64(d / time.Second), nil },
+	)
+
+	d, err := ttl.Parse(json.Number("90"))
+	fmt.Println(d, err)
+
+	sec, err := ttl.Encode(d)
+	fmt.Println(sec, err)
+	// Output:
+	// 1m30s <nil>
+	// 90 <nil>
+}
+
+type userID int64
+
+func ExampleBrand() {
+	schema := z.Brand[userID](z.Int64().Positive())
+
+	id, err := schema.Parse("42")
+	fmt.Printf("%T %d %v\n", id, id, err)
+	// Output:
+	// z_test.userID 42 <nil>
 }

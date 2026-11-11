@@ -102,6 +102,10 @@ type TimeSchema struct {
 	layouts []string
 	after   *time.Time
 	before  *time.Time
+	// afterEq and beforeEq are the inclusive bounds; future and past compare
+	// with the clock at parse time.
+	afterEq, beforeEq      *time.Time
+	futureClock, pastClock func() time.Time
 }
 
 var defaultLayouts = []string{time.RFC3339Nano, "2006-01-02T15:04:05", "2006-01-02T15:04", time.DateOnly}
@@ -158,10 +162,34 @@ func (s TimeSchema) parseAny(c *pctx, path string, in any, present bool) (any, b
 			s.o.issue(c, path, CodeTooBig, "too_big.date", map[string]any{"max": s.before.Format(time.RFC3339)})
 		}
 
+		s.checkInclusive(c, path, t)
+
 		return t, len(c.issues) == before
 	})
 
 	return v, set, ok
+}
+
+// checkInclusive runs the bounds that accept their own instant and the ones
+// relative to the clock.
+func (s TimeSchema) checkInclusive(c *pctx, path string, t time.Time) {
+	if s.afterEq != nil && t.Before(*s.afterEq) {
+		s.o.issue(c, path, CodeTooSmall, "too_small.date_inclusive",
+			map[string]any{"min": s.afterEq.Format(time.RFC3339)})
+	}
+
+	if s.beforeEq != nil && t.After(*s.beforeEq) {
+		s.o.issue(c, path, CodeTooBig, "too_big.date_inclusive",
+			map[string]any{"max": s.beforeEq.Format(time.RFC3339)})
+	}
+
+	if s.futureClock != nil && !t.After(s.futureClock()) {
+		s.o.issue(c, path, CodeTooSmall, "date.future", nil)
+	}
+
+	if s.pastClock != nil && !t.Before(s.pastClock()) {
+		s.o.issue(c, path, CodeTooBig, "date.past", nil)
+	}
 }
 
 // Layouts replaces the accepted layouts.
@@ -177,6 +205,59 @@ func (s TimeSchema) After(t time.Time) TimeSchema { s.o = s.o.clone(); s.after =
 
 // Before requires the time to be strictly before t.
 func (s TimeSchema) Before(t time.Time) TimeSchema { s.o = s.o.clone(); s.before = &t; return s }
+
+// AfterOrEqual requires the time to be t or later.
+func (s TimeSchema) AfterOrEqual(t time.Time) TimeSchema {
+	s.o = s.o.clone()
+	s.afterEq = &t
+
+	return s
+}
+
+// BeforeOrEqual requires the time to be t or earlier.
+func (s TimeSchema) BeforeOrEqual(t time.Time) TimeSchema {
+	s.o = s.o.clone()
+	s.beforeEq = &t
+
+	return s
+}
+
+// Future requires the time to be after the moment of the parse. It reads
+// time.Now each time, so a schema built once stays correct; instants are
+// compared, so the zone of the input does not matter. Use
+// [TimeSchema.FutureAt] to control the clock, in a test or with a clock the
+// app injects.
+func (s TimeSchema) Future() TimeSchema { return s.FutureAt(time.Now) }
+
+// FutureAt is [TimeSchema.Future] with the clock now instead of time.Now. It
+// panics when now is nil.
+func (s TimeSchema) FutureAt(now func() time.Time) TimeSchema {
+	if now == nil {
+		panic("z: FutureAt needs a clock")
+	}
+
+	s.o = s.o.clone()
+	s.futureClock = now
+
+	return s
+}
+
+// Past requires the time to be before the moment of the parse, like
+// [TimeSchema.Future].
+func (s TimeSchema) Past() TimeSchema { return s.PastAt(time.Now) }
+
+// PastAt is [TimeSchema.Past] with the clock now instead of time.Now. It
+// panics when now is nil.
+func (s TimeSchema) PastAt(now func() time.Time) TimeSchema {
+	if now == nil {
+		panic("z: PastAt needs a clock")
+	}
+
+	s.o = s.o.clone()
+	s.pastClock = now
+
+	return s
+}
 
 // Optional allows the key to be absent.
 func (s TimeSchema) Optional() TimeSchema { s.o = s.o.withOptional(); return s }
