@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,6 +30,7 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/internal/suggest"
+	"github.com/AlexGalhardo/vukem/loadtest"
 	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/ssg"
@@ -212,6 +214,7 @@ func builtinCommands() []Command {
 			boostMCPCommand(),
 			ssgGenerateCommand(),
 			fuzzAPICommand(),
+			benchRunCommand(),
 		},
 		migrateCommands(),
 		seedCommands(),
@@ -1031,4 +1034,585 @@ func viewProblemsError(problems []viewcheck.Problem) error {
 	}
 
 	return fmt.Errorf("view:check: %d problem(s) in %d view(s)", n, len(files))
+}
+
+// BenchScenario is a load-test scenario of the application, run by bench:run.
+type BenchScenario struct {
+	loadtest.Scenario
+	// Setup runs once, after the migrations and before the load starts, to create the data the scenario needs
+	// (factories, tokens). It does not run with --url, which boots no database.
+	Setup func(ctx context.Context, app *App) error
+}
+
+// ExitError is an error that sets the process exit code: Main exits with Code and prints Err.
+type ExitError struct {
+	Code int
+	Err  error
+}
+
+func (e *ExitError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("exit status %d", e.Code)
+	}
+
+	return e.Err.Error()
+}
+
+func (e *ExitError) Unwrap() error { return e.Err }
+
+// Exit codes of bench:run beyond the usual 0, 1 and 2.
+const (
+	exitThresholds = 3
+	exitRegression = 4
+)
+
+// exitCodeOf maps an error from RunMain to the exit code of Main.
+func exitCodeOf(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	if errors.Is(err, errUsage) {
+		return 2
+	}
+
+	if ee, ok := errors.AsType[*ExitError](err); ok && ee.Code > 0 {
+		return ee.Code
+	}
+
+	return 1
+}
+
+const benchRunName = "bench:run"
+
+// benchList collects every occurrence of a repeatable flag.
+type benchList []string
+
+func (l *benchList) String() string { return strings.Join(*l, ", ") }
+
+func (l *benchList) Set(v string) error {
+	*l = append(*l, v)
+
+	return nil
+}
+
+// benchFlags are the flags of bench:run.
+type benchFlags struct {
+	scenario, allowRemote, threshold  benchList
+	model, rate, stages, url          string
+	databaseURL, save, compare, toler string
+	users, maxWorkers                 int
+	duration, timeout                 time.Duration
+	seed, asJSON, list, yes           bool
+}
+
+func defineBenchFlags(set *flag.FlagSet, f *benchFlags) {
+	set.Var(&f.scenario, "scenario", "run only this scenario (repeatable)")
+	set.StringVar(&f.model, "model", "closed", "open or closed")
+	set.IntVar(&f.users, "c", 10, "closed model: virtual users")
+	set.StringVar(&f.rate, "rate", "", "open model: iterations per second, such as 50/s")
+	set.DurationVar(&f.duration, "d", 30*time.Second, "duration (max 1h)")
+	set.StringVar(&f.stages, "stages", "", `ramp, such as "30s:50,2m:50,30s:0" (replaces -c, --rate and -d)`)
+	set.IntVar(&f.maxWorkers, "max-workers", 1000, "open model worker cap")
+	set.DurationVar(&f.timeout, "timeout", 30*time.Second, "per-request timeout")
+	set.StringVar(&f.url, "url", "", "attack an already running app instead of booting one")
+	set.Var(&f.allowRemote, "allow-remote", "allow a non-loopback host for --url (repeatable)")
+	set.StringVar(
+		&f.databaseURL,
+		"database-url",
+		"",
+		"database for the in-process app (default: a temporary SQLite file)",
+	)
+	set.BoolVar(&f.seed, "seed", false, "run the registered seeders after migrating")
+	set.BoolVar(&f.yes, "yes", false, "confirm a --database-url that is not a temporary SQLite file")
+	set.Var(&f.threshold, "threshold", "fail (exit 3) unless the expression holds, such as p95<200ms (repeatable)")
+	set.StringVar(&f.save, "save", "", "write the JSON summary to a file")
+	set.StringVar(&f.compare, "compare", "", "fail (exit 4) on regression against a saved summary")
+	set.StringVar(&f.toler, "tolerance", "10%", "allowed regression for --compare")
+	set.BoolVar(&f.asJSON, "json", false, "print the JSON summary instead of text")
+	set.BoolVar(&f.list, "list", false, "list the registered scenarios and exit")
+}
+
+// benchRunCommand registers bench:run for list, help and the docs. RunMain runs it before the app is built, because
+// it must build the app itself, on its own database.
+func benchRunCommand() Command {
+	return CommandFunc{
+		CommandName: benchRunName,
+		Desc:        "Load test the app's scenarios against an in-process copy on a temporary database",
+		DefineFlags: func(set *flag.FlagSet) { defineBenchFlags(set, &benchFlags{}) },
+		Fn: func(context.Context, *App, []string) error {
+			return errors.New("bench:run builds its own app: run it through the app binary")
+		},
+	}
+}
+
+// benchPlan is what the flags ask for, validated.
+type benchPlan struct {
+	stages     []loadtest.Stage
+	open       bool
+	rate       loadtest.Rate
+	thresholds []loadtest.Threshold
+	tolerance  loadtest.Tolerance
+}
+
+// benchUsage prints a usage message and returns errUsage: Main prints nothing for a usage error.
+func benchUsage(w io.Writer, format string, args ...any) error {
+	fmt.Fprintf(w, "%s: %s\n", benchRunName, fmt.Sprintf(format, args...))
+
+	return errUsage
+}
+
+// parseBenchFlags parses and validates the flags of bench:run.
+func parseBenchFlags(args []string, errw io.Writer) (benchFlags, benchPlan, error) {
+	var (
+		f    benchFlags
+		plan benchPlan
+	)
+
+	set := flag.NewFlagSet(benchRunName, flag.ContinueOnError)
+	set.SetOutput(errw)
+	defineBenchFlags(set, &f)
+
+	if err := set.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return f, plan, flag.ErrHelp
+		}
+
+		return f, plan, errUsage
+	}
+
+	if set.NArg() > 0 {
+		return f, plan, benchUsage(errw, "unexpected argument %q", set.Arg(0))
+	}
+
+	explicit := map[string]bool{}
+	set.Visit(func(fl *flag.Flag) { explicit[fl.Name] = true })
+
+	plan, err := planBench(&f, explicit)
+	if err != nil {
+		return f, plan, benchUsage(errw, "%v", err)
+	}
+
+	return f, plan, nil
+}
+
+func planBench(f *benchFlags, explicit map[string]bool) (benchPlan, error) {
+	var (
+		plan benchPlan
+		err  error
+	)
+
+	if f.model != "open" && f.model != "closed" {
+		return plan, fmt.Errorf("--model must be open or closed, not %q", f.model)
+	}
+
+	if f.rate != "" {
+		if explicit["c"] || explicit["stages"] {
+			return plan, errors.New("--rate (open model) cannot be combined with -c or --stages")
+		}
+
+		if explicit["model"] && f.model == "closed" {
+			return plan, errors.New("--rate is the open model; --model closed contradicts it")
+		}
+
+		if plan.rate, err = loadtest.ParseRate(f.rate); err != nil {
+			return plan, err
+		}
+
+		plan.open = true
+	}
+
+	if f.stages != "" {
+		if explicit["c"] || explicit["d"] {
+			return plan, errors.New("--stages replaces -c and -d")
+		}
+
+		if plan.stages, err = loadtest.ParseStages(f.stages); err != nil {
+			return plan, err
+		}
+
+		plan.open = f.model == "open"
+	}
+
+	if f.model == "open" && f.rate == "" && f.stages == "" {
+		return plan, errors.New("--model open needs --rate or --stages")
+	}
+
+	if f.url != "" && (f.databaseURL != "" || f.seed) {
+		return plan, errors.New("--url boots no database: --database-url and --seed do not apply")
+	}
+
+	if plan.thresholds, err = parseBenchThresholds(f.threshold); err != nil {
+		return plan, err
+	}
+
+	plan.tolerance, err = loadtest.ParseTolerance(f.toler)
+
+	return plan, err
+}
+
+func parseBenchThresholds(exprs []string) ([]loadtest.Threshold, error) {
+	var ts []loadtest.Threshold
+
+	for _, e := range exprs {
+		t, err := loadtest.ParseThreshold(e)
+		if err != nil {
+			return nil, err
+		}
+
+		ts = append(ts, t)
+	}
+
+	return ts, nil
+}
+
+// benchEnv wraps getenv for the bench app, built to serve a load and nothing else: the keys of over win, the rest come
+// from getenv. The app runs as APP_ENV=test on its own database, with cookie sessions, the array mailer, and the cache,
+// the queue and the rate limiter in memory (sync for the queue); the URLs and credentials of the services behind them
+// (Redis, S3, Telegram, the mail APIs) are emptied, so the load can neither reach nor fill a real one. The numbers
+// still differ from production.
+func benchEnv(getenv func(string) (string, bool), databaseURL string) func(string) (string, bool) {
+	over := map[string]string{
+		"APP_ENV":          "test",
+		"DATABASE_URL":     databaseURL,
+		"SESSION_DRIVER":   "cookie",
+		"MAIL_MAILER":      "array",
+		"CACHE_STORE":      "memory",
+		"QUEUE_CONNECTION": "sync",
+		"RATE_LIMIT_STORE": "memory",
+	}
+
+	for _, k := range []string{
+		"REDIS_URL", "S3_BUCKET", "S3_ENDPOINT", "TELEGRAM_BOT_TOKEN", "RESEND_API_KEY", "MAILTRAP_API_TOKEN",
+	} {
+		over[k] = ""
+	}
+
+	// Request logging for every request of the load would drown the report and slow the run; an explicit LOG_LEVEL wins.
+	if _, ok := getenv("LOG_LEVEL"); !ok {
+		over["LOG_LEVEL"] = "error"
+	}
+
+	return withAppKey(func(k string) (string, bool) {
+		if v, ok := over[k]; ok {
+			return v, true
+		}
+
+		return getenv(k)
+	})
+}
+
+// withAppKey supplies a generated APP_KEY when there is none: the app needs one to build, and a bench app that
+// serves nobody else has no use for a real one.
+func withAppKey(getenv func(string) (string, bool)) func(string) (string, bool) {
+	key := ""
+
+	if _, ok := getenv("APP_KEY"); !ok {
+		key = config.GenerateKey()
+	}
+
+	return func(k string) (string, bool) {
+		if k == "APP_KEY" && key != "" {
+			return key, true
+		}
+
+		return getenv(k)
+	}
+}
+
+// runBench is bench:run. It is resolved by RunMain before build, so it can build the app on its own environment.
+func runBench(
+	ctx context.Context, args []string, getenv func(string) (string, bool), build BuildFunc, opts []Option,
+) error {
+	o := options{stdout: os.Stdout, stderr: os.Stderr}
+	for _, opt := range opts {
+		if err := opt(&o); err != nil {
+			return err
+		}
+	}
+
+	f, plan, err := parseBenchFlags(args, o.stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// --list and --url need the routes and the scenarios only: a warmup app registers them and boots nothing.
+	if f.list || f.url != "" {
+		return benchWarmup(ctx, &f, plan, getenv, build, opts)
+	}
+
+	if f.databaseURL != "" && productionEnv(os.DirFS("."), getenv) {
+		return benchUsage(o.stderr, "--database-url is refused when APP_ENV is production")
+	}
+
+	if f.databaseURL != "" && !f.yes && databaseNeedsConfirmation(f.databaseURL) {
+		return benchUsage(
+			o.stderr,
+			"--database-url is not a SQLite file in the temporary directory: it will be migrated and written to; pass --yes to confirm",
+		)
+	}
+
+	return benchInProcess(ctx, &f, plan, getenv, build, opts)
+}
+
+// productionEnv reports APP_ENV=production, from the process environment or the .env files. An environment that
+// cannot be read counts as production: the answer guards a database the run must not touch.
+func productionEnv(fsys fs.FS, getenv func(string) (string, bool)) bool {
+	src, err := config.LoadSource(fsys, getenv, nil)
+
+	return err != nil || src.Env() == config.Production
+}
+
+// databaseNeedsConfirmation reports a --database-url that is not a SQLite file in the temporary directory: such a
+// database is migrated and written to, so the operator must say yes.
+func databaseNeedsConfirmation(raw string) bool {
+	if !isSQLiteURL(raw) || isMemorySQLite(raw) {
+		return true
+	}
+
+	path, memory := sqlitePathOf(raw)
+	if memory || !filepath.IsAbs(path) {
+		return true
+	}
+
+	rel, err := filepath.Rel(os.TempDir(), filepath.Clean(path))
+
+	return err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func benchWarmup(
+	ctx context.Context,
+	f *benchFlags,
+	plan benchPlan,
+	getenv func(string) (string, bool),
+	build BuildFunc,
+	opts []Option,
+) error {
+	app, err := build(
+		append(
+			[]Option{WithEnv(os.DirFS("."), benchEnv(getenv, "file::memory:")), WithKind(KindWarmup), WithoutHTTP()},
+			opts...)...)
+	if err != nil {
+		return err
+	}
+
+	if f.list {
+		return listBenchScenarios(app)
+	}
+
+	return runBenchLoad(ctx, app, f, plan, f.url)
+}
+
+func listBenchScenarios(app *App) error {
+	if len(app.benchScenarios) == 0 {
+		return errNoBenchScenarios
+	}
+
+	for _, s := range app.benchScenarios {
+		fmt.Fprintf(app.stdout, "%s  %d\n", s.Name, max(s.Weight, 1))
+	}
+
+	return nil
+}
+
+// checkBenchSelection fails, before anything boots, when there are no scenarios or --scenario names one that is
+// not registered.
+func checkBenchSelection(app *App, f *benchFlags, errw io.Writer) error {
+	if len(app.benchScenarios) == 0 {
+		return errNoBenchScenarios
+	}
+
+	for _, name := range f.scenario {
+		if !slices.ContainsFunc(app.benchScenarios, func(s BenchScenario) bool { return s.Name == name }) {
+			return benchUsage(errw, "no scenario named %q (see --list)", name)
+		}
+	}
+
+	return nil
+}
+
+var errNoBenchScenarios = errors.New("bench:run: no scenarios registered (run vukem make:bench <Name>)")
+
+func benchInProcess(
+	ctx context.Context,
+	f *benchFlags,
+	plan benchPlan,
+	getenv func(string) (string, bool),
+	build BuildFunc,
+	opts []Option,
+) error {
+	dbURL := f.databaseURL
+
+	if dbURL == "" {
+		tmp, err := os.MkdirTemp("", "vukem-bench-")
+		if err != nil {
+			return err
+		}
+
+		// Registered first, so it runs last: the database file is closed by app.Shutdown before it is removed.
+		defer func() { _ = os.RemoveAll(tmp) }()
+
+		dbURL = "file:" + filepath.ToSlash(filepath.Join(tmp, "bench.sqlite"))
+	}
+
+	app, err := build(
+		append(
+			[]Option{WithEnv(os.DirFS("."), benchEnv(getenv, dbURL)), WithKind(KindConsole), WithoutHTTP()},
+			opts...)...)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = app.Shutdown(context.WithoutCancel(ctx)) }()
+
+	if err := checkBenchSelection(app, f, os.Stderr); err != nil {
+		return err
+	}
+
+	if err := bootBenchApp(ctx, app, f); err != nil {
+		return err
+	}
+
+	base, shutdown, err := serveBench(ctx, app)
+	if err != nil {
+		return err
+	}
+
+	defer shutdown()
+
+	return runBenchLoad(ctx, app, f, plan, base)
+}
+
+// bootBenchApp boots the app, migrates its database, seeds it when asked, and runs the Setup of the selected
+// scenarios, in registration order.
+func bootBenchApp(ctx context.Context, app *App, f *benchFlags) error {
+	if err := app.Boot(ctx); err != nil {
+		return err
+	}
+
+	m, err := app.Migrator()
+	if err != nil {
+		return err
+	}
+
+	if _, err := m.Up(ctx); err != nil {
+		return fmt.Errorf("bench:run: migrate: %w", err)
+	}
+
+	if f.seed {
+		if err := app.Seed(ctx); err != nil {
+			return fmt.Errorf("bench:run: seed: %w", err)
+		}
+	}
+
+	for _, s := range app.benchScenarios {
+		if len(f.scenario) > 0 && !slices.Contains(f.scenario, s.Name) {
+			continue
+		}
+
+		if s.Setup == nil {
+			continue
+		}
+
+		if err := s.Setup(ctx, app); err != nil {
+			return fmt.Errorf("bench:run: setup of %q: %w", s.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// serveBench serves the app on a free loopback port with a server of its own, and returns its base URL.
+func serveBench(ctx context.Context, app *App) (string, func(), error) {
+	h, err := app.Handler()
+	if err != nil {
+		return "", nil, err
+	}
+
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", nil, err
+	}
+
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
+
+	go func() { _ = srv.Serve(ln) }()
+
+	shutdown := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_ = srv.Shutdown(ctx)
+	}
+
+	return "http://" + ln.Addr().String(), shutdown, nil
+}
+
+// runBenchLoad runs the scenarios against base and applies the gates.
+func runBenchLoad(ctx context.Context, app *App, f *benchFlags, plan benchPlan, base string) error {
+	if len(app.benchScenarios) == 0 {
+		return errNoBenchScenarios
+	}
+
+	scenarios := make([]loadtest.Scenario, len(app.benchScenarios))
+	for i, s := range app.benchScenarios {
+		scenarios[i] = s.Scenario
+	}
+
+	var cfg loadtest.ScenarioConfig
+
+	cfg.Config = loadtest.Config{
+		Concurrency: f.users, Duration: f.duration, MaxWorkers: f.maxWorkers, Timeout: f.timeout,
+		AllowRemote: f.allowRemote, UserAgent: "vukem-bench",
+	}
+	cfg.BaseURL, cfg.Route, cfg.Stages, cfg.Open, cfg.Only = base, app.Router.URL, plan.stages, plan.open, f.scenario
+
+	if plan.rate.Freq > 0 {
+		cfg.Rate, cfg.Concurrency = plan.rate, 0
+	}
+
+	r, err := loadtest.StartScenarios(ctx, cfg, scenarios)
+	if err != nil {
+		return benchUsage(app.stderr, "%v", err)
+	}
+
+	var m loadtest.Metrics
+
+	for res := range r.Results() {
+		m.Add(res)
+	}
+
+	return finishBench(app, f, plan, r.Summarize(&m))
+}
+
+// finishBench prints the report, then applies --save, the thresholds and --compare. A run that was interrupted prints
+// what it has and fails with exit code 1, without judging a partial result.
+func finishBench(app *App, f *benchFlags, plan benchPlan, sum loadtest.Summary) error {
+	emit := loadtest.WriteText
+	if f.asJSON {
+		emit = loadtest.WriteJSON
+	}
+
+	if err := emit(app.stdout, sum); err != nil {
+		return err
+	}
+
+	if sum.Interrupted {
+		return errors.New("bench:run: interrupted")
+	}
+
+	gate := loadtest.Gate{Thresholds: plan.thresholds, Save: f.save, Compare: f.compare, Tolerance: plan.tolerance}
+
+	switch err := gate.Apply(app.stderr, sum); {
+	case errors.Is(err, loadtest.ErrThresholds):
+		return &ExitError{Code: exitThresholds, Err: errors.New("bench:run: thresholds failed")}
+	case errors.Is(err, loadtest.ErrRegression):
+		return &ExitError{Code: exitRegression, Err: errors.New("bench:run: regression against the baseline")}
+	default:
+		return err
+	}
 }

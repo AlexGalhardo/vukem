@@ -89,6 +89,11 @@ func WithoutHTTP() Option {
 	return func(o *options) error { o.noHTTP = true; return nil }
 }
 
+// WithBench registers the load-test scenarios run by the bench:run command.
+func WithBench(scenarios ...BenchScenario) Option {
+	return func(o *options) error { o.benchScenarios = append(o.benchScenarios, scenarios...); return nil }
+}
+
 // WithSource uses an already resolved configuration source.
 func WithSource(src *config.Source) Option {
 	return func(o *options) error { o.source = src; return nil }

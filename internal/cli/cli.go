@@ -70,7 +70,12 @@ func commands() []command {
 		{"serve", "", "Run the app (HTTP, scheduler) and restart it when Go files change", serveCmd},
 		{"build", "", "Build assets (Vite) and a production binary in bin/", buildCmd},
 		{"version", "", "Print the vukem version", nil},
-		{"bench", "<url>", "Load test a URL and report throughput and latency percentiles", benchCmd},
+		{
+			"bench",
+			"[url]",
+			"Load test a URL or the project's scenarios (throughput, latency percentiles, thresholds)",
+			benchCmd,
+		},
 		{"doctor", "", "Report the optional tools the project uses (Betterleaks) and project checks", doctorCmd},
 		{
 			"upgrade",
@@ -100,6 +105,7 @@ func commands() []command {
 		{"make:middleware", "<Name>", "Create an HTTP middleware", makeMiddleware},
 		{"make:request", "<Name>", "Create a validated request struct", makeRequest},
 		{"make:command", "<Name>", "Create an app command and register it", makeCommand},
+		{"make:bench", "<Name>", "Create a load-test scenario and register it", makeBench},
 		{"make:provider", "<Name>", "Create a provider and register it", makeProvider},
 		{"make:resource", "<Name>", "Create an API resource (JSON transformer) for a model", makeResource},
 		{"make:factory", "<Name>", "Create a model factory (fake data for tests and seeders)", makeFactory},
@@ -324,6 +330,10 @@ func version(env *Env) string {
 }
 
 func exitCode(err error) (int, bool) {
+	if ce, ok := errors.AsType[*codeError](err); ok {
+		return ce.code, true
+	}
+
 	if ee, ok := errors.AsType[*exec.ExitError](err); ok && ee.ExitCode() > 0 {
 		return ee.ExitCode(), true
 	}

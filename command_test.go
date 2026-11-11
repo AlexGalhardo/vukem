@@ -13,11 +13,15 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/loadtest"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/ssg"
 	"github.com/AlexGalhardo/vukem/view"
@@ -579,5 +583,577 @@ func TestViewCheckMissingTargetIsAWarning(t *testing.T) {
 	if _, err := runViewCheck(t, `{{define "content"}}<a hx-target="#nope">{{.Title}}</a>{{end}}`,
 		[]view.Decl{view.Of[viewCheckData]("home").Decl()}, "-strict"); err == nil {
 		t.Error("view:check -strict = nil error, want the missing target to fail")
+	}
+}
+
+type benchEnvCapture struct {
+	mu          sync.Mutex
+	databaseURL string
+	ran         atomic.Int64
+	setups      atomic.Int64
+}
+
+func (c *benchEnvCapture) scenario(name string, setupErr error) BenchScenario {
+	var b BenchScenario
+
+	b.Scenario = loadtest.Scenario{Name: name, Do: func(ctx context.Context, cl *loadtest.Client) error {
+		c.ran.Add(1)
+
+		_, err := cl.Get(ctx, "/ping")
+
+		return err
+	}}
+	b.Setup = func(_ context.Context, app *App) error {
+		c.setups.Add(1)
+
+		cfg, err := configLoad[DatabaseConfig](app)
+		if err != nil {
+			return err
+		}
+
+		c.mu.Lock()
+		c.databaseURL = cfg.URL
+		c.mu.Unlock()
+
+		return setupErr
+	}
+
+	return b
+}
+
+func (c *benchEnvCapture) tempDir() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return filepath.Dir(strings.TrimPrefix(c.databaseURL, "file:"))
+}
+
+// runBenchMain runs bench:run through RunMain with an app that has a /ping route and the given scenarios.
+func runBenchMain(
+	t *testing.T,
+	env map[string]string,
+	scenarios []BenchScenario,
+	args ...string,
+) (string, string, error) {
+	t.Helper()
+
+	var out, errOut bytes.Buffer
+
+	getenv := func(k string) (string, bool) {
+		if v, ok := env[k]; ok {
+			return v, true
+		}
+
+		v, ok := map[string]string{"APP_KEY": testKey}[k]
+
+		return v, ok
+	}
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts,
+			WithLogger(discardLogger()), WithStdout(&out), WithStderr(&errOut), WithBench(scenarios...),
+			WithRoutes(func(r *router.Router, _ *App) error {
+				r.Get("/ping", func(c *web.Ctx) error { return c.String(http.StatusOK, "pong") }).Name("ping")
+
+				return nil
+			}),
+		)...)
+	}
+
+	err := RunMain(t.Context(), append([]string{"app", "bench:run"}, args...), getenv, build)
+
+	return out.String(), errOut.String(), err
+}
+
+func TestBenchRunInProcess(t *testing.T) {
+	t.Parallel()
+
+	var c benchEnvCapture
+
+	out, errOut, err := runBenchMain(t, nil, []BenchScenario{c.scenario("ping", nil)}, "-d", "1s", "-c", "2")
+	if err != nil {
+		t.Fatalf("err = %v, stderr %q", err, errOut)
+	}
+
+	if c.ran.Load() == 0 || c.setups.Load() != 1 || !strings.Contains(out, "http_reqs") ||
+		!strings.Contains(out, "ping") {
+		t.Fatalf("iterations=%d setups=%d out=%q", c.ran.Load(), c.setups.Load(), out)
+	}
+}
+
+func TestSecurity_A05_BenchRunNeverUsesConfiguredDatabase(t *testing.T) {
+	t.Parallel()
+
+	configured := filepath.Join(t.TempDir(), "real.sqlite")
+	if err := os.WriteFile(configured, []byte("not a real database, just bytes that must stay"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := os.Stat(configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var c benchEnvCapture
+
+	env := map[string]string{"DATABASE_URL": "file:" + configured, "APP_ENV": "production"}
+
+	if _, errOut, err := runBenchMain(
+		t,
+		env,
+		[]BenchScenario{c.scenario("ping", nil)},
+		"-d",
+		"500ms",
+		"-c",
+		"1",
+	); err != nil {
+		t.Fatalf("err = %v, stderr %q", err, errOut)
+	}
+
+	after, err := os.Stat(configured)
+	if err != nil || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("the configured database was touched: %v %v %v", before, after, err)
+	}
+
+	c.mu.Lock()
+	seen := c.databaseURL
+	c.mu.Unlock()
+
+	if seen == "file:"+configured || !strings.HasPrefix(seen, "file:"+filepath.ToSlash(os.TempDir())) {
+		t.Fatalf("the app saw DATABASE_URL %q, want a file in a new temporary directory", seen)
+	}
+}
+
+func TestBenchRunRemovesTempDir(t *testing.T) {
+	t.Parallel()
+
+	for _, setupErr := range []error{nil, errors.New("setup failed")} {
+		var c benchEnvCapture
+
+		_, _, err := runBenchMain(t, nil, []BenchScenario{c.scenario("ping", setupErr)}, "-d", "300ms", "-c", "1")
+		if (err != nil) != (setupErr != nil) {
+			t.Fatalf("setup error %v: RunMain err = %v", setupErr, err)
+		}
+
+		dir := c.tempDir()
+		if dir == "." || dir == "" {
+			t.Fatalf("no temporary directory was seen (%q)", c.databaseURL)
+		}
+
+		if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+			t.Fatalf("the temporary directory %s survived (setup error %v): %v", dir, setupErr, statErr)
+		}
+	}
+}
+
+func TestBenchRunThresholdExit3(t *testing.T) {
+	t.Parallel()
+
+	var c benchEnvCapture
+
+	_, errOut, err := runBenchMain(
+		t,
+		nil,
+		[]BenchScenario{c.scenario("ping", nil)},
+		"-d",
+		"300ms",
+		"-c",
+		"1",
+		"--threshold",
+		"p95<1ns",
+	)
+
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != 3 || !strings.Contains(errOut, "FAIL") {
+		t.Fatalf("err = %v, stderr %q, want an ExitError with code 3 and the table", err, errOut)
+	}
+}
+
+func TestBenchRunCompareExit4(t *testing.T) {
+	t.Parallel()
+
+	baseline := filepath.Join(t.TempDir(), "baseline.json")
+	fast := loadtest.Summary{
+		SchemaVersion:   1,
+		HTTPReqs:        10,
+		RPS:             1e9,
+		HTTPReqDuration: loadtest.Trend{P95: time.Nanosecond, P99: time.Nanosecond},
+	}
+
+	var b bytes.Buffer
+	if err := loadtest.WriteJSON(&b, fast); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(baseline, b.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var c benchEnvCapture
+
+	_, _, err := runBenchMain(
+		t,
+		nil,
+		[]BenchScenario{c.scenario("ping", nil)},
+		"-d",
+		"300ms",
+		"-c",
+		"1",
+		"--compare",
+		baseline,
+	)
+
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != 4 {
+		t.Fatalf("err = %v, want an ExitError with code 4", err)
+	}
+}
+
+func TestBenchRunSavesBaseline(t *testing.T) {
+	t.Parallel()
+
+	save := filepath.Join(t.TempDir(), "nested", "baseline.json")
+
+	var c benchEnvCapture
+
+	if _, _, err := runBenchMain(
+		t,
+		nil,
+		[]BenchScenario{c.scenario("ping", nil)},
+		"-d",
+		"300ms",
+		"-c",
+		"1",
+		"--save",
+		save,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(save)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer f.Close()
+
+	if s, err := loadtest.ReadSummary(f); err != nil || s.HTTPReqs == 0 {
+		t.Fatalf("saved summary = %+v, %v", s, err)
+	}
+}
+
+func TestBenchRunListsScenarios(t *testing.T) {
+	t.Parallel()
+
+	var c benchEnvCapture
+
+	out, _, err := runBenchMain(t, nil, []BenchScenario{c.scenario("alpha", nil), c.scenario("beta", nil)}, "--list")
+	if err != nil || !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") || c.setups.Load() != 0 {
+		t.Fatalf(
+			"out=%q err=%v setups=%d: --list must print the scenarios and start nothing",
+			out,
+			err,
+			c.setups.Load(),
+		)
+	}
+}
+
+func TestBenchRunNoScenarios(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := runBenchMain(t, nil, nil, "-d", "1s")
+	if err == nil || !strings.Contains(err.Error(), "no scenarios registered") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBenchRunUsageErrors(t *testing.T) {
+	t.Parallel()
+
+	var c benchEnvCapture
+
+	for _, args := range [][]string{
+		{"--bogus"},
+		{"--model", "sideways"},
+		{"--threshold", "nonsense"},
+		{"--stages", "x"},
+		{"-c", "2", "--rate", "5/s"},
+		{"--scenario", "missing"},
+		{"--tolerance", "lots"},
+	} {
+		_, _, err := runBenchMain(t, nil, []BenchScenario{c.scenario("ping", nil)}, args...)
+		if !errors.Is(err, errUsage) {
+			t.Errorf("bench:run %v = %v, want a usage error", args, err)
+		}
+	}
+}
+
+func TestSecurity_A05_BenchRunRefusesDatabaseURLInProduction(t *testing.T) {
+	t.Parallel()
+
+	var c benchEnvCapture
+
+	_, _, err := runBenchMain(t, map[string]string{"APP_ENV": "production"}, []BenchScenario{c.scenario("ping", nil)},
+		"--database-url", "file:somewhere.sqlite", "-d", "1s")
+	if !errors.Is(err, errUsage) || c.setups.Load() != 0 {
+		t.Fatalf("err = %v setups=%d, want a usage error before anything starts", err, c.setups.Load())
+	}
+}
+
+func TestBenchRunUsesAGivenDatabaseURL(t *testing.T) {
+	t.Parallel()
+
+	given := "file:" + filepath.Join(t.TempDir(), "disposable.sqlite")
+
+	var c benchEnvCapture
+
+	if _, errOut, err := runBenchMain(
+		t,
+		map[string]string{"APP_ENV": "test"},
+		[]BenchScenario{c.scenario("ping", nil)},
+		"--database-url",
+		given,
+		"-d",
+		"300ms",
+		"-c",
+		"1",
+	); err != nil {
+		t.Fatalf("err = %v, stderr %q", err, errOut)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.databaseURL != given {
+		t.Fatalf("the app saw %q, want the --database-url %q", c.databaseURL, given)
+	}
+}
+
+func TestExitCodeOf(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		err  error
+		want int
+	}{
+		{nil, 0},
+		{errors.New("boom"), 1},
+		{errUsage, 2},
+		{fmt.Errorf("wrapped: %w", errUsage), 2},
+		{&ExitError{Code: 3, Err: errors.New("thresholds")}, 3},
+		{fmt.Errorf("wrapped: %w", &ExitError{Code: 4}), 4},
+		{&ExitError{Code: 0, Err: errors.New("no code")}, 1},
+	}
+
+	for _, tt := range tests {
+		if got := exitCodeOf(tt.err); got != tt.want {
+			t.Errorf("exitCodeOf(%v) = %d, want %d", tt.err, got, tt.want)
+		}
+	}
+
+	e := &ExitError{Code: 3, Err: errors.New("inner")}
+	if e.Error() != "inner" || !errors.Is(e, e.Err) {
+		t.Fatalf("Error()=%q Unwrap mismatch", e.Error())
+	}
+
+	if (&ExitError{Code: 9}).Error() == "" {
+		t.Fatal("an ExitError without a cause still needs a message")
+	}
+}
+
+func TestSecurity_A05_BenchRunProductionCheckFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	getenv := func(string) (string, bool) { return "", false }
+
+	// An .env that cannot be read says nothing about the environment: it counts as production.
+	broken := fstest.MapFS{".env": &fstest.MapFile{Data: []byte("APP_ENV=\"never closed\nOTHER=1\n")}}
+	if !productionEnv(broken, getenv) {
+		t.Fatal("an unreadable .env was taken for a development environment")
+	}
+
+	local := fstest.MapFS{".env": &fstest.MapFile{Data: []byte("APP_ENV=local\n")}}
+	if productionEnv(local, getenv) {
+		t.Fatal("APP_ENV=local was taken for production")
+	}
+
+	prod := fstest.MapFS{".env": &fstest.MapFile{Data: []byte("APP_ENV=production\n")}}
+	if !productionEnv(prod, getenv) {
+		t.Fatal("APP_ENV=production in .env was not taken for production")
+	}
+}
+
+func TestSecurity_A05_BenchEnvIsolatesEveryService(t *testing.T) {
+	t.Parallel()
+
+	realEnv := map[string]string{
+		"APP_KEY":            testKey,
+		"APP_ENV":            "production",
+		"DATABASE_URL":       "postgres://prod/db",
+		"CACHE_STORE":        "redis",
+		"QUEUE_CONNECTION":   "redis",
+		"RATE_LIMIT_STORE":   "redis",
+		"REDIS_URL":          "redis://prod:6379",
+		"SESSION_DRIVER":     "database",
+		"MAIL_MAILER":        "smtp",
+		"S3_BUCKET":          "prod-bucket",
+		"S3_ENDPOINT":        "https://s3.example.com",
+		"TELEGRAM_BOT_TOKEN": "123:abc",
+		"RESEND_API_KEY":     "re_live",
+		"MAILTRAP_API_TOKEN": "mt_live",
+		"LOG_LEVEL":          "debug",
+	}
+
+	env := benchEnv(
+		func(k string) (string, bool) { v, ok := realEnv[k]; return v, ok },
+		"file:/tmp/vukem-bench-1/bench.sqlite",
+	)
+
+	want := map[string]string{
+		"APP_ENV":            "test",
+		"DATABASE_URL":       "file:/tmp/vukem-bench-1/bench.sqlite",
+		"CACHE_STORE":        "memory",
+		"QUEUE_CONNECTION":   "sync",
+		"RATE_LIMIT_STORE":   "memory",
+		"SESSION_DRIVER":     "cookie",
+		"MAIL_MAILER":        "array",
+		"REDIS_URL":          "",
+		"S3_BUCKET":          "",
+		"S3_ENDPOINT":        "",
+		"TELEGRAM_BOT_TOKEN": "",
+		"RESEND_API_KEY":     "",
+		"MAILTRAP_API_TOKEN": "",
+		"LOG_LEVEL":          "debug",
+		"APP_KEY":            testKey,
+	}
+
+	for k, w := range want {
+		if got, ok := env(k); !ok || got != w {
+			t.Errorf("%s = %q (set %v), want %q", k, got, ok, w)
+		}
+	}
+
+	// A key the run does not manage still comes from the real environment.
+	other := benchEnv(
+		func(k string) (string, bool) { return map[string]string{"CUSTOM": "x"}[k], k == "CUSTOM" },
+		"file:x",
+	)
+	if v, ok := other("CUSTOM"); !ok || v != "x" {
+		t.Errorf("CUSTOM = %q, %v", v, ok)
+	}
+
+	if v, ok := other("LOG_LEVEL"); !ok || v != "error" {
+		t.Errorf("LOG_LEVEL default = %q, %v, want error", v, ok)
+	}
+
+	if v, ok := other("APP_KEY"); !ok || v == "" {
+		t.Error("no APP_KEY was generated")
+	}
+}
+
+func TestBenchRunListsWithTheDisposableEnvironment(t *testing.T) {
+	t.Parallel()
+
+	var c benchEnvCapture
+
+	// --list builds the app too: with the real redis URL in the environment it must not even see it.
+	out, _, err := runBenchMain(
+		t,
+		map[string]string{"REDIS_URL": "redis://prod:6379", "DATABASE_URL": "postgres://prod/db"},
+		[]BenchScenario{c.scenario("alpha", nil)},
+		"--list",
+	)
+	if err != nil || !strings.Contains(out, "alpha") {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+}
+
+func TestBenchRunZeroTrafficFailsTheGate(t *testing.T) {
+	t.Parallel()
+
+	var b BenchScenario
+
+	b.Scenario = loadtest.Scenario{Name: "idle", Do: func(context.Context, *loadtest.Client) error { return nil }}
+
+	// A scenario that sends nothing: error_rate is 0 and would pass.
+	_, errOut, err := runBenchMain(t, nil, []BenchScenario{b}, "-d", "300ms", "-c", "1", "--threshold", "error_rate<1%")
+
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != 3 || !strings.Contains(errOut, "no request") {
+		t.Fatalf("err = %v, stderr %q, want exit 3 and a clear message", err, errOut)
+	}
+}
+
+func TestBenchRunSaveAndCompareTheSameFile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "baseline.json")
+
+	fast := loadtest.Summary{
+		SchemaVersion:   1,
+		HTTPReqs:        10,
+		RPS:             1e9,
+		HTTPReqDuration: loadtest.Trend{P95: time.Nanosecond, P99: time.Nanosecond},
+	}
+
+	var buf bytes.Buffer
+	if err := loadtest.WriteJSON(&buf, fast); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var c benchEnvCapture
+
+	_, _, err := runBenchMain(
+		t,
+		nil,
+		[]BenchScenario{c.scenario("ping", nil)},
+		"-d",
+		"300ms",
+		"-c",
+		"1",
+		"--save",
+		path,
+		"--compare",
+		path,
+	)
+
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != 4 {
+		t.Fatalf("err = %v, want a regression against the file as it was before --save", err)
+	}
+}
+
+func TestSecurity_A05_BenchRunDatabaseURLNeedsConfirmation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		url  string
+		need bool
+	}{
+		{"file:" + filepath.ToSlash(filepath.Join(os.TempDir(), "x", "bench.sqlite")), false},
+		{"sqlite:" + filepath.ToSlash(filepath.Join(os.TempDir(), "bench.sqlite")), false},
+		{"file:storage/database.sqlite", true},
+		{"file:../elsewhere.sqlite", true},
+		{"postgres://user:pw@db.internal/app", true},
+		{"mysql://root@localhost/app", true},
+		{"file::memory:", true},
+	}
+
+	for _, tt := range tests {
+		if got := databaseNeedsConfirmation(tt.url); got != tt.need {
+			t.Errorf("databaseNeedsConfirmation(%q) = %v, want %v", tt.url, got, tt.need)
+		}
+	}
+
+	var c benchEnvCapture
+
+	_, _, err := runBenchMain(t, map[string]string{"APP_ENV": "test"}, []BenchScenario{c.scenario("ping", nil)},
+		"--database-url", "postgres://user:pw@db.internal/app", "-d", "1s")
+	if !errors.Is(err, errUsage) || c.setups.Load() != 0 {
+		t.Fatalf("err = %v setups=%d, want a usage error before anything starts", err, c.setups.Load())
 	}
 }
