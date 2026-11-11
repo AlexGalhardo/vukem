@@ -517,7 +517,7 @@ func writeGenerated(cmd, target string, src []byte, check bool) error {
 		return fmt.Errorf("%s: %w", cmd, err)
 	}
 
-	if err := os.WriteFile(path, src, 0o600); err != nil { //nolint:gosec // G703: path from the developer's own -o flag
+	if err := os.WriteFile(path, src, 0o600); err != nil { //nolint:gosec,nolintlint // G703 (2.15+): own -o path
 		return fmt.Errorf("%s: %w", cmd, err)
 	}
 
