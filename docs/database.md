@@ -433,7 +433,7 @@ matched, modified, err := users.UpdateOne(ctx, filter, bson.D{{Key: "$set", Valu
 totals, err := mongo.Aggregate[Total](ctx, users, pipeline)
 ```
 
-`mongo.ErrNotFound` answers 404 when a handler returns it, like `orm.ErrNotFound` (it implements `HTTPStatus()`, which `errs.Status` reads), and wraps the official driver's `mongo.ErrNoDocuments`. `All` returns an empty slice, not nil, when nothing matches, so it encodes as JSON `[]`.
+`mongo.ErrNotFound` answers 404 when a handler returns it, like `orm.ErrNotFound` (it implements `HTTPStatus()`, which `errs.Status` reads), and wraps the official driver's `mongo.ErrNoDocuments`. `mongo.ErrDuplicate` answers 409 when a write violates a unique index. `All` returns an empty slice, not nil, when nothing matches, so it encodes as JSON `[]`.
 
 Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `DeleteMany` and `Raw()` for indexes and change streams. **Never pass decoded request JSON as a filter**: operators such as `$where` or `$ne` would come from the client; build filters from validated fields.
 
