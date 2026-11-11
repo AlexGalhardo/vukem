@@ -90,6 +90,7 @@ Checked at each release (the "Scorecard tracking" issue #5 was closed on 2026-10
 | `//nolint:gocognit` in non-test code | `GOCOGNIT_BUDGET` in `ci.yml` | never rising; 6 at `v1.0.0`: the GraphQL executor and schema tables in `contrib/graphql` (`introspection.go`, `schema.go` twice, `subscribe.go`, `values.go` twice), kept as recorded exceptions because splitting them reads worse; everything else is 0 |
 | Dependabot PRs open for more than 7 days | `gh pr list --author app/dependabot` | 0 |
 | Time from a `ci-failure` issue to its fix | `ci-failure` issues | < 7 days |
+| Time to first response on an issue | issues without `needs-triage` | < 7 days |
 | Doc and code drift | `web/docs_test.go`, `z/tags_rules_test.go`, `internal/cli/reference_docs_test.go`, `snippetcheck` | 0 failures; each new API table in `docs/` gets a test |
 
 ### Scorecard history
@@ -120,6 +121,33 @@ These live in GitHub settings or external services, not in the repository:
 - Private vulnerability reporting, Dependabot alerts and security updates, secret scanning and push protection (Settings → Code security).
 - The OpenSSF Best Practices badge (<https://www.bestpractices.dev>), whose answers point at this page, [CONTRIBUTING](../.github/CONTRIBUTING.md), [SECURITY.md](../.github/SECURITY.md), [testing.md](testing.md) and [tooling.md](tooling.md#release-process).
 - Two-factor authentication on the maintainer account.
+
+## Issues
+
+Issues arrive through four forms in `.github/ISSUE_TEMPLATE/`; blank issues are off, and security reports go to the [private advisory](https://github.com/AlexGalhardo/vukem/security/advisories/new), never to a public issue.
+
+- **Forms**: `bug_report.yml` (area, what happened, expected, minimal reproduction, versions), `feature_request.yml` (area, problem, proposal, alternatives, breaking or not), `docs.yml` (area, page, what is wrong) and `task.yml` (area, why, scope, done criteria, size; for planned work, audit findings and tech debt). All share the same skeleton: a required `area` dropdown, the type label, `needs-triage` and a duplicate check.
+- **Title**: `bug: …`, `feat: …`, `docs: …`, `task: …`, lowercase, no trailing period. The exception is `CI failure: <workflow>`, opened by `ci-failure.yml`, whose title is the deduplication key.
+- **Area**: the commit scopes of [tooling.md](tooling.md#conventional-commits) except `deps` and `release`, plus `other`.
+
+### Labels
+
+`.github/labels.txt` is the source of truth; `task labels:sync` creates or updates them with `gh` (it never deletes, so the Dependabot and GitHub default labels stay).
+
+| Axis | Labels |
+| --- | --- |
+| Type | `bug`, `enhancement`, `documentation`, `task`, `tracking`, `ci-failure` |
+| Area | `area:<scope>`, one per area |
+| Priority | `priority:p1` (before the next release), `priority:p2`, `priority:p3` |
+| State | `needs-triage`, `needs-repro`, `blocked`, `breaking` |
+
+### Triage and lifecycle
+
+- Every new issue carries `needs-triage`. Triage confirms the type, sets one `area:*` and one `priority:*`, and removes `needs-triage`; without a reproduction it gets `needs-repro` instead.
+- First response within 7 days. A `priority:p1` issue blocks the next release, like `ci-failure`.
+- The PR that resolves an issue has `Fixes #N` in the body and the matching commit type (`bug` → `fix`, `enhancement` → `feat`, `documentation` → `docs`, `task` → whichever fits) with the area as scope.
+- Closing without a fix needs a comment with the reason and one of `wontfix`, `duplicate` or `invalid`.
+- An agent only picks an issue that has neither `needs-triage` nor `blocked`; the done criteria of a `task` issue are the commands it runs before opening the PR.
 
 ## Downstream feedback queue
 
