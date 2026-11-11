@@ -377,6 +377,23 @@ err = rc.Publish(ctx, "posts", []byte(`{"id":42,"event":"updated"}`))
 - `Subscribe` waits until the subscription is confirmed, then delivers payloads on a channel with a buffer of 64. A slow reader holds up delivery; when `ctx` ends, the subscription closes and so does the channel.
 - Pub/sub is fire-and-forget: a server that is offline misses the message. Use the queue for work that must not be lost.
 
+### Presence
+
+`rc.PresenceStore(prefix, ttl)` is a `broadcast.PresenceStore` that keeps who is on `presence-*` channels in Redis, so the `here` list, `joining` and `leaving` of [broadcasting](/docs/digging-deeper/broadcasting) cover every server:
+
+```go
+b := broadcast.New(broadcast.Config{
+	Broker:   rc,                               // events between servers
+	Presence: rc.PresenceStore("presence:", 0), // global member list
+	User:     currentUser,
+})
+```
+
+- A connection that is not refreshed for `ttl` (0 means 60 seconds) is dropped, so the members of a server that died disappear by themselves. The broadcast server refreshes each connection every 20 seconds by default (`PresenceHeartbeat`); keep it under a third of `ttl`. No `leaving` is announced for an expired connection.
+- Redis Cluster is not supported: a channel uses three keys that one script updates together.
+- Expiry uses the clocks of your servers, so keep them in sync.
+- `Member.Info` comes back as plain JSON values (`map[string]any`): decode it, do not type-assert it.
+
 ## Configuration
 
 | Name | Where | Default | What it does |

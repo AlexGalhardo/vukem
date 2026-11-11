@@ -493,6 +493,7 @@ app, err := vukem.New(
 
 limiter := rc.RateLimiter("api:", 60, time.Minute) // ratelimit.Limiter shared by every server
 msgs, err := rc.Subscribe(ctx, "orders")          // pub/sub (SSE fan-out); rc.Publish(ctx, "orders", b)
+presence := rc.PresenceStore("presence:", 0)      // broadcast.Config.Presence: cluster-wide "here" lists
 ```
 
 - `os.Getenv` runs before `vukem.New` loads `.env` and `vukemtest` sources. `vukem.WithCacheStoreFunc`, `WithSessionStoreFunc` and `WithQueueDriverFunc` take `func(*App) (store, error)` instead, called on the first `app.Cache()` / `app.Sessions()` / `app.Queue()` after configuration loaded, so the URL comes from `app.Source.Get("REDIS_URL")`; the function's error is returned by that call. The last of the eager and lazy option wins.
@@ -500,6 +501,7 @@ msgs, err := rc.Subscribe(ctx, "orders")          // pub/sub (SSE fan-out); rc.P
 - Risk: a missing or misspelled `REDIS_URL` in production also falls back, to per-process stores. Return `ErrUseDefault` only when `!app.Config.IsProduction()` and an error otherwise, so production without Redis fails at boot.
 - The queue keeps jobs in sorted sets under `{queue}:` (one Cluster slot) and reserves them with one Lua script; abandoned jobs are taken over after their timeout plus one minute (each `Pop` records the reservation deadline it handed the worker, and `Ack`, `Release` and `Fail` act only while that is still the job's: a worker that lost its reservation gets `queue.ErrReservationLost` and its result is dropped), failed jobs support `queue:failed`, `queue:retry` and `queue:forget`.
 - `Flush` deletes only the store's prefix (`SCAN` + `DEL`), never the whole database, and refuses an empty prefix.
+- `rc.PresenceStore(prefix, ttl)` is a `broadcast.PresenceStore` (`broadcast.Config{Broker: rc, Presence: rc.PresenceStore("presence:", 0)}`): each presence channel keeps three keys (a hash of member JSON and a hash of member IDs, both by connection, and a sorted set of expiry times) that one Lua script updates atomically, so "first connection" and "last connection" are exact when instances race. A connection not touched for `ttl` (default 60 s; the broadcast heartbeat is 20 s, keep it under a third of `ttl`) is dropped, so the members of an instance that died disappear and nothing is announced for them. Redis Cluster is not supported (three keys per channel), and the expiry uses the app clocks, so keep them in sync (recommended). Each join and leave scans the channel's connections, fine for rooms up to a few thousand.
 - `Open` pings the server, so the app does not boot while Redis is down; a malformed URL always fails. `redis.OpenLazy(url)` only parses the URL and connects on first use, so the process starts and `rc.Ping` reports the outage in a readiness check (`app.AddHealthCheck("redis", rc.Ping)`). go-redis retries a failed command 3 times with backoff, so that `Ping` takes seconds while Redis is down; for a fast readiness answer set `?dial_timeout=1s&max_retries=-1` on the URL (or open a separate client with those options just for the check).
 - The driver passes the `cachetest` and `queuetest` conformance suites.
 
