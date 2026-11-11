@@ -132,10 +132,8 @@ func fromResolverError(ctx context.Context, err error, debug bool) *Error {
 			if debug {
 				out.Message = err.Error()
 			}
-		} else if he, ok := errors.AsType[*errs.HTTPError](err); ok {
-			out.Message = he.LocalizedText(ctx)
 		} else {
-			out.Message = clientMessage(err, status, debug)
+			out.Message = clientText(ctx, err, status, debug)
 		}
 	}
 
@@ -154,6 +152,35 @@ func isIssues(err error) bool {
 func isValidation(err error) bool {
 	_, ok := errors.AsType[*errs.ValidationError](err)
 	return ok
+}
+
+// clientText is the message of a non-5xx error that is not a *Error.
+func clientText(ctx context.Context, err error, status int, debug bool) string {
+	if he, ok := errors.AsType[*errs.HTTPError](err); ok {
+		return he.LocalizedText(ctx)
+	}
+
+	return clientMessage(err, status, debug)
+}
+
+// clientSafeMessage returns the text of err that may reach a client, under
+// the rules fromResolverError applies to resolvers, and false when err is
+// internal (a 5xx, which wins over any issues it wraps, or an unknown error).
+func clientSafeMessage(ctx context.Context, err error) (string, bool) {
+	if ge, ok := errors.AsType[*Error](err); ok {
+		return ge.Message, true
+	}
+
+	status := errs.Status(err)
+
+	switch {
+	case status >= http.StatusInternalServerError:
+		return "", false
+	case isIssues(err), isValidation(err):
+		return "Invalid input", true
+	}
+
+	return clientText(ctx, err, status, false), true
 }
 
 // clientMessage is the text of a non-HTTPError 4xx error. A leaf
