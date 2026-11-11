@@ -105,6 +105,16 @@ func DSN(rawURL string) (string, error) {
 		return "", fmt.Errorf("%w: %w", ErrInvalidURL, err)
 	}
 
+	// The ORM tells a missing row from a stale one by matched rows; with
+	// changed-rows counting an update that sets the same values looks like a
+	// missing row.
+	if !cfg.ClientFoundRows {
+		return "", fmt.Errorf(
+			"%w: clientFoundRows must be true (the default); remove clientFoundRows=false from the URL",
+			ErrInvalidURL,
+		)
+	}
+
 	cfg.User = u.User.Username()
 	cfg.Passwd, _ = u.User.Password()
 

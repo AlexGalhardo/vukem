@@ -164,3 +164,29 @@ func TestSecurity_A04_MySQLRemoteRequiresTLS(t *testing.T) {
 		}
 	}
 }
+
+// TestSecurity_A04_MySQLRefusesClientFoundRowsFalse: the ORM tells a missing
+// row from a stale one by matched rows; changed-rows counting would turn an
+// update that sets the same values into "not found".
+func TestSecurity_A04_MySQLRefusesClientFoundRowsFalse(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []string{"false", "0", "False"} {
+		_, err := DSN("mysql://app:hunter2@localhost/app?clientFoundRows=" + v)
+		if !errors.Is(err, ErrInvalidURL) || !strings.Contains(err.Error(), "clientFoundRows") ||
+			!strings.Contains(err.Error(), "remove") {
+			t.Errorf("clientFoundRows=%s: err = %v, want ErrInvalidURL telling how to fix it", v, err)
+		}
+
+		if err != nil && strings.Contains(err.Error(), "hunter2") {
+			t.Errorf("error leaks the password: %v", err)
+		}
+	}
+
+	if got, err := DSN(
+		"mysql://app@localhost/app?clientFoundRows=true",
+	); err != nil ||
+		!strings.Contains(got, "clientFoundRows=true") {
+		t.Errorf("explicit true = %q, %v", got, err)
+	}
+}
