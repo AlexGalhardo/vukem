@@ -210,7 +210,7 @@ Applies to **every** task:
   → verify: panic inside tx rolls back (test).
 - [x] **P.7.8** `orm.JSON[T]`, `sql.Null[T]` support.
   → verify: round-trip tests.
-- [x] **P.7.9** Schema builder (create/alter/drop, column types, modifiers, foreign keys, indexes, `Raw`) for SQLite (add/rename/drop column via native ALTER; full table rebuild deferred, see `shortcut:` in schema/schema.go).
+- [x] **P.7.9** Schema builder (create/alter/drop, column types, modifiers, foreign keys, indexes, `Raw`) for SQLite (add/rename/drop column via native ALTER; table rebuild came with `Schema.Rebuild`, see schema/rebuild.go).
   → verify: golden DDL tests + apply on SQLite.
 - [x] **P.7.10** Migration runner (batches, up/down, status, reset, fresh, step) with registry slice.
   → verify: tests for each command on a temp DB.

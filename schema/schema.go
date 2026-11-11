@@ -259,8 +259,8 @@ func (s *Schema) alterDrops(table string, t *Table) error {
 		}
 	}
 
-	// shortcut: SQLite can only DROP COLUMN for columns without indexes,
-	// UNIQUE or foreign keys; table rebuild support lands if needed (P.7.9).
+	// SQLite can only DROP COLUMN for columns without indexes, UNIQUE or
+	// foreign keys; Schema.Rebuild recreates the table when a drop needs it.
 	for _, col := range t.drops {
 		if err := s.exec("ALTER TABLE " + s.q(table) + " DROP COLUMN " + s.q(col)); err != nil {
 			return err
