@@ -423,3 +423,46 @@ func TestRouteListSummaryAndFilters(t *testing.T) {
 		})
 	}
 }
+
+func TestRunCommandSuggestsClosest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		wantExact  string // the whole output when set
+		wantPrefix string
+		wantList   bool
+	}{
+		{name: "migrte", wantExact: "unknown command \"migrte\" (did you mean \"migrate\"?)\n"},
+		{name: "route:lst", wantExact: "unknown command \"route:lst\" (did you mean \"route:list\"?)\n"},
+		{name: "zzzzzz", wantPrefix: `unknown command "zzzzzz"`, wantList: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+
+			app := newTestApp(t, WithStdout(&out))
+
+			err := runCommand(t.Context(), app, tt.name, nil)
+			if !errors.Is(err, errUsage) {
+				t.Fatalf("runCommand error = %v, want errUsage", err)
+			}
+
+			got := out.String()
+			if tt.wantExact != "" && got != tt.wantExact {
+				t.Errorf("output = %q, want %q", got, tt.wantExact)
+			}
+
+			if tt.wantPrefix != "" && !strings.HasPrefix(got, tt.wantPrefix) {
+				t.Errorf("output = %q, want prefix %q", got, tt.wantPrefix)
+			}
+
+			if listed := strings.Count(got, "\n") > 2; listed != tt.wantList {
+				t.Errorf("command list printed = %v, want %v:\n%s", listed, tt.wantList, got)
+			}
+		})
+	}
+}

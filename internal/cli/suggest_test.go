@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestSuggest(t *testing.T) {
+func TestSuggestCommand(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -25,8 +25,8 @@ func TestSuggest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := suggest(tt.name); got != tt.want {
-				t.Errorf("suggest(%q) = %q, want %q", tt.name, got, tt.want)
+			if got := suggestCommand(tt.name); got != tt.want {
+				t.Errorf("suggestCommand(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
 	}

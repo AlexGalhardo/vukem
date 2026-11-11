@@ -91,9 +91,11 @@ func WithSessionStoreFunc(fn func(app *App) (session.Store, error)) Option {
 // CacheConfig is read from CACHE_* variables.
 type CacheConfig struct {
 	// Store is "memory" (default) or "database" (table CACHE_TABLE).
-	Store  string `env:"CACHE_STORE"  default:"memory"`
+	Store string `env:"CACHE_STORE" default:"memory"`
+	// Prefix is added in front of every cache key; use a distinct one per app on a shared Redis or table.
 	Prefix string `env:"CACHE_PREFIX" default:"vukem:"`
-	Table  string `env:"CACHE_TABLE"  default:"cache"`
+	// Table is the table of the database cache store.
+	Table string `env:"CACHE_TABLE" default:"cache"`
 	// MaxEntries bounds the memory store.
 	MaxEntries int `env:"CACHE_MAX_ENTRIES" default:"10000"`
 }
@@ -257,19 +259,26 @@ type MailConfig struct {
 	// Mailer is "smtp", "resend", "mailtrap", "log" or "array" (tests). Production
 	// must choose explicitly; elsewhere it defaults to "log".
 	Mailer string `env:"MAIL_MAILER"`
-	From   string `env:"MAIL_FROM"   default:"Vukem <hello@example.com>"`
+	// From is the default sender when the envelope has no From.
+	From string `env:"MAIL_FROM" default:"Vukem <hello@example.com>"`
 	// ReplyTo is the Reply-To for envelopes that set none; empty sends none.
 	ReplyTo string `env:"MAIL_REPLY_TO"`
 
-	SMTPHost     string        `env:"SMTP_HOST"     default:"localhost"`
-	SMTPPort     int           `env:"SMTP_PORT"     default:"587"`
-	SMTPUsername string        `env:"SMTP_USERNAME"`
+	// SMTPHost is the SMTP server host.
+	SMTPHost string `env:"SMTP_HOST" default:"localhost"`
+	// SMTPPort is 587 (STARTTLS) or 465 (implicit TLS).
+	SMTPPort int `env:"SMTP_PORT" default:"587"`
+	// SMTPUsername is the login; empty skips authentication.
+	SMTPUsername string `env:"SMTP_USERNAME"`
+	// SMTPPassword is the SMTP password.
 	SMTPPassword config.Secret `env:"SMTP_PASSWORD"`
 	// SMTPInsecure allows servers without STARTTLS (local catchers only).
 	SMTPInsecure bool `env:"SMTP_INSECURE"`
 
+	// ResendAPIKey is required with the resend mailer.
 	ResendAPIKey config.Secret `env:"RESEND_API_KEY"`
 
+	// MailtrapAPIToken is required with the mailtrap mailer.
 	MailtrapAPIToken config.Secret `env:"MAILTRAP_API_TOKEN"`
 	// MailtrapInboxID > 0 sends to that Email Sandbox inbox instead of delivering.
 	MailtrapInboxID int64 `env:"MAILTRAP_INBOX_ID"`
@@ -460,11 +469,14 @@ func (a *App) mailTransport(cfg MailConfig) (mail.Transport, error) {
 
 // TelegramConfig is read from TELEGRAM_* variables.
 type TelegramConfig struct {
+	// BotToken is the bot token from BotFather; it is required.
 	BotToken config.Secret `env:"TELEGRAM_BOT_TOKEN"`
-	ChatID   string        `env:"TELEGRAM_CHAT_ID"`
+	// ChatID is the default chat; it is required.
+	ChatID string `env:"TELEGRAM_CHAT_ID"`
 	// MinLevel is debug, info, warn or error (default error).
 	MinLevel string `env:"TELEGRAM_MIN_LEVEL" default:"error"`
-	ThreadID int    `env:"TELEGRAM_THREAD_ID"`
+	// ThreadID is the forum topic id inside a group (message_thread_id).
+	ThreadID int `env:"TELEGRAM_THREAD_ID"`
 	// Log forwards log records at MinLevel and above to the chat (default
 	// true); false keeps app.Telegram for explicit Send and Contact only.
 	Log bool `env:"TELEGRAM_LOG" default:"true"`

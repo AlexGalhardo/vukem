@@ -196,6 +196,10 @@ func TestDoctorAppEnvCheck(t *testing.T) {
 		{"unset", "APP_KEY=\n", "", "warn"},
 		{"in .env", "APP_ENV=development\n", "", "ok"},
 		{"in the process environment", "APP_KEY=\n", "production", "ok"},
+		{"test", "APP_ENV=test\n", "", "ok"},
+		{"mixed case like the boot", "APP_ENV=Production\n", "", "ok"},
+		{"invalid in .env", "APP_ENV=staging\n", "", "fail"},
+		{"invalid in the process environment", "APP_KEY=\n", "prod", "fail"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -237,6 +241,59 @@ func TestDoctorAppEnvCheck(t *testing.T) {
 			if tt.status == "warn" && (got.Detail != "APP_ENV is not set: the app runs as production" ||
 				got.Fix != "add APP_ENV=development to .env for local work") {
 				t.Errorf("warning text = %+v", got)
+			}
+		})
+	}
+}
+
+func TestGoVersionCheck(t *testing.T) {
+	t.Parallel()
+
+	const goMod = "module x\n\ngo 1.27.4\n"
+
+	tests := []struct {
+		name, goMod, installed, status, detail string
+	}{
+		{
+			"older",
+			goMod,
+			"go version go1.26.2 windows/amd64",
+			"fail",
+			"go go1.26.2 is older than the go.mod minimum go1.27.4",
+		},
+		{"equal", goMod, "go version go1.27.4 linux/amd64", "ok", "go go1.27.4 satisfies go.mod go1.27.4"},
+		{"newer", goMod, "go version go1.28.0 darwin/arm64", "ok", "go go1.28.0 satisfies go.mod go1.27.4"},
+		{
+			"language version only",
+			"module x\n\ngo 1.27\n",
+			"go version go1.27.4 linux/amd64",
+			"ok",
+			"go go1.27.4 satisfies go.mod go1.27",
+		},
+		{
+			"go line with a comment",
+			"module x\n\ngo 1.27.4 // security fixes\n",
+			"go version go1.26.2 windows/amd64",
+			"fail",
+			"go go1.26.2 is older than the go.mod minimum go1.27.4",
+		},
+		{"no go line", "module x\n", "go version go1.27.4 linux/amd64", "ok", "no go.mod minimum"},
+		{"malformed go line", "module x\n\ngo banana\n", "go version go1.27.4 linux/amd64", "ok", "no go.mod minimum"},
+		{"no go.mod", "", "go version go1.27.4 linux/amd64", "ok", "no go.mod minimum"},
+		{"devel toolchain", goMod, "go version devel +abc123 linux/amd64", "ok", "go version not parsable"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := goVersionCheck(tt.goMod, tt.installed)
+			if got.Name != "go_version" || got.Status != tt.status || got.Detail != tt.detail {
+				t.Errorf("goVersionCheck() = %+v, want status %q detail %q", got, tt.status, tt.detail)
+			}
+
+			if tt.status == "fail" && got.Fix != "install Go go1.27.4 or newer from https://go.dev/dl/" {
+				t.Errorf("fix = %q", got.Fix)
 			}
 		})
 	}

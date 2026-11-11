@@ -83,6 +83,93 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 | `TLS_CERT_FILE`, `TLS_KEY_FILE` | — | PEM key pair: the app server serves HTTPS on `PORT` with HTTP/2 (ALPN `h2`) and HTTP/1.1, TLS 1.2 minimum, reloaded when a file changes; set both or neither; exclusive with `HTTP_H2C` ([http.md](http.md#https-and-http2)) |
 | `TLS_REDIRECT_ADDR` | — | With TLS on, also listen for plain HTTP on this address (e.g. `:80`) and redirect (308) to `APP_URL`, which must be `https` |
 
+## Every environment variable
+
+Generated from the config structs by `task config:docs`; `task ci` fails when it is out of date.
+
+<!-- configref:begin -->
+| Variable | Type | Default | Description | Source |
+| --- | --- | --- | --- | --- |
+| `API_VERSION` | `string` | `1.0.0` | APIVersion is info.version of the OpenAPI document. | `Config.APIVersion` |
+| `APP_DEBUG` | `bool` | — | Debug shows error details and the debug page; it must be false when APP_ENV is production. | `Config.Debug` |
+| `APP_ENV` | `config.Env` | `production` | Env is development, test or production; any other value is a boot error, and unset or empty means production. | `Config.Env` |
+| `APP_KEY` | `config.Secret` | — | Key is the secret key that signs and encrypts; see the APP_KEY section of docs/configuration.md. | `Config.Key` |
+| `APP_LOCALE` | `string` | — | — | `app.go:initFrontend` |
+| `APP_NAME` | `string` | `Vukem` | Name is the application name, shown in logs, mail and pages. | `Config.Name` |
+| `APP_PREVIOUS_KEYS` | `config.Secret` | — | PreviousKeys are former APP_KEY values (comma-separated, same format) that still open what they sealed or signed after a key rotation: app.Crypt tokens (encrypted cookies and columns, queued mail), cookie sessions, the maintenance bypass and, through DerivePreviousKeys, signed URLs and social login state. | `Config.PreviousKeys` |
+| `APP_PROBLEM_BASE_URL` | `string` | — | — | `http.go:newRouter` |
+| `APP_URL` | `string` | `http://localhost:3000` | URL is the public origin of the app, used for absolute URLs. | `Config.URL` |
+| `CACHE_MAX_ENTRIES` | `int` | `10000` | MaxEntries bounds the memory store. | `CacheConfig.MaxEntries` |
+| `CACHE_PREFIX` | `string` | `vukem:` | Prefix is added in front of every cache key; use a distinct one per app on a shared Redis or table. | `CacheConfig.Prefix` |
+| `CACHE_STORE` | `string` | `memory` | Store is "memory" (default) or "database" (table CACHE_TABLE). | `CacheConfig.Store` |
+| `CACHE_TABLE` | `string` | `cache` | Table is the table of the database cache store. | `CacheConfig.Table` |
+| `CLIENT_IP_HEADER` | `string` | — | ClientIPHeader names a single-IP header set by the trusted proxy (such as X-Real-IP) that c.IP() reads instead of X-Forwarded-For. | `Config.ClientIPHeader` |
+| `CSRF_TRUSTED_ORIGINS` | `string` | — | — | `http.go:DefaultMiddlewareWith` |
+| `DATABASE_URL` | `string` | `file:storage/database.sqlite` | URL says where the database is; the scheme picks the driver. | `DatabaseConfig.URL` |
+| `DB_MAX_IDLE` | `int` | `5` | MaxIdle is the number of idle connections kept ready. | `DatabaseConfig.MaxIdle` |
+| `DB_MAX_OPEN` | `int` | `10` | MaxOpen is the maximum number of open connections (on SQLite, the reader pool). | `DatabaseConfig.MaxOpen` |
+| `DEVTOOLS` | `bool` | — | Devtools enables the /_vukem dashboard (refused in production). | `Config.Devtools` |
+| `DEVTOOLS_INSECURE_ALLOW_REMOTE` | `bool` | — | DevtoolsInsecureAllowRemote serves the dashboard to non-loopback clients (containers, remote VMs). | `Config.DevtoolsInsecureAllowRemote` |
+| `HOST` | `string` | `localhost` | Host is the listen address (0.0.0.0 listens on all IPv4 interfaces). | `Config.Host` |
+| `HSTS_FORCE` | `bool` | — | HSTSForce sends HSTS on every response in production, for TLS proxies whose range cannot be put in TRUSTED_PROXIES. | `Config.HSTSForce` |
+| `HTTP_H2C` | `bool` | — | H2C serves HTTP/2 without TLS (prior knowledge, for gRPC clients) in production too, behind a proxy that speaks h2c. | `Config.H2C` |
+| `HTTP_MAX_HEADER_BYTES` | `int` | `65536` | MaxHeaderBytes caps the request line plus headers the HTTP server reads (4096 to 1048576 bytes, Go's own default; outside is a boot error). | `Config.MaxHeaderBytes` |
+| `LOG_DEDUP_WINDOW` | `string` | — | LogDedupWindow collapses repeated identical ERROR records of the default logger into one summary per window (a Go duration; "0" disables it). | `Config.LogDedupWindow` |
+| `LOG_FORMAT` | `string` | — | LogFormat is text or json; empty means json in production and text elsewhere. | `Config.LogFormat` |
+| `LOG_LEVEL` | `string` | `info` | LogLevel is debug, info, warn or error. | `Config.LogLevel` |
+| `LOG_TRUNCATE_IP` | `bool` | — | LogTruncateIP makes the request log write the /24 (IPv4) or /48 (IPv6) network instead of the client address (data minimisation). | `Config.LogTruncateIP` |
+| `MAILTRAP_API_TOKEN` | `config.Secret` | — | MailtrapAPIToken is required with the mailtrap mailer. | `MailConfig.MailtrapAPIToken` |
+| `MAILTRAP_INBOX_ID` | `int64` | — | MailtrapInboxID > 0 sends to that Email Sandbox inbox instead of delivering. | `MailConfig.MailtrapInboxID` |
+| `MAIL_FROM` | `string` | `Vukem <hello@example.com>` | From is the default sender when the envelope has no From. | `MailConfig.From` |
+| `MAIL_MAILER` | `string` | — | Mailer is "smtp", "resend", "mailtrap", "log" or "array" (tests). | `MailConfig.Mailer` |
+| `MAIL_REPLY_TO` | `string` | — | ReplyTo is the Reply-To for envelopes that set none; empty sends none. | `MailConfig.ReplyTo` |
+| `NOINDEX` | `bool` | — | NoIndex sends X-Robots-Tag: noindex, nofollow on every response, so search engines never index the site (staging, previews). | `Config.NoIndex` |
+| `OPENAPI_IN_PRODUCTION` | `bool` | — | OpenAPIInProduction serves /openapi.json in production too. | `Config.OpenAPIInProduction` |
+| `OPENAPI_PREFIX` | `string` | — | OpenAPIPrefix keeps only routes under it in the document (e.g. /api). | `Config.OpenAPIPrefix` |
+| `OPENAPI_REQUIRED_OUTPUTS` | `bool` | — | OpenAPIRequiredOutputs sets openapi.Info.RequiredOutputs: response schemas list the fields the server always sends as required. | `Config.OpenAPIRequiredOutputs` |
+| `OPENAPI_SERVERS` | `[]string` | — | OpenAPIServers lists the document's server URLs, comma-separated (default APP_URL); WithOpenAPI's Servers win over it. | `Config.OpenAPIServers` |
+| `OPENAPI_STRIP_PREFIX` | `string` | — | OpenAPIStripPrefix removes this path prefix from the documented paths (openapi.Info.StripPrefix), for a server URL that already ends with it; WithOpenAPI's StripPrefix wins over it. | `Config.OpenAPIStripPrefix` |
+| `OPENAPI_TYPED_ONLY` | `bool` | — | OpenAPITypedOnly sets openapi.Info.TypedOnly: a plain route under the prefix fails the document build. | `Config.OpenAPITypedOnly` |
+| `PORT` | `int` | `3000` | Port is the listen port, 0 to 65535; 0 picks a free port. | `Config.Port` |
+| `QUEUE_ALLOW_LEGACY_MAIL` | `bool` | — | AllowLegacyMail sends clear-text mail jobs queued before v0.24.0 (an upgrade window: drain the queue before upgrading, or set it until the old jobs are gone). | `QueueConfig.AllowLegacyMail` |
+| `QUEUE_CONCURRENCY` | `int` | `4` | Concurrency is the number of parallel workers. | `QueueConfig.Concurrency` |
+| `QUEUE_CONNECTION` | `string` | `sync` | Connection is "sync" (default: jobs run during Dispatch), "memory" (in process, run by a worker inside serve) or "database". | `QueueConfig.Connection` |
+| `QUEUE_FAILED_TABLE` | `string` | `failed_jobs` | — | `QueueConfig.FailedTable` |
+| `QUEUE_IN_SERVE` | `bool` | `true` | InServe runs a queue worker inside serve for the database driver and custom drivers (Redis). | `QueueConfig.InServe` |
+| `QUEUE_LIMITS` | `string` | — | Limits caps the running jobs of some queues, as "name=n" pairs separated by commas ("ingest=2"), so a slow queue cannot take every worker. | `QueueConfig.Limits` |
+| `QUEUE_NAMES` | `string` | `default` | Queues lists the queues workers poll, in priority order. | `QueueConfig.Queues` |
+| `QUEUE_TABLE` | `string` | `jobs` | Table and FailedTable are the database driver's tables. | `QueueConfig.Table` |
+| `RATE_LIMIT_IPV6_PREFIX` | `int` | `64` | RateLimitIPv6Prefix is the prefix length ratelimit.ByIP groups IPv6 clients by (1-128): one client usually owns a whole /64 and can rotate addresses inside it. | `Config.RateLimitIPv6Prefix` |
+| `RATE_LIMIT_STORE` | `string` | `memory` | Store is "memory" (default: GCRA per process) or "cache" (fixed windows counted in App.Cache, which must be shared by every server: CACHE_STORE=database or a Redis store set with WithCacheStore). | `RateLimitConfig.Store` |
+| `RESEND_API_KEY` | `config.Secret` | — | ResendAPIKey is required with the resend mailer. | `MailConfig.ResendAPIKey` |
+| `SCHEDULE_IN_SERVE` | `bool` | `true` | InServe runs the scheduler inside serve. | `ScheduleConfig.InServe` |
+| `SCHEDULE_TIMEZONE` | `string` | `UTC` | Timezone of the expressions (IANA name, default UTC). | `ScheduleConfig.Timezone` |
+| `SESSION_COOKIE` | `string` | `vukem_session` | CookieName is the session cookie name; __Host- is added when the cookie is Secure. | `SessionConfig.CookieName` |
+| `SESSION_DRIVER` | `string` | `cookie` | Driver is "cookie" (encrypted cookie, default) or "memory"; the database driver is installed by the database provider. | `SessionConfig.Driver` |
+| `SESSION_IDLE_TIMEOUT` | `time.Duration` | `2h` | IdleTimeout ends a session after this much inactivity. | `SessionConfig.IdleTimeout` |
+| `SESSION_LIFETIME` | `time.Duration` | `24h` | Lifetime is the absolute lifetime of a session. | `SessionConfig.Lifetime` |
+| `SESSION_RECORD_CLIENT` | `bool` | `false` | RecordClient keeps the user agent and client network with each logged-in server-side session (session.Config.RecordClient). | `SessionConfig.RecordClient` |
+| `SESSION_SECURE` | `string` | `auto` | Secure defaults to true in production or when APP_URL is https. | `SessionConfig.Secure` |
+| `SHUTDOWN_TIMEOUT` | `time.Duration` | `15s` | ShutdownTimeout is how long a graceful shutdown may take. | `Config.ShutdownTimeout` |
+| `SMTP_HOST` | `string` | `localhost` | SMTPHost is the SMTP server host. | `MailConfig.SMTPHost` |
+| `SMTP_INSECURE` | `bool` | — | SMTPInsecure allows servers without STARTTLS (local catchers only). | `MailConfig.SMTPInsecure` |
+| `SMTP_PASSWORD` | `config.Secret` | — | SMTPPassword is the SMTP password. | `MailConfig.SMTPPassword` |
+| `SMTP_PORT` | `int` | `587` | SMTPPort is 587 (STARTTLS) or 465 (implicit TLS). | `MailConfig.SMTPPort` |
+| `SMTP_USERNAME` | `string` | — | SMTPUsername is the login; empty skips authentication. | `MailConfig.SMTPUsername` |
+| `TELEGRAM_API_URL` | `string` | `https://api.telegram.org` | APIURL is the Bot API base URL, for a self-hosted Bot API server or a fake in tests. | `TelegramConfig.APIURL` |
+| `TELEGRAM_BOT_TOKEN` | `config.Secret` | — | BotToken is the bot token from BotFather; it is required. | `TelegramConfig.BotToken` |
+| `TELEGRAM_CHAT_ID` | `string` | — | ChatID is the default chat; it is required. | `TelegramConfig.ChatID` |
+| `TELEGRAM_LOG` | `bool` | `true` | Log forwards log records at MinLevel and above to the chat (default true); false keeps app.Telegram for explicit Send and Contact only. | `TelegramConfig.Log` |
+| `TELEGRAM_MIN_LEVEL` | `string` | `error` | MinLevel is debug, info, warn or error (default error). | `TelegramConfig.MinLevel` |
+| `TELEGRAM_RATE_LIMIT` | `int` | — | RateLimit caps forwarded log records per minute (0: no cap). | `TelegramConfig.RateLimit` |
+| `TELEGRAM_THREAD_ID` | `int` | — | ThreadID is the forum topic id inside a group (message_thread_id). | `TelegramConfig.ThreadID` |
+| `TLS_CERT_FILE` | `string` | — | TLSCertFile and TLSKeyFile (PEM) serve HTTPS on PORT with HTTP/2 (ALPN h2) and HTTP/1.1, TLS 1.2 or later; the pair is reloaded when either file changes. | `Config.TLSCertFile` |
+| `TLS_KEY_FILE` | `string` | — | TLSKeyFile is the PEM private key that pairs with TLSCertFile. | `Config.TLSKeyFile` |
+| `TLS_REDIRECT_ADDR` | `string` | — | TLSRedirectAddr (e.g. ":80") also listens for plain HTTP there and redirects every request (308) to APP_URL, which must be https. | `Config.TLSRedirectAddr` |
+| `TRUSTED_PROXIES` | `string` | — | TrustedProxies lists the proxies (comma-separated CIDRs or IPs) whose X-Forwarded-For is honoured by c.IP(). | `Config.TrustedProxies` |
+| `TRUST_FORWARDED_PROTO` | `bool` | — | TrustForwardedProto treats X-Forwarded-Proto: https from a trusted proxy as HTTPS (HSTS). | `Config.TrustForwardedProto` |
+<!-- configref:end -->
+
 ## App options
 
 Every exported `With*` option of the root package, grouped in the source by subsystem. `Option` and the `options` struct live in `app.go`.

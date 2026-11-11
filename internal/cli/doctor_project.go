@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	gover "go/version"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,7 @@ func projectChecks(ctx context.Context, env *Env) []doctorCheck {
 
 	return []doctorCheck{
 		checkGo(ctx, env),
+		checkGoVersion(ctx, env),
 		checkBun(env),
 		checkLockfile(env),
 		checkAppKey(vals, envErr),
@@ -97,6 +99,57 @@ func checkGo(ctx context.Context, env *Env) doctorCheck {
 	}
 
 	return doctorCheck{Name: "go", Status: "ok", Detail: strings.TrimSpace(string(out))}
+}
+
+// checkGoVersion compares the installed Go with the minimum of the project's
+// go.mod.
+func checkGoVersion(ctx context.Context, env *Env) doctorCheck {
+	mod, _ := os.ReadFile(env.path("go.mod"))
+
+	out, err := exec.CommandContext(ctx, "go", "version").Output()
+	if err != nil {
+		return doctorCheck{Name: "go_version", Status: "ok", Detail: "go version not parsable"}
+	}
+
+	return goVersionCheck(string(mod), string(out))
+}
+
+// goVersionCheck is checkGoVersion on the go.mod text and the output of
+// "go version". go/gover.Compare treats an invalid version as older than
+// any valid one, so both sides are validated first.
+func goVersionCheck(goMod, installed string) doctorCheck {
+	minimum := ""
+
+	for line := range strings.Lines(goMod) {
+		line, _, _ = strings.Cut(line, "//")
+		if f := strings.Fields(line); len(f) == 2 && f[0] == "go" {
+			minimum = "go" + f[1]
+			break
+		}
+	}
+
+	if !gover.IsValid(minimum) {
+		return doctorCheck{Name: "go_version", Status: "ok", Detail: "no go.mod minimum"}
+	}
+
+	var have string
+	if f := strings.Fields(installed); len(f) >= 3 {
+		have = f[2]
+	}
+
+	if !gover.IsValid(have) {
+		return doctorCheck{Name: "go_version", Status: "ok", Detail: "go version not parsable"}
+	}
+
+	if gover.Compare(have, minimum) < 0 {
+		return doctorCheck{
+			Name: "go_version", Status: "fail",
+			Detail: "go " + have + " is older than the go.mod minimum " + minimum,
+			Fix:    "install Go " + minimum + " or newer from https://go.dev/dl/",
+		}
+	}
+
+	return doctorCheck{Name: "go_version", Status: "ok", Detail: "go " + have + " satisfies go.mod " + minimum}
 }
 
 func checkBun(env *Env) doctorCheck {
@@ -258,8 +311,15 @@ func checkAppEnv(env *Env, vals map[string]string) doctorCheck {
 		appEnv = strings.TrimSpace(v)
 	}
 
-	if appEnv != "" {
+	switch strings.ToLower(appEnv) {
+	case "development", "test", "production":
 		return doctorCheck{Name: "app_env", Status: "ok", Detail: appEnv}
+	case "":
+	default:
+		return doctorCheck{
+			Name: "app_env", Status: "fail", Detail: "APP_ENV is not development, test or production",
+			Fix: "set APP_ENV to one of the three values",
+		}
 	}
 
 	return doctorCheck{

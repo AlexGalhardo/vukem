@@ -234,7 +234,7 @@ func register(env *Env, rel, funcName, expr string, imports ...string) error {
 	if err != nil {
 		fmt.Fprintf(
 			env.Stdout,
-			"could not update %s automatically; add this to %s():\n\n\t%s,\n\n",
+			"next: could not update %s automatically; add this to %s():\n\n\t%s,\n\n",
 			rel,
 			funcName,
 			expr,
@@ -530,7 +530,7 @@ func ensureAppSeeders(env *Env) error {
 	}
 
 	fmt.Fprintln(env.Stdout, "updated database/seeders/registry.go")
-	fmt.Fprintln(env.Stdout, "add vukem.WithAppSeeders(seeders.AllApp()...) to bootstrap/app.go")
+	fmt.Fprintln(env.Stdout, "next: add vukem.WithAppSeeders(seeders.AllApp()...) to bootstrap/app.go")
 
 	return nil
 }
@@ -656,11 +656,10 @@ func makeReactMail(env *Env, d stubData, force bool) error {
 		}
 	}
 
-	fmt.Fprintf(env.Stdout, `next steps:
-  npm install -E -D react-email@%s @react-email/components@%s
-  add the package.json script "build:emails":
+	fmt.Fprintf(env.Stdout, `next: npm install -E -D react-email@%s @react-email/components@%s
+next: add the package.json script "build:emails":
     email export --dir resources/js/emails --outDir resources/emails
-  run it, embed resources/emails and pass vukem.WithReactEmails(fsys) to vukem.New
+next: run it, embed resources/emails and pass vukem.WithReactEmails(fsys) to vukem.New
 `, reactEmailCLIVersion, reactEmailComponentsVersion)
 
 	return nil
