@@ -1,0 +1,149 @@
+---
+title: Best practices
+description: Eight rules for structuring a Vukem app so services run in jobs, commands and tests, and the request code stays thin.
+---
+
+Vukem gives each kind of file a home ([Directory structure](/docs/directory-structure)). This page adds the rules that keep those files independent of each other. Each rule has a reason, a short example from the example apps in the repository, and, where it helps, the mistake it prevents.
+
+You will learn:
+
+- where dependencies are wired and why they never live in package variables
+- what a controller does and what a service must not receive
+- how to pass the database, return errors, validate and test
+
+## The idea
+
+A request is only one of the ways your code runs. A queue worker runs it with no request, a command runs it from a terminal, and a test runs it with a fake client. Code that knows only about `*web.Ctx` cannot run in any of those. The rules below keep the request at the edge and put everything else behind plain functions with explicit inputs.
+
+## 1. Wire everything in `bootstrap/`
+
+`bootstrap/` is the composition root: one place that creates dependencies and passes them to whoever needs them. Constructors take what they need as arguments. Nothing reaches for a package-level variable.
+
+```go title="examples/blog/bootstrap/app.go"
+base := []vukem.Option{
+	vukem.WithProviders(Providers()...),
+	vukem.WithMigrations(migrations.All()),
+	vukem.WithListeners(listeners.All()...),
+	vukem.WithViews(resources.Views()),
+}
+```
+
+A global makes two tests in the same process share state, and it hides the dependency from the reader of the function. With a constructor, the dependency is in the signature.
+
+## 2. Keep controllers thin
+
+A controller reads the request, calls one function that does the work, and renders the result. It holds no business rules.
+
+```go title="examples/blog/app/controllers/post_controller.go"
+in, err := web.Parse(c, requests.PostSchema)
+if err != nil {
+	return err
+}
+
+post := models.Post{UserID: u.ID, Title: in.Title, Body: in.Body}
+if err := orm.Create(c.Context(), pc.db, &post); err != nil {
+	return err
+}
+```
+
+When a controller grows branches that are not about the request or the response, move them into a service (rule 3).
+
+## 3. Services do not take `*web.Ctx`
+
+A service receives a `context.Context` and plain values, and returns plain values and errors. That is why the same function runs from a controller, a job, a command and a test.
+
+```go title="examples/api/app/accounts/users.go"
+// Register creates a user (unique email, hashed password) and sends the
+// verification email.
+func (a *Accounts) Register(ctx context.Context, in requests.Register) (models.User, error) {
+	email := strings.ToLower(in.Email)
+
+	if err := orm.Validate(ctx, a.DB, orm.Unique[models.User]("email", email)); err != nil {
+		return models.User{}, err
+	}
+	// ...
+}
+```
+
+A service that takes `*web.Ctx` can only be tested by building a request, and a job cannot call it at all. Pass `c.Context()` and the few values it needs instead.
+
+## 4. Pass the executor explicitly
+
+Models hold no connection. Every query function takes the executor it runs on: the `db`, or the `tx` inside a transaction. Inside `db.Tx`, use `tx` for every statement. A statement on `db` runs outside the transaction and is not rolled back with it.
+
+```go title="examples/api/app/accounts/passwords.go"
+err = a.DB.Tx(ctx, func(tx *database.Tx) error {
+	query := "DELETE FROM password_resets WHERE email = " + d.Placeholder(1)
+	if _, err := tx.ExecContext(ctx, query, email); err != nil {
+		return err
+	}
+
+	return a.updatePassword(ctx, tx, u.ID, password)
+})
+```
+
+See [Database overview](/docs/database/overview).
+
+## 5. Return errors, do not write responses in two places
+
+A handler returns an error and lets the central error handler decide the format: an HTML page, a redirect with flashed errors, an htmx fragment or `application/problem+json`. Deciding the format in one place keeps every error, from every handler, consistent.
+
+```go title="examples/blog/app/controllers/post_controller.go"
+posts, err := q.Get(c.Context())
+if err != nil {
+	return err
+}
+```
+
+See [Error handling](/docs/basics/error-handling).
+
+## 6. Validate at the edge with `z`
+
+Describe the input once, in a schema next to the request type, and parse it in the controller. Rules that need the database, such as a unique email, go to `orm.Validate` in the service, because only the service has the executor.
+
+```go title="examples/blog/app/requests/auth.go"
+var LoginSchema = z.Struct[Login](z.Shape{
+	"email":    z.String().Trim().Email(),
+	"password": z.String().Min(1),
+})
+```
+
+See [Validation](/docs/basics/validation).
+
+## 7. One feature, its files
+
+Keep each kind of file in its own folder, and name files after the feature: `app/controllers/post_controller.go`, `app/requests/post.go`, `app/models/post.go`, `resources/views/posts/`. The generators (`vukem make:*`) follow this layout, so a feature is easy to find and to delete. See [Directory structure](/docs/directory-structure).
+
+## 8. Test with `vukemtest`, not a live server
+
+`vukemtest.New` builds the same app as `cmd/app` and calls its handler directly. No port opens, so tests run in parallel and need no network.
+
+```go title="examples/api/tests/api_tokens_test.go"
+app := vukemtest.New(t, bootstrap.New)
+token := apiUser(t, app, "dev@example.com")
+
+api := app.Client(t).WithToken(token)
+api.GetJSON("/api/v1/me").AssertOK().AssertJSONPath("email", "dev@example.com")
+```
+
+See [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+| Mistake | Fix |
+| --- | --- |
+| A service takes `*web.Ctx` only to read the user or the context | Pass `c.Context()` and the user value |
+| A query inside `db.Tx` uses `db` | Use the `tx` the callback receives |
+| A controller formats its own error response in every handler | Return the error and let the error handler format it |
+| A dependency is a package-level `var` set in `init()` | Create it in `bootstrap/` and pass it to the constructor |
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Directory structure" href="/docs/directory-structure" icon="layers">
+Where each of these files lives.
+</Card>
+<Card title="App lifecycle" href="/docs/architecture/lifecycle" icon="route">
+How the app is built, booted and shut down.
+</Card>
+</CardGroup>

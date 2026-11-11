@@ -1,0 +1,90 @@
+---
+title: Coming from AdonisJS
+description: Map the AdonisJS concepts you know to Vukem, with a side-by-side route and controller, and the differences that surprise most people.
+---
+
+This page is for you if you build apps with [AdonisJS](https://docs.adonisjs.com) and want to know where each piece lives in Vukem. It is a map, not a tutorial: every row links to the Vukem page that covers the topic in full. Statements about AdonisJS link to its documentation.
+
+You will learn:
+
+- which Vukem feature answers each AdonisJS concept
+- how a route, a controller and a validation look side by side
+- the five differences that surprise AdonisJS developers
+
+## What stays the same
+
+- Resource routes: `router.resource('posts', ...)` ([AdonisJS routing](https://docs.adonisjs.com/guides/basics/routing)) creates the same seven routes and names (`posts.index`, `posts.store`) as `r.Resource("posts", ...)` in Vukem.
+- Middleware stacks: AdonisJS has a server stack that runs for every request and a router stack that runs when a route matches ([AdonisJS middleware](https://docs.adonisjs.com/guides/basics/middleware)). Vukem has the same two, `r.UseServer` and `r.Use`, plus group and route middleware.
+- A failed validation answers JSON clients with a `422` status and sends HTML clients back to the form ([AdonisJS validation](https://docs.adonisjs.com/guides/basics/validation)); Vukem's central error handler does the same.
+
+## What changes
+
+- The language is Go, compiled to one binary. Routes and middleware are registered in Go code, not in `start/routes.ts` and `start/kernel.ts`.
+- Middleware is `func(http.Handler) http.Handler`, not `handle(ctx, next)`.
+- Dependencies are built in `bootstrap/` and passed to constructors, not resolved by an IoC container.
+- Validation uses `z` schemas or `validate` tags, not VineJS.
+
+## Concept map
+
+| Concept | In AdonisJS | In Vukem | Read more |
+| --- | --- | --- | --- |
+| Routing | `router.get(...)`, `router.resource(...)` in `start/routes.ts` ([routing](https://docs.adonisjs.com/guides/basics/routing)) | `r.Get`, `r.Group`, `r.Resource` | [Routing](/docs/basics/routing) |
+| Middleware | `handle(ctx: HttpContext, next: NextFn)`, registered with `server.use`, `router.use` or `router.named` ([middleware](https://docs.adonisjs.com/guides/basics/middleware)) | `func(http.Handler) http.Handler`, attached with `r.UseServer`, `r.Use`, `g.Use` or `route.Use` | [Middleware](/docs/basics/middleware) |
+| Controllers | A class referenced as `[controllers.Posts, 'show']` ([routing](https://docs.adonisjs.com/guides/basics/routing)) | A struct with methods `func(c *web.Ctx) error` | [Controllers](/docs/basics/controllers) |
+| Request validation | `request.validateUsing(validator)` with a VineJS validator ([validation](https://docs.adonisjs.com/guides/basics/validation)) | A `z` schema with `web.Parse`, or `validate` tags with `web.Bind` | [Validation](/docs/basics/validation) |
+| ORM and models | Lucid ([AdonisJS docs](https://docs.adonisjs.com)) | `orm.QueryOf[T](db)`; models hold no connection | [Database overview](/docs/database/overview) |
+| Migrations | Migrations in Lucid ([AdonisJS docs](https://docs.adonisjs.com)) | `schema.Migration` in Go, run by `vukem migrate` | [Migrations](/docs/database/migrations) |
+| Dependency injection | The IoC container ([AdonisJS docs](https://docs.adonisjs.com)) | Providers and constructors; no container | [App lifecycle](/docs/architecture/lifecycle) |
+| CLI and generators | Ace ([AdonisJS docs](https://docs.adonisjs.com)) | `vukem make:*` and the commands of your app | [CLI overview](/docs/cli/overview) |
+| Views | Edge ([AdonisJS docs](https://docs.adonisjs.com)) | `html/template`, templ, htmx or Inertia | [Views](/docs/basics/views) |
+| Queues, mail, cache | [AdonisJS docs](https://docs.adonisjs.com) | The `queue`, `mail` and `cache` packages | [Digging deeper](/docs/digging-deeper/queue) |
+| Testing | [AdonisJS docs](https://docs.adonisjs.com) | `vukemtest` | [Testing](/docs/testing/overview) |
+| Configuration | [AdonisJS docs](https://docs.adonisjs.com) | `.env` plus typed structs | [Configuration](/docs/configuration) |
+
+## Side by side
+
+A resource of posts. In AdonisJS, the [routing guide](https://docs.adonisjs.com/guides/basics/routing) registers one with a single line:
+
+```ts
+router.resource('posts', controllers.Posts)
+```
+
+In Vukem the line is almost the same. This is the blog example of the repository:
+
+```go title="examples/blog/routes/web.go"
+posts := controllers.NewPostController(acc.DB)
+
+r.Resource("posts", posts).Only("index", "show")
+```
+
+The controller is a struct that receives its database in the constructor. In AdonisJS the [validation guide](https://docs.adonisjs.com/guides/basics/validation) calls a validator inside the action with `request.validateUsing`; in Vukem the action calls `web.Parse` with a schema:
+
+```go title="examples/blog/app/controllers/post_controller.go"
+in, err := web.Parse(c, requests.PostSchema)
+if err != nil {
+	return err
+}
+
+post := models.Post{UserID: u.ID, Title: in.Title, Body: in.Body}
+```
+
+A failed parse returns an error, and the central error handler answers it: a `422` with `application/problem+json` for JSON clients, a redirect back with the errors flashed for forms.
+
+## Things that will surprise you
+
+1. **A handler returns an `error`.** You do not call a response helper for failures. See [Error handling](/docs/basics/error-handling).
+2. **Models hold no connection.** Every query function takes the `db` or the `tx` it runs on. See [Database overview](/docs/database/overview).
+3. **Relations are never lazy.** Reading a relation you did not load returns `orm.ErrNotLoaded`. See [Relations](/docs/database/relations).
+4. **No registration by import.** Commands, seeders and migrations are listed in `bootstrap/` and `database/`. See [Best practices](/docs/architecture/best-practices).
+5. **Routes use `ServeMux` patterns.** A parameter is `{id}`, not `:id`. See [Routing](/docs/basics/routing).
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Quick start" href="/docs/quick-start" icon="rocket">
+Create a project and answer a request in five minutes.
+</Card>
+<Card title="Key concepts" href="/docs/key-concepts" icon="book">
+The nine ideas the docs build on.
+</Card>
+</CardGroup>
