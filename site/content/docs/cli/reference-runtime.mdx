@@ -592,11 +592,11 @@ vukem bench [flags] <url>
 | `-c` | int | `10` | Closed model: concurrent workers, each sending in a loop. |
 | `-rate` | string |  | Open model: arrival rate such as `200/s` or `3000/1m`. Disables `-c`; using both is a usage error. |
 | `-d` | duration | `10s` | How long to run. At most `1h`. |
-| `-n` | uint | `0` | Stop after this many requests. `0` means no limit. The run ends at `-d` or `-n`, whichever comes first. |
+| `-n` | uint | `0` | Stop after this many requests, at most 360 million. `0` means no limit. The run ends at `-d` or `-n`, whichever comes first. |
 | `-m` | string | `GET` | HTTP method. |
 | `-H` | string |  | Request header `"Name: value"`. Repeat the flag. |
 | `-body` | string |  | Request body. |
-| `-body-file` | string |  | Read the request body from a file in the project directory. Exclusive with `-body`. |
+| `-body-file` | string |  | Read the request body from a file in the project directory, at most 10 MiB. Exclusive with `-body`. |
 | `-timeout` | duration | `30s` | Per-request timeout. At most `5m`. |
 | `-connections` | int | `0` | Idle connections kept per host. `0` keeps at least 100. |
 | `-max-workers` | int | `1000` | Open model: cap on requests in flight. Arrivals past it are dropped and counted, not queued. At most `10000`. |
@@ -609,9 +609,9 @@ vukem bench [flags] <url>
 
 **Open and closed model.** With `-c` the workers send one request after another, so a slow server slows the generator down and hides its own slowness. With `-rate` requests arrive at a constant rate whether or not earlier ones finished, and `http_req_duration` runs from the instant a request was due, so a late generator or a saturated server shows in the latency.
 
-**Targets.** Only `http` and `https` URLs without credentials, and only loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). Any other host is refused with exit code 2 unless `-allow-remote <host>` names it exactly (case-insensitive, no port). The flag states that you own the target; it is not a check, so a name can still resolve to any address. The host is checked for every request. Redirects are never followed: a `302` is a successful response. A status of `400` or more, or a transport error, counts as failed.
+**Targets.** Only `http` and `https` URLs without credentials, and only loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). Any other host is refused with exit code 2 unless `-allow-remote <host>` names it exactly (case-insensitive, no port). The flag states that you own the target; it is not a check, so a name can still resolve to any address. The host is checked for every request, and the connection itself is pinned to a loopback address, so a name such as `x.localhost` that resolves to an internal address, or a DNS answer that changes, is refused too (a host in `-allow-remote` is exempt). Redirects are never followed: a `302` is a successful response. A status of `400` or more, or a transport error, counts as failed.
 
-**Output.** The text report lists `http_reqs`, `http_req_failed`, `http_req_duration`, `http_req_waiting`, `http_req_connecting`, `data_received`, `data_sent`, `dropped_iterations`, the status codes, the error classes (`timeout`, `connection refused`, `eof`, `other`; never the raw message) and a latency histogram. Ctrl+C stops the load and prints the report so far with a `note` line and `"interrupted": true` in JSON; the exit code stays 0. The numbers depend on the machine, and the generator shares its CPU with a target on the same host.
+**Output.** The text report lists `http_reqs`, `http_req_failed`, `http_req_duration`, `http_req_waiting`, `http_req_connecting`, `data_received`, `data_sent`, `dropped_iterations`, the status codes, the error classes (`timeout`, `connection refused`, `eof`, `other`; never the raw message) and a latency histogram. Ctrl+C stops the load and prints the report so far with a `note` line and `"interrupted": true` in JSON; the exit code stays 0. When an open-model run drops arrivals (`dropped_iterations`), the report says so in a `warning` line and in the JSON `warnings`: the dropped requests are in no latency figure, so the latency is understated. `http_req_failed` and the percentiles include failed requests, as in k6, and the failure rate is printed right above them. `rps` is measured over the time the run spent sending, not the drain that waits for the last requests; the reported target has no query string or fragment. The numbers depend on the machine, and the generator shares its CPU with a target on the same host.
 
 ```bash
 vukem serve &

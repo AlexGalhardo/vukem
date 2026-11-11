@@ -103,6 +103,39 @@ Machine: AMD Ryzen 7 5700X3D (8 cores, 16 threads), 32 GB RAM, Windows 11 Pro 10
 | `web.NewCtx` allocates its `ResponseWriter` inside the `Ctx`, and `web.ResponseWriter` implements `io.StringWriter` (`c.String`, `c.HTML` no longer copy the body into a `[]byte`) | matched route: 6 → 4 allocs (static), 8 → 6 (param); pinned by `TestRouteAllocations` and `TestCtxStringAllocations` |
 | ORM row scanner reuses its destination and ciphertext buffers across the rows of a query (the ciphertext buffer exists only when a column is encrypted); `Get` presizes its result from `Limit` (capped at 256) | `Get` of 100 rows: 1470 → 1272 allocs, 110 KB → 78 KB (`orm.BenchmarkQueryGet100`); covered by `TestEncryptedManyRows` |
 
+## Load testing
+
+`task bench` runs Go micro-benchmarks (`testing.B`: router, render, ORM, and the comparison with net/http, chi and echo in `internal/bench`). `vukem bench <url>` is different: it sends real HTTP requests to an app that is running and reports throughput and latency percentiles. The engine is the stdlib-only package `loadtest`, usable from a Go test as `loadtest.Run`.
+
+```sh
+vukem serve &
+vukem bench http://localhost:3000/                      # 10 workers for 10 s
+vukem bench -rate 500/s -d 30s http://localhost:3000/posts
+vukem bench -json -o result.json http://localhost:3000/
+```
+
+**Open and closed model.** `-c` is the closed model: N workers send one request after another, so when the server slows down they send less and the slowness hides itself. `-rate` is the open model: requests arrive at a constant rate whether or not earlier ones finished, and each latency is measured from the instant the request was *due*, not from when it was sent. If the generator falls behind or the server saturates, the delay counts in the latency (this avoids coordinated omission), and an arrival that finds `-max-workers` requests in flight is dropped and counted, not queued. The average rate is what is guaranteed; the exact instant of each arrival is not.
+
+**Metrics.** Names follow k6.
+
+| Metric | Definition here |
+| --- | --- |
+| `http_reqs` | requests that received a result, successful or not |
+| `http_req_duration` | from the **scheduled** instant until the response body was fully read; in the closed model, scheduled equals sent. Unlike k6, the open model includes the generator's lateness on purpose |
+| `http_req_waiting` | from the actual send until the first response byte (TTFB) |
+| `http_req_connecting` | TCP connect time; only requests that opened a connection are in the series, so a reused connection adds no zero |
+| `http_req_tls_handshaking` | TLS handshake time; only requests that did a handshake are in the series |
+| `http_req_failed` | fraction of requests with a transport error or a status of 400 or more |
+| `data_sent` / `data_received` | request and response body bytes |
+| `dropped_iterations` | open-model arrivals that found no free worker with `-max-workers` reached. They are in no latency figure, so with drops the latency is understated and the report warns (`arrivals` is `http_reqs` plus the drops) |
+| `rps` | `http_reqs` over the time the run spent sending, without the drain that waits for the last requests: the throughput reached, not the rate asked for |
+
+Latencies come from a fixed-size log-linear histogram, so a percentile is exact to within about 3%. The percentiles include failed requests, as in k6; read them next to `http_req_failed`.
+
+**Targets.** Only loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`) are accepted. Another host needs `-allow-remote <host>`, which states that you own it; it is not a verification, because a name can resolve to any address. The check runs for every request, and the connection is pinned to a loopback address, so a name such as `x.localhost` that resolves to an internal address, or a DNS answer that changes between the check and the connect, is refused. Redirects are never followed, the URL cannot carry credentials, and a run is capped (1 hour, 360 million requests, 100,000 requests per second, 10,000 workers, 5 minute timeout). The generated client does not use a proxy or decompress responses.
+
+**Reading the numbers.** They depend on the machine, and a generator on the same host as the app competes with it for CPU, so use them to compare runs on one machine, not as absolute capacity. A `connection refused` for `localhost` can mean the app listens on IPv4 only; use `127.0.0.1`. `-no-keepalive` at a high rate can exhaust ephemeral ports, which appears as `other` errors.
+
 ## Follow-ups
 
 1. **Maintenance check per request.** Cache `readMaintenance` for a short interval (for example, stat at most once a second, or watch the file). This changes how fast `vukem down` takes effect, so it needs a decision in [brainstorming.md](brainstorming.md) and an updated maintenance test. It is the largest single cost of `DefaultMiddleware` on Windows.
