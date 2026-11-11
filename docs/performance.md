@@ -46,7 +46,7 @@ Every logger formats one JSON line per request with `slog.NewJSONHandler(io.Disc
 
 ## Results
 
-Machine: AMD Ryzen 7 5700X3D (8 cores, 16 threads), 32 GB RAM, Windows 11 Pro 10.0.26300, Go 1.27.2 windows/amd64, chi v5.5.0, echo v4.16.0, modernc.org/sqlite v1.60.1. Each value is the median of 6 runs (`-count 6`), and ratios are against the first row of each group. The machine was running other builds at the same time, so absolute timings are noisy (±10–50 %) and ran up to 2–3× slower than in a quiet run. Read the ratios and the allocation counts, which are exact, rather than the nanoseconds.
+Machine: AMD Ryzen 7 5700X3D (8 cores, 16 threads), 32 GB RAM, Windows 11 Pro 10.0.26300, Go 1.27.2 windows/amd64, chi v5.5.0, echo v4.16.0, modernc.org/sqlite v1.60.1. Each value is the median of 6 runs (`-count 6`), and ratios are against the first row of each group. The machine was running other builds at the same time, so absolute timings are noisy (±10–50 %) and ran up to 2–3× slower than in a quiet run. Read the ratios and the allocation counts, which are exact, rather than the nanoseconds. The `RenderJSON` row was measured again on 2026-11-11 with Go 1.27.4 on the same machine (`-count 6`, median), after `c.JSON` moved to `encoding/json/v2`; the other rows keep their original run.
 
 ### Routing and middleware
 
@@ -71,7 +71,7 @@ Machine: AMD Ryzen 7 5700X3D (8 cores, 16 threads), 32 GB RAM, Windows 11 Pro 10
 
 | Benchmark | Baseline | Vukem |
 | --- | --- | --- |
-| `RenderJSON` (20 users) | `encoding/json`: 7.38 µs · 1217 B · 4 | `c.JSON`: 6.89 µs (0.93×) · 1297 B · 5 |
+| `RenderJSON` (20 users) | `encoding/json`: 7.06 µs · 1217 B · 4 | `c.JSON`: 7.78 µs (1.10×) · 1313 B · 5 |
 | `RenderHTML` (layout, partial, 20 rows) | `html/template`: 112 µs · 12.6 KB · 404 | `c.Render`: 213 µs (1.9×) · 48.4 KB · 710 |
 
 ### ORM (in-memory SQLite)
@@ -89,7 +89,7 @@ Machine: AMD Ryzen 7 5700X3D (8 cores, 16 threads), 32 GB RAM, Windows 11 Pro 10
 - **Full request (`vukem_stack`, 1.25× chi, 1.6× echo).** `SecureHeaders` generates a 128-bit CSP nonce from `crypto/rand` for every request, rewrites the policy and stores the nonce in the context. chi and echo send a static CSP without a nonce, which strict `script-src` cannot use. `RequestID` uses `crypto/rand` too, where chi uses a counter. The logger wraps the writer in a `web.ResponseWriter`, which the `Ctx` then reuses.
 - **Default stack (`vukem_default`).** On Windows, about 70 % of the time is `middleware.Maintenance` calling `os.ReadFile("storage/framework/down")` on every request: a failed `CreateFile` costs about 40 µs here. On Linux, a failing `open` (`ENOENT`) is usually a few microseconds or less, though this page has no Linux run yet to confirm it. Sessions, CSRF (`http.CrossOriginProtection`), the body limit and method override add the remaining 14 allocations. See follow-ups.
 - **HTML rendering (1.9×, 3.8× the bytes).** `view.Engine.execute` calls `template.Clone()` for every render and rebuilds the `FuncMap`, so that `csrfToken`, `cspNonce`, `t` and `vite` can close over the request context. Cloning copies the whole template set (layout, partials, page) on every request.
-- **JSON** is on par: `c.JSON` is `json.Marshal` plus a write. The extra allocation is the `Ctx`.
+- **JSON** is about 10 % slower than the baseline, within the noise of the run (the 6 runs of each side spread by 23–35 %): `c.JSON` encodes with `encoding/json/v2` using the v1 default options (`web/jsoncodec.go`), against `encoding/json`'s `json.Marshal` plus a plain write in the baseline (`internal/bench/render_test.go`). The extra allocation is the `Ctx`, and the extra bytes are its fields.
 - **ORM.** `Find` (1.7×) goes through `First`: it builds and renumbers the SQL, validates the columns against the model, maps columns to fields with reflection once per query and allocates a destination per field. `Create` adds hooks, timestamps and `RETURNING`. On 100 rows the per-query cost is amortised: `Get` is within noise of hand-written `Scan` code and allocates less, because the result slice is presized from `Limit`.
 
 ## Rate limit prune
