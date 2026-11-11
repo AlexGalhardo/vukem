@@ -634,8 +634,11 @@ func TestTokensAndAbilities(t *testing.T) {
 	}
 
 	// Expired and revoked tokens fail.
-	expired, _, _ := ta.tokens.Create(ctx, u.AuthID(), "old", nil, time.Nanosecond)
-	time.Sleep(time.Millisecond) //nolint:forbidigo // wall-clock expiry of a real token row
+	// Issued an hour ago with a one-minute lifetime, so it is already expired.
+	realNow := ta.tokens.Now
+	ta.tokens.Now = func() time.Time { return time.Now().Add(-time.Hour) }
+	expired, _, _ := ta.tokens.Create(ctx, u.AuthID(), "old", nil, time.Minute)
+	ta.tokens.Now = realNow
 
 	ta.Client(t).AcceptJSON().WithToken(expired).GetJSON("/api/me").AssertUnauthorized()
 

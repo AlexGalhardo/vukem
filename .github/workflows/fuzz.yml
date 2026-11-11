@@ -28,6 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { module: ., pkg: ./api, target: FuzzQuery }
           - { module: ., pkg: ./auth/jwt, target: FuzzVerify }
           - { module: ., pkg: ./auth/webauthn, target: FuzzDecodeCBOR }
           - { module: ., pkg: ./auth/webauthn, target: FuzzParseAuthData }
