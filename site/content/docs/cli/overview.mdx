@@ -643,7 +643,7 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 | `db:run` | `-file path` (or `-` for stdin), `-commit` | Runs a SQL script in one transaction on the app's own database; rolls back unless `-commit` (a dry run on the real data) |
 | `db` | `-force`, `-print` | Opens `sqlite3` or `psql` for `DATABASE_URL`, password in the environment, not the command line. `-force` in production |
 | `db:backup` | `-to path`, `-restore -from snapshot` | SQLite snapshot via `VACUUM INTO`, or a restore into another directory. Not a traffic cutover |
-| `route:list` | `-json` | Lists the registered routes |
+| `route:list` | `-json`, `-method`, `-path`, `-name` | Lists the registered routes, optionally filtered |
 | `queue:work` | `-queue`, `-concurrency`, `-sleep 1s`, `-once`, `-stop-when-empty` | Processes jobs until stopped ([Queues](/docs/digging-deeper/queue)) |
 | `queue:failed` | `-json`, `-limit 100` | Lists failed jobs, newest first (`-limit 0` lists all) |
 | `queue:retry` | IDs or `all` | Re-queues failed jobs |

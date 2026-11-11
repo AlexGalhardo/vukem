@@ -146,12 +146,17 @@ With `-with-secret` the same line shows a random value, for example `/R7WGCWCMG4
 List the registered routes. **App.**
 
 ```text
-vukem route:list [-json]
+vukem route:list [-json] [-method VERB] [-path TEXT] [-name TEXT]
 ```
 
 | Flag | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `-json` | bool | `false` | Print a JSON array of routes with their middleware. |
+| `-method` | string | empty | Only routes with this HTTP method, compared without case. `ANY` matches routes registered with `Any`. |
+| `-path` | string | empty | Only routes whose host and path contain this text. |
+| `-name` | string | empty | Only routes whose name contains this text. |
+
+The filters combine and also apply to `-json`. When no route matches, the command prints `No routes match.` and exits with 0. A `SUMMARY` column appears when a listed route carries a one-line summary (typed API routes do, from `api.Op.Summary`; any route doc can implement `router.Summarizer`).
 
 ```bash
 vukem route:list

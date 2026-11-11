@@ -430,8 +430,7 @@ Once the app runs, every request follows the same path:
 net/http server (one goroutine per request)
   └─ server middleware     every request, even unmatched:
      │                     recover, request id, secure headers,
-     │                     maintenance, logger, method override,
-     │                     static
+     │                     maintenance, logger, method override
       └─ ServeMux match
           ├─ no match → 404 / 405 through the error handler
           └─ router middleware   matched routes only:

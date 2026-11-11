@@ -63,7 +63,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | app: `db [-force] [-print]` | Open `sqlite3` or `psql` for `DATABASE_URL`; the password goes in `PGPASSWORD`, never in argv; `-force` in production. `mysql://` and `mariadb://` are refused until their password handling is verified |
 | `vukem build` | `go tool templ generate` (when `.templ` files exist), `vite build` (if present), then `go build -trimpath -ldflags "-s -w"` with embedded assets. `-ldflags "..."` appends to `-s -w` (e.g. `-X main.version=v1.2.3`, then `vukem.WithVersion(version)`); `-ssr` also runs `vite build --ssr` (error without a Vite config). Every build (`build`, `serve`, delegated app commands) adds `-tags` from the project's `.buildtags` file (one tag per line or comma-separated, `#` comments) |
 | app: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status` | Migrations |
-| app: `route:list [--json]` | Route table |
+| app: `route:list [--json] [--method GET] [--path /api] [--name posts.]` | Route table with a summary column when a route has one; the filters also apply to `--json` |
 | app: `queue:work`, `queue:failed [-json] [-limit 100]`, `queue:retry`, `queue:forget` | Queue workers and failed jobs; `queue:failed` lists the newest 100 by default, `-limit 0` lists all ([subsystems.md](subsystems.md#queue)) |
 | app: `schedule:run`, `schedule:work`, `schedule:list` | Scheduler ([subsystems.md](subsystems.md#scheduler)) |
 | app: `api:fuzz [-prefix] [-url] [-image] [-dry-run]` | Run a pinned Schemathesis Docker image against the running app from the exported OpenAPI document; credential from `VUKEM_FUZZ_TOKEN` or `vukem.WithFuzzAuth`; `-dry-run` prints the command and config (site page rest-apis/fuzz-testing) |

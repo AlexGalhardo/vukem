@@ -160,7 +160,7 @@ Lifecycle (inspired by AdonisJS v7 and Goravel runners):
 4. **Start** — runners (HTTP server, queue worker, scheduler) started under one `errgroup` bound to a `signal.NotifyContext`.
 5. **Shutdown** — on signal: `http.Server.Shutdown`, drain runners, then providers' `Shutdown` in **reverse** order, each under a timeout. When in-flight requests outlast `ShutdownTimeout`, the HTTP server closes the remaining connections (cancelling their request contexts) before providers shut down, and `Run` still returns an error wrapping `context.DeadlineExceeded`.
 
-Each provider can be limited to environments: `web`, `console`, `test`.
+Each provider can be limited to environments: `web`, `console`, `test`. A provider that can only be registered once implements `NamedProvider` (`Name() string`): `New` fails with `provider "billing" registered twice` when two providers report the same non-empty name. Providers without a name, or with an empty one, are not checked.
 
 ### Bootstrap (user app)
 
