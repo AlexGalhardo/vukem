@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/mediatype"
 	"github.com/AlexGalhardo/vukem/signed"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -213,11 +214,6 @@ func Images(maxSize int64) UploadRules {
 	return UploadRules{MaxSize: maxSize, Types: []string{"image/jpeg", "image/png", "image/gif", "image/webp"}}
 }
 
-var extensions = map[string]string{ //nolint:gochecknoglobals // read-only lookup table
-	"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp",
-	"application/pdf": ".pdf", "text/plain; charset=utf-8": ".txt",
-}
-
 // PutUploaded stores an uploaded file under dir with a random name and an
 // extension derived from the detected type, after checking its size and
 // type. It returns the stored path. The client's file name is never used.
@@ -250,7 +246,7 @@ func PutUploaded(ctx context.Context, d Disk, fh *multipart.FileHeader, dir stri
 		return "", errs.NewValidation().Add("file", "This file type is not allowed.")
 	}
 
-	ext := extensions[ct]
+	ext := mediatype.Extension(ct)
 	if ext == "" {
 		ext = ".bin"
 	}

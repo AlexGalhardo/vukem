@@ -43,7 +43,10 @@ func Attachment(filename string) string {
 // leading dots, no trailing dots or spaces, a "_" before Windows device
 // names, at most 200 characters keeping the extension; "download" when
 // nothing is left.
-func Sanitize(name string) string {
+func Sanitize(name string) string { return SanitizeOr(name, fallback) }
+
+// SanitizeOr is Sanitize with the name to return when nothing is left.
+func SanitizeOr(name, empty string) string {
 	name = path.Base(strings.ReplaceAll(name, `\`, "/"))
 
 	name = strings.Map(func(r rune) rune {
@@ -70,7 +73,7 @@ func Sanitize(name string) string {
 	}
 
 	if name == "" {
-		return fallback
+		return empty
 	}
 
 	if reserved(name) {

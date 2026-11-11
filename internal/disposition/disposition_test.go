@@ -45,6 +45,20 @@ func TestSanitize(t *testing.T) {
 	}
 }
 
+func TestSanitizeOr(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ in, empty, want string }{
+		{"", "file", "file"},
+		{"...", "x", "x"},
+		{"a.txt", "file", "a.txt"},
+	} {
+		if got := SanitizeOr(tt.in, tt.empty); got != tt.want {
+			t.Errorf("SanitizeOr(%q, %q) = %q, want %q", tt.in, tt.empty, got, tt.want)
+		}
+	}
+}
+
 func TestSanitize_longName(t *testing.T) {
 	t.Parallel()
 
