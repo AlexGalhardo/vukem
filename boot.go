@@ -171,6 +171,13 @@ type Provider interface {
 	Register(app *App) error
 }
 
+// NamedProvider is implemented by providers that can only be registered
+// once: New fails when two providers report the same non-empty name.
+type NamedProvider interface {
+	Provider
+	Name() string
+}
+
 // Booter is implemented by providers that need a boot phase. Boot runs after
 // every provider registered.
 type Booter interface {

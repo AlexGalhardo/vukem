@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -318,5 +319,107 @@ func TestSSGGenerateNoCleanFlag(t *testing.T) {
 		if kept := err == nil; kept != noClean {
 			t.Errorf("noClean=%v: page b kept = %v", noClean, kept)
 		}
+	}
+}
+
+type summaryDoc string
+
+func (s summaryDoc) RouteSummary() string { return string(s) }
+
+func TestRouteListSummaryAndFilters(t *testing.T) {
+	t.Parallel()
+
+	withSummaries := func(r *router.Router, _ *App) error {
+		ok := func(*web.Ctx) error { return nil }
+		r.Get("/api/tasks", ok).Name("api.tasks.index").Doc(summaryDoc("List tasks"))
+		r.Post("/api/tasks", ok).Name("api.tasks.store").Doc(summaryDoc("Create a task"))
+		r.Get("/posts", ok).Name("posts.index")
+		r.Any("/hook", ok).Name("hook")
+
+		return nil
+	}
+	noSummaries := func(r *router.Router, _ *App) error {
+		r.Get("/posts", func(*web.Ctx) error { return nil }).Name("posts.index")
+
+		return nil
+	}
+
+	tests := []struct {
+		name        string
+		routes      func(*router.Router, *App) error
+		args        []string
+		want        []string // substrings the output must contain
+		notWant     []string
+		wantSummary bool
+	}{
+		{
+			name: "summary column", routes: withSummaries,
+			want: []string{"SUMMARY", "Create a task", "List tasks", "/posts"}, wantSummary: true,
+		},
+		{
+			name: "method filter ignores case", routes: withSummaries, args: []string{"--method", "post"},
+			want: []string{"Create a task"}, notWant: []string{"List tasks", "/posts"}, wantSummary: true,
+		},
+		{
+			name: "ANY matches Any routes", routes: withSummaries, args: []string{"--method", "any"},
+			want: []string{"/hook"}, notWant: []string{"/api/tasks", "/posts"}, wantSummary: false,
+		},
+		{
+			name: "path filter", routes: withSummaries, args: []string{"--path", "/api"},
+			want: []string{"/api/tasks"}, notWant: []string{"/posts", "/hook"}, wantSummary: true,
+		},
+		{
+			name: "name filter", routes: withSummaries, args: []string{"--name", "posts."},
+			want: []string{"posts.index"}, notWant: []string{"api.tasks"}, wantSummary: false,
+		},
+		{
+			name: "filters combine", routes: withSummaries, args: []string{"--method", "GET", "--path", "/api"},
+			want: []string{"List tasks"}, notWant: []string{"Create a task", "/posts"}, wantSummary: true,
+		},
+		{
+			name: "no match", routes: withSummaries, args: []string{"--name", "nothing"},
+			want: []string{"No routes match."}, notWant: []string{"METHOD"},
+		},
+		{
+			name: "no summaries drops the column", routes: noSummaries,
+			want: []string{"METHOD", "/posts"}, wantSummary: false,
+		},
+		{
+			name: "json honours filters", routes: withSummaries, args: []string{"--json", "--method", "GET"},
+			want: []string{`"path": "/api/tasks"`, `"path": "/posts"`}, notWant: []string{`"method": "POST"`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+
+			app := newTestApp(t, WithStdout(&out), WithRoutes(tt.routes))
+
+			if err := app.Call(t.Context(), "route:list", tt.args); err != nil {
+				t.Fatal(err)
+			}
+
+			got := out.String()
+			for _, w := range tt.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("output lacks %q:\n%s", w, got)
+				}
+			}
+
+			for _, n := range tt.notWant {
+				if strings.Contains(got, n) {
+					t.Errorf("output has %q:\n%s", n, got)
+				}
+			}
+
+			if !slices.Contains(tt.args, "--json") && !strings.Contains(got, "No routes match.") {
+				if has := strings.Contains(got, "SUMMARY"); has != tt.wantSummary {
+					t.Errorf("SUMMARY column present = %v, want %v:\n%s", has, tt.wantSummary, got)
+				}
+			}
+		})
 	}
 }

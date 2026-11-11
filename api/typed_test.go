@@ -607,3 +607,15 @@ func TestCommandPostDocumentsExplicitStatus(t *testing.T) {
 		t.Fatal("POST /webhooks/{id}/test is documented as 201; Op.Status was set to 200")
 	}
 }
+
+func TestOperationRouteSummary(t *testing.T) {
+	t.Parallel()
+
+	op := &api.Operation{}
+	op.Summary = "Create a task"
+
+	var s router.Summarizer = op
+	if got := s.RouteSummary(); got != "Create a task" {
+		t.Fatalf("RouteSummary() = %q", got)
+	}
+}
