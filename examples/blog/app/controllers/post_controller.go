@@ -9,6 +9,7 @@ import (
 	"github.com/AlexGalhardo/vukem/examples/blog/app/models"
 	"github.com/AlexGalhardo/vukem/examples/blog/app/requests"
 	"github.com/AlexGalhardo/vukem/examples/blog/app/resources"
+	"github.com/AlexGalhardo/vukem/examples/blog/app/views"
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -38,7 +39,7 @@ func (pc *PostController) Index(c *web.Ctx) error {
 		return c.JSON(http.StatusOK, map[string]any{"data": resources.Posts(posts)})
 	}
 
-	return c.Render("posts/index", map[string]any{"Posts": posts, "Search": c.Query("q")}, web.Block("post-list"))
+	return views.PostsIndex.Render(c, views.PostsIndexData{Posts: posts, Search: c.Query("q")}, web.Block("post-list"))
 }
 
 // Create shows the form for a new post.
@@ -47,7 +48,7 @@ func (*PostController) Create(c *web.Ctx) error {
 		return err
 	}
 
-	return c.Render("posts/create", nil)
+	return views.PostsCreate.Render(c, struct{}{})
 }
 
 // Store saves a new post written by the current user.
@@ -87,7 +88,7 @@ func (pc *PostController) Show(c *web.Ctx) error {
 		return c.JSON(http.StatusOK, resources.Post(post))
 	}
 
-	return c.Render("posts/show", &post)
+	return views.PostsShow.Render(c, &post)
 }
 
 // Edit shows the edit form (authors only).
@@ -101,7 +102,7 @@ func (pc *PostController) Edit(c *web.Ctx) error {
 		return err
 	}
 
-	return c.Render("posts/edit", post)
+	return views.PostsEdit.Render(c, post)
 }
 
 // Update saves changes (authors only).

@@ -32,6 +32,7 @@ import (
 	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/ssg"
+	"github.com/AlexGalhardo/vukem/view/viewcheck"
 )
 
 // Command is an application command compiled into the app binary
@@ -152,7 +153,7 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 // only the registered routes, never live connections.
 func isWarmupCommand(name string) bool {
 	switch name {
-	case "codegen:routes", "codegen:client", "codegen:types", "openapi:export":
+	case "codegen:routes", "codegen:client", "codegen:types", "openapi:export", "view:check":
 		return true
 	default:
 		return false
@@ -207,6 +208,7 @@ func builtinCommands() []Command {
 			codegenTypesCommand(),
 			codegenRoutesCommand(),
 			codegenClientCommand(),
+			viewCheckCommand(),
 			boostMCPCommand(),
 			ssgGenerateCommand(),
 			fuzzAPICommand(),
@@ -952,4 +954,81 @@ func ssrCheckCommand() Command {
 			return err
 		},
 	}
+}
+
+func viewCheckCommand() Command {
+	var asJSON, strict *bool
+
+	return CommandFunc{
+		CommandName: "view:check",
+		Desc:        "Check the typed html/template views against their Go types, routes and htmx targets",
+		DefineFlags: func(fs *flag.FlagSet) {
+			asJSON = fs.Bool("json", false, "print JSON")
+			strict = fs.Bool("strict", false, "also list unchecked expressions and undeclared views (warnings)")
+		},
+		Fn: func(_ context.Context, app *App, _ []string) error {
+			if app.Views == nil || len(app.viewPages) == 0 {
+				return errors.New("view:check: no typed views: list them with vukem.WithViewPages")
+			}
+
+			// Building the handler registers the named routes the views refer to.
+			if _, err := app.Router.Handler(); err != nil {
+				return err
+			}
+
+			problems := viewcheck.Check(viewcheck.Options{
+				Engine: app.Views, Decls: app.viewPages, Routes: app.Router.Routes(),
+				Funcs: app.Views.FuncTypes(), Ext: app.Views.Ext(), Strict: *strict,
+			})
+
+			if err := printViewProblems(app.stdout, problems, *asJSON); err != nil {
+				return err
+			}
+
+			return viewProblemsError(problems)
+		},
+	}
+}
+
+func printViewProblems(w io.Writer, problems []viewcheck.Problem, asJSON bool) error {
+	if asJSON {
+		if problems == nil {
+			problems = []viewcheck.Problem{}
+		}
+
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+
+		return enc.Encode(problems)
+	}
+
+	for _, p := range problems {
+		warn := ""
+		if p.Warning {
+			warn = "warning: "
+		}
+
+		fmt.Fprintf(w, "%s:%d:%d: %s%s: %s\n", p.File, p.Line, p.Col, warn, p.Code, p.Message)
+	}
+
+	return nil
+}
+
+// viewProblemsError fails the run for errors; warnings never do.
+func viewProblemsError(problems []viewcheck.Problem) error {
+	files := map[string]bool{}
+	n := 0
+
+	for _, p := range problems {
+		if !p.Warning {
+			n++
+			files[p.File] = true
+		}
+	}
+
+	if n == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("view:check: %d problem(s) in %d view(s)", n, len(files))
 }

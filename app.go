@@ -258,6 +258,7 @@ type App struct {
 	hooks     []func(context.Context) error
 	fuzzAuth  func(context.Context, *App) (FuzzAuth, error)
 	commands  map[string]Command
+	viewPages []view.Decl
 	health    health
 	stdout    io.Writer
 	stderr    io.Writer
@@ -413,6 +414,7 @@ type options struct {
 	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS
 	viewFuncs     template.FuncMap
+	viewPages     []view.Decl
 	tlsConfig     *tls.Config
 	reactEmails   fs.FS
 	vite          fs.FS
@@ -839,6 +841,12 @@ func (a *App) initViews(o *options) error {
 	if o.views == nil && o.reactEmails == nil && len(o.viewFuncs) > 0 {
 		return errors.New("vukem: WithViewFuncs needs WithViews; pass vukem.WithViews(...) to vukem.New as well")
 	}
+
+	if o.views == nil && len(o.viewPages) > 0 {
+		return errors.New("vukem: WithViewPages needs WithViews")
+	}
+
+	a.viewPages = o.viewPages
 
 	if o.views != nil {
 		engine, err := view.New(view.Config{
