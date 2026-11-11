@@ -221,6 +221,20 @@ func (o *opts[T]) issue(c *pctx, path, code, key string, params map[string]any) 
 	c.addKeyed(path, code, key, render(defaultMessage(key, params), path, params), cloneParams(params))
 }
 
+// useMessage rewrites the issues a rule added since from (WithMessage): the
+// text is msg with its placeholders filled, the code and params stay, and the
+// key is dropped, so Localize leaves the custom text alone. msg "" keeps them.
+func useMessage(c *pctx, from int, path, msg string) {
+	if msg == "" {
+		return
+	}
+
+	for i := from; i < len(c.issues); i++ {
+		c.issues[i].Message = render(msg, path, c.issues[i].Params)
+		c.issues[i].Key = ""
+	}
+}
+
 // parse runs the common pipeline around core: absence/null handling,
 // defaults, the type-specific core, transforms and refinements.
 func parse[T any](o *opts[T], c *pctx, path string, in any, present bool, emptyIsAbsent bool,

@@ -42,6 +42,16 @@ func TestValidateRules(t *testing.T) {
 		t.Fatalf("fields = %v", verr.Fields)
 	}
 
+	// The same problems, with their rule as the message key.
+	want := []errs.Issue{
+		{Path: "email", Code: "custom", Key: "unique", Message: "The email has already been taken."},
+		{Path: "contact", Code: "custom", Message: "Taken."},
+		{Path: "id", Code: "custom", Key: "exists", Message: "The selected id is invalid."},
+	}
+	if diff := cmp.Diff(want, verr.Issues); diff != "" {
+		t.Errorf("Issues (-want +got):\n%s", diff)
+	}
+
 	// Soft-deleted rows still block Unique but fail Exists.
 	p := Post{UserID: users[0].ID, Title: "gone"}
 	if err := Create(ctx, db, &p); err != nil {

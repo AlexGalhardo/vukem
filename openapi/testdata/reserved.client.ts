@@ -8,6 +8,15 @@ export type HeadersInitType = {
   name?: string;
 };
 
+export type Issue = {
+  code?: string;
+  key?: string;
+  message?: string;
+  on?: string;
+  params?: Record<string, unknown>;
+  path?: string;
+};
+
 export type NumberType = {
   value?: number;
 };
@@ -16,6 +25,7 @@ export type Problem = {
   detail?: string;
   errors?: Record<string, string[]>;
   instance?: string;
+  issues?: Issue[];
   request_id?: string;
   status?: number;
   title?: string;
@@ -39,7 +49,7 @@ export type NumbersStoreBody = {
 
 export type NumbersStoreResponse = ResponseType;
 
-/** ApiProblem is an RFC 9457 problem details document; errors maps each invalid field to its messages, code is the machine-readable code set with errs.HTTPError.WithExtension, and other extension members are typed unknown. */
+/** ApiProblem is an RFC 9457 problem details document; errors maps each invalid field to its messages, issues lists each problem with its code, message key and params, code is the machine-readable code set with errs.HTTPError.WithExtension, and other extension members are typed unknown. */
 export type ApiProblem = {
   type?: string;
   title?: string;
@@ -49,6 +59,7 @@ export type ApiProblem = {
   request_id?: string;
   code?: string;
   errors?: Record<string, string[]>;
+  issues?: { path: string; code: string; key?: string; message: string; params?: Record<string, unknown>; on?: string }[];
   [extension: string]: unknown;
 };
 

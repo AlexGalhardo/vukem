@@ -42,6 +42,19 @@ type Problem struct {
 	RequestID string `json:"request_id,omitempty"`
 	// Errors maps each invalid field to its messages (422).
 	Errors map[string][]string `json:"errors,omitempty"`
+	// Issues lists each invalid value with its code, message key and params (422).
+	Issues []ProblemIssue `json:"issues,omitempty"`
+}
+
+// ProblemIssue is one validation problem of a 422.
+type ProblemIssue struct {
+	Path    string         `json:"path"`
+	Code    string         `json:"code"`
+	Key     string         `json:"key,omitempty"`
+	Message string         `json:"message"`
+	Params  map[string]any `json:"params,omitempty"`
+	// On is where the value came from: body, query or params.
+	On string `json:"on,omitempty"`
 }
 
 // Error is returned for every non-2xx response; Problem is filled when
@@ -141,6 +154,15 @@ func queryString(v any) string {
 	default:
 		return fmt.Sprint(v)
 	}
+}
+
+type Issue struct {
+	Code    *string                    `json:"code,omitempty"`
+	Key     *string                    `json:"key,omitempty"`
+	Message *string                    `json:"message,omitempty"`
+	On      *string                    `json:"on,omitempty"`
+	Params  map[string]json.RawMessage `json:"params,omitempty"`
+	Path    *string                    `json:"path,omitempty"`
 }
 
 type Author struct {

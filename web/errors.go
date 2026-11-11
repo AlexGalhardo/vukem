@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/AlexGalhardo/vukem/errs"
 )
@@ -22,6 +23,9 @@ type Problem struct {
 	Instance  string              `json:"instance,omitempty"`
 	RequestID string              `json:"request_id,omitempty"`
 	Errors    map[string][]string `json:"errors,omitempty"`
+	// Issues lists each validation problem with its path, code, message key,
+	// parameters and origin; errors carries the messages alone.
+	Issues []errs.Issue `json:"issues,omitempty"`
 	// Extensions are extra members (RFC 9457 section 3.2) that the error
 	// handler writes next to the standard ones; a key naming a standard
 	// member is ignored. Plain json.Marshal leaves them out.
@@ -52,7 +56,7 @@ func encodeProblem(p *Problem) ([]byte, error) {
 	for k, v := range p.Extensions {
 		switch k {
 		// Reserved even when omitted from this response.
-		case "type", "title", "status", "detail", "instance", "request_id", "errors":
+		case "type", "title", "status", "detail", "instance", "request_id", "errors", "issues":
 		default:
 			members[k] = v
 		}
@@ -88,8 +92,29 @@ func (c *Ctx) writeProblem(p *Problem) error {
 	}
 
 	b, err := encodeProblem(p)
+	if err != nil && len(p.Issues) > 0 {
+		// A param an app put in a FieldErrorKey may not serialize. The
+		// problem must still answer with its status, so retry without the
+		// params, which are only the machine-readable side of the messages.
+		p.Issues = slices.Clone(p.Issues)
+		for i := range p.Issues {
+			p.Issues[i].Params = nil
+		}
+
+		c.Log().WarnContext(c.Context(), "web: encode problem; retrying without issue params", "err", err)
+
+		b, err = encodeProblem(p)
+	}
+
 	if err != nil {
-		return fmt.Errorf("web: encode problem: %w", err)
+		// Whatever cannot be encoded (an extension, what a decorator added),
+		// the status must still be answered, never an empty 200.
+		c.Log().WarnContext(c.Context(), "web: encode problem; answering the bare problem", "err", err)
+
+		b, err = marshalJSON(map[string]any{"type": p.Type, "title": p.Title, "status": p.Status})
+		if err != nil {
+			return fmt.Errorf("web: encode problem: %w", err)
+		}
 	}
 
 	return c.Blob(p.Status, "application/problem+json", b)
@@ -128,7 +153,7 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	if verr == nil {
 		// z.FieldError or Issues returned by the handler: logged at Info, as
 		// they may be a bug (internal data validated without errs.Wrap(500)).
-		if verr = issuesValidation(c.Context(), c.Log(), err); verr != nil {
+		if verr = issuesValidation(c.Context(), c.Log(), err, ""); verr != nil {
 			level = slog.LevelInfo
 		}
 	}
@@ -189,6 +214,7 @@ func DefaultErrorHandler(c *Ctx, err error) {
 
 		if verr != nil {
 			p.Errors = verr.Fields
+			p.Issues = verr.List()
 			if c.s.ProblemBaseURL != "" {
 				p.Type = c.s.ProblemBaseURL + "/validation"
 			}
@@ -216,6 +242,7 @@ func safeErrorPage(status int, title, detail string, verr *errs.ValidationError)
 	e := ErrorPage{Status: status, Title: title, Detail: detail}
 	if verr != nil {
 		e.Errors = verr.Fields
+		e.Issues = verr.List()
 	}
 
 	return e
@@ -259,6 +286,9 @@ type errorData struct {
 	Title  string
 	Detail string
 	Errors map[string][]string
+	// Issues lists the same problems with code, key and params, for a view
+	// that renders them its own way.
+	Issues []errs.Issue
 	// Error is the handler's error, set only when Services.Debug is on:
 	// it may hold SQL, paths or secrets (CWE-209).
 	Error error
@@ -271,6 +301,7 @@ func (c *Ctx) renderErrorPage(status int, title, detail string, verr *errs.Valid
 	data := errorData{Status: status, Title: title, Detail: detail, Nonce: CSPNonce(c.Context())}
 	if verr != nil {
 		data.Errors = verr.Fields
+		data.Issues = verr.List()
 	}
 
 	if c.s.Debug {

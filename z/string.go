@@ -45,6 +45,34 @@ func (s StringSchema) with(pre func(string) string, check strCheck) StringSchema
 	return s
 }
 
+// WithMessage sets the message of the rule declared just before it, for a
+// rule that needs its own text (two Regex rules on one field):
+//
+//	z.String().Min(3).WithMessage("Too short.").Regex(re).WithMessage("Bad format.")
+//
+// The placeholders of [StringSchema.Message] work. The issue keeps its code
+// and params but loses its key, so a custom text is not translated. It wins
+// over Message. Pre-steps (Trim, ToLower...) are not rules; it panics when no
+// rule precedes it.
+func (s StringSchema) WithMessage(message string) StringSchema {
+	if len(s.checks) == 0 {
+		panic("z: WithMessage needs a rule before it")
+	}
+
+	// The rule is wrapped, so a schema that never uses WithMessage pays
+	// nothing for it: no field, no check in the loop.
+	s.checks = slices.Clone(s.checks)
+	last := s.checks[len(s.checks)-1]
+	s.checks[len(s.checks)-1] = func(o *opts[string], c *pctx, path, v string) {
+		n := len(c.issues)
+
+		last(o, c, path, v)
+		useMessage(c, n, path, message)
+	}
+
+	return s
+}
+
 // GoType implements AnySchema.
 func (StringSchema) GoType() reflect.Type { return reflect.TypeFor[string]() }
 

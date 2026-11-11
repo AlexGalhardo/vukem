@@ -162,3 +162,107 @@ func TestHTTPErrorWithExtension(t *testing.T) {
 		t.Error("an error with extensions no longer matches its sentinel")
 	}
 }
+
+func TestValidationErrorIssues(t *testing.T) {
+	t.Parallel()
+
+	t.Run("AddIssue fills both views", func(t *testing.T) {
+		t.Parallel()
+
+		v := NewValidation().
+			AddIssue(Issue{Path: "title", Code: "too_small", Key: "too_small.string", Message: "short", Params: map[string]any{"min": 3}, On: "body"}).
+			AddIssue(Issue{Code: "custom", Message: "root problem"})
+
+		if diff := cmp.Diff(map[string][]string{"title": {"short"}, "_": {"root problem"}}, v.Fields); diff != "" {
+			t.Errorf("Fields (-want +got):\n%s", diff)
+		}
+
+		want := []Issue{
+			{
+				Path:    "title",
+				Code:    "too_small",
+				Key:     "too_small.string",
+				Message: "short",
+				Params:  map[string]any{"min": 3},
+				On:      "body",
+			},
+			{Code: "custom", Message: "root problem"},
+		}
+		if diff := cmp.Diff(want, v.List()); diff != "" {
+			t.Errorf("List (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("List derives from Fields", func(t *testing.T) {
+		t.Parallel()
+
+		v := NewValidation().Add("name", "required").Add("email", "taken").Add("email", "invalid")
+
+		want := []Issue{
+			{Path: "email", Code: "custom", Message: "taken"},
+			{Path: "email", Code: "custom", Message: "invalid"},
+			{Path: "name", Code: "custom", Message: "required"},
+		}
+		if diff := cmp.Diff(want, v.List()); diff != "" {
+			t.Errorf("List (-want +got):\n%s", diff)
+		}
+
+		if len(v.Issues) != 0 {
+			t.Errorf("Add filled Issues: %v", v.Issues)
+		}
+	})
+
+	t.Run("the root field is not a path", func(t *testing.T) {
+		t.Parallel()
+
+		got := NewValidation().Add("_", "bad").List()
+		if len(got) != 1 || got[0].Path != "" {
+			t.Errorf("List = %+v, want the root issue with an empty path", got)
+		}
+	})
+
+	t.Run("Error is unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		v := NewValidation().AddIssue(Issue{Path: "a", Code: "x", Message: "m"})
+		if got := v.Error(); got != "validation failed: a: m" {
+			t.Errorf("Error = %q", got)
+		}
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		t.Parallel()
+
+		if got := NewValidation().List(); len(got) != 0 {
+			t.Errorf("List = %v, want none", got)
+		}
+	})
+}
+
+func TestValidationErrorListCoversMixedUse(t *testing.T) {
+	t.Parallel()
+
+	v := NewValidation().
+		AddIssue(Issue{Path: "title", Code: "too_small", Message: "short"}).
+		Add("email", "taken")
+	v.Append("title", "also bad")
+
+	want := []Issue{
+		{Path: "title", Code: "too_small", Message: "short"},
+		{Path: "email", Code: "custom", Message: "taken"},
+		{Path: "title", Code: "custom", Message: "also bad"},
+	}
+	if diff := cmp.Diff(want, v.List()); diff != "" {
+		t.Errorf("List (-want +got):\n%s", diff)
+	}
+
+	// The two views agree: every message of Fields has an issue.
+	var fromIssues int
+	for _, msgs := range v.Fields {
+		fromIssues += len(msgs)
+	}
+
+	if len(v.List()) != fromIssues {
+		t.Errorf("List has %d issues for %d messages", len(v.List()), fromIssues)
+	}
+}

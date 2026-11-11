@@ -10,6 +10,15 @@ export type HeadersInitType = {
   name?: string;
 };
 
+export type Issue = {
+  code?: string;
+  key?: string;
+  message?: string;
+  on?: string;
+  params?: Record<string, unknown>;
+  path?: string;
+};
+
 export type NumberType = {
   value?: number;
 };
@@ -18,6 +27,7 @@ export type Problem = {
   detail?: string;
   errors?: Record<string, string[]>;
   instance?: string;
+  issues?: Issue[];
   request_id?: string;
   status?: number;
   title?: string;
@@ -53,6 +63,17 @@ export const HeadersInitTypeSchema: z.ZodType<HeadersInitType> = z.lazy(() =>
   }),
 );
 
+export const IssueSchema: z.ZodType<Issue> = z.lazy(() =>
+  z.object({
+    code: z.string().optional(),
+    key: z.string().optional(),
+    message: z.string().optional(),
+    on: z.string().optional(),
+    params: z.record(z.string(), z.unknown()).optional(),
+    path: z.string().optional(),
+  }),
+);
+
 export const NumberTypeSchema: z.ZodType<NumberType> = z.lazy(() =>
   z.object({
     value: z.int().optional(),
@@ -64,6 +85,7 @@ export const ProblemSchema: z.ZodType<Problem> = z.lazy(() =>
     detail: z.string().optional(),
     errors: z.record(z.string(), z.array(z.string())).optional(),
     instance: z.string().optional(),
+    issues: z.array(IssueSchema).optional(),
     request_id: z.string().optional(),
     status: z.int().optional(),
     title: z.string().optional(),

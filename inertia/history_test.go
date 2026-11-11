@@ -157,9 +157,19 @@ func TestPrecognition(t *testing.T) {
 	var body struct {
 		Message string              `json:"message"`
 		Errors  map[string][]string `json:"errors"`
+		Issues  []struct {
+			Path string `json:"path"`
+			Code string `json:"code"`
+			On   string `json:"on"`
+		} `json:"issues"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Errors) != 2 || body.Message == "" {
 		t.Errorf("422 body = %s (%v)", rec.Body.String(), err)
+	}
+
+	// The structured issues come next to the messages, for the same fields.
+	if len(body.Issues) != 2 || body.Issues[0].Code == "" || body.Issues[0].On != "body" {
+		t.Errorf("issues = %+v, want one per invalid field with its code and origin", body.Issues)
 	}
 
 	only := map[string]string{"Precognition": "true", "Precognition-Validate-Only": "name"}
@@ -169,7 +179,7 @@ func TestPrecognition(t *testing.T) {
 	}
 
 	if rec := post(`{"name":"A","email":"nope"}`, only); rec.Code != http.StatusUnprocessableEntity ||
-		strings.Contains(rec.Body.String(), "email") {
+		strings.Contains(rec.Body.String(), "email") || strings.Count(rec.Body.String(), `"path"`) != 1 {
 		t.Errorf("validate-only invalid field = %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -184,5 +194,37 @@ func TestPrecognition(t *testing.T) {
 	if rec := post(`{"name":"Ana","email":"ana@example.com"}`, nil); rec.Code != http.StatusSeeOther || stored != 1 ||
 		!strings.Contains(strings.Join(rec.Header().Values("Vary"), ","), "Precognition") {
 		t.Errorf("real submission = %d stored=%d vary=%q", rec.Code, stored, rec.Header().Get("Vary"))
+	}
+}
+
+// A problem with the root value is "_" in errors; validate-only must treat the
+// issue of the same problem the same way.
+func TestPrecognitionRootIssue(t *testing.T) {
+	t.Parallel()
+
+	schema := signupSchema.Refine(func(signup) error { return z.FieldError("", "The form is closed.") })
+
+	hs := newHarness(t, baseConfig(), func(r *router.Router) {
+		r.Post("/signup", inertia.Precognitive(schema, func(c *web.Ctx) error { return c.Redirect("/") }))
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/signup",
+		strings.NewReader(`{"name":"Ana","email":"ana@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Precognition", "true")
+	req.Header.Set("Precognition-Validate-Only", "_")
+
+	rec := httptest.NewRecorder()
+	hs.h.ServeHTTP(rec, req)
+
+	var body struct {
+		Errors map[string][]string `json:"errors"`
+		Issues []struct {
+			Path string `json:"path"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusUnprocessableEntity ||
+		len(body.Errors["_"]) != 1 || len(body.Issues) != 1 {
+		t.Errorf("response = %d %s, want the root problem in errors and in issues", rec.Code, rec.Body.String())
 	}
 }
