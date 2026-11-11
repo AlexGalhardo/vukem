@@ -153,12 +153,22 @@ func (s *session) subscribe(channel string) {
 		return
 	}
 
+	// A presence channel lists its members before the subscription is kept:
+	// a failing store refuses it instead of sending an empty list.
+	members, err := sub.Here(s.ctx, channel)
+	if err != nil && !errors.Is(err, broadcast.ErrInvalidChannel) {
+		sub.Close()
+		s.fail(channel, err)
+
+		return
+	}
+
 	cs := &channelSub{sub: sub}
 	s.subs[channel] = cs
 
 	s.send(Frame{Type: TypeSubscribed, Channel: channel})
 
-	if members, ok := sub.Members(channel); ok {
+	if err == nil {
 		if b, err := json.Marshal(members); err == nil {
 			s.send(Frame{Type: TypeHere, Channel: channel, Data: b})
 		}
