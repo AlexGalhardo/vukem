@@ -5,7 +5,7 @@ description: Manual for key, maintenance mode, route:list, about, queue, schedul
 
 This page covers the commands you use while an app runs and while you ship it: keys, maintenance mode, inspection, queues, the scheduler, OpenAPI and client generation. The first group is **global**; the rest are **app** commands, which `vukem` builds from `cmd/app` and runs for you. Back to the [command cheat sheet](/docs/cli/reference).
 
-For app commands, flags go **before** positional arguments, and the app boots first (a boot error such as `vukem: APP_DEBUG must be false when APP_ENV=production` exits with 1). `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:client` and `view:check` run in **warmup** mode instead: they register the routes but open no database, boot no provider and do not need `APP_KEY`.
+For app commands, flags go **before** positional arguments, and the app boots first (a boot error such as `vukem: APP_DEBUG must be false when APP_ENV=production` exits with 1). `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:models`, `codegen:client` and `view:check` run in **warmup** mode instead: they register the routes but open no database, boot no provider and do not need `APP_KEY`.
 
 ## `vukem hash:make`
 
@@ -406,6 +406,26 @@ export type TokensStoreBody = unknown;
 The output is the last lines of the real result. It shares the errors of `openapi:export`.
 
 The types follow the JSON each route declares, not every Go struct in the module. A field is optional (`?`) unless validation marks it required. A pointer is also `| null`, so `*string` with `omitempty` is `name?: string | null`. A slice is an array (`tags?: string[]`). An `enum` tag or `validate:"oneof=draft live"` becomes `"draft" | "live"`. A `map[string][]string` field is `errors?: Record<string, string[]>`, which is also the shape on the shared problem response. There is no `types:generate` command: this one is `codegen:types`. It does not invent domain rules. A hand-written `types.ts` remains valid; generate when you want CI to diff the route contracts.
+
+## `vukem codegen:models`
+
+Generate typed column references (`cols.Users.Email.Eq("x")`) for the models the app lists with `vukem.WithModels(orm.ModelOf[T]()...)`. **App**, warmup mode, opens no connections.
+
+```text
+vukem codegen:models [-o file] [-pkg name] [-check]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-o` | string | `app/models/cols/cols_gen.go` | Output file. `-` prints to stdout. |
+| `-pkg` | string | the directory name of `-o` | Package name of the generated file. |
+| `-check` | bool | `false` | Write nothing; exit 1 with `codegen:models: <file> is out of date; run codegen:models` when the file differs from what would be generated. |
+
+```bash
+vukem codegen:models -check
+```
+
+Without `WithModels` the command fails with `codegen:models: no models registered; pass vukem.WithModels(orm.ModelOf[T]()...)`. The file is deterministic (tables in name order, fields in struct order), so CI can run `-check`. See [the query builder](/docs/database).
 
 ## `vukem codegen:routes`
 

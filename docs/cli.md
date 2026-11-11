@@ -9,7 +9,7 @@ The user-facing manual (every command, flag, environment variable, error and exa
 | Binary | Installed by | Knows about the app? | Commands |
 | --- | --- | --- | --- |
 | **`vukem`** (global) | `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` | No — works on files | `new`, `make:*`, `install:*`, `serve`, `build`, `key:generate`, `key:rotate`, `codegen:rpc`, `version`, `doctor` |
-| **app binary** (`cmd/app`) | built from the user's project | Yes — boots the app | `serve` (default: HTTP server, plus the queue worker and scheduler when enabled), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:*`, `codegen:types`, `codegen:routes`, `codegen:client`, `view:check`, `about`, `key:generate` (prints a key, runs without booting), user commands |
+| **app binary** (`cmd/app`) | built from the user's project | Yes — boots the app | `serve` (default: HTTP server, plus the queue worker and scheduler when enabled), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:*`, `codegen:types`, `codegen:routes`, `codegen:models`, `codegen:client`, `view:check`, `about`, `key:generate` (prints a key, runs without booting), user commands |
 
 When `vukem` receives a command it does not own, it delegates to the project's binary: `cmd/app` is built into `.vukem/bin/app` (rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer than the binary) and run with the same arguments; its exit code is passed through. So `vukem migrate` works from the project root exactly like `php artisan migrate`. Projects ignore `.vukem/` in `.gitignore`.
 
@@ -90,6 +90,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | app: `codegen:types [-zod] [-o file] [-prefix /api]` | TypeScript types for every schema and operation (`<Op>Body`, `<Op>Query`, `<Op>Response`), plus Zod 4 schemas (`<Name>Schema`, `<Op>BodySchema`) with `-zod`; `-prefix` keeps only routes under that path prefix, overriding `OPENAPI_PREFIX`; runs in warmup mode (no provider `Boot`, no database, `APP_KEY` optional) |
 | app: `view:check [-strict] [-json]` | Check the typed `html/template` views (`view.Of`, `vukem.WithViewPages`) against their Go types, route names and htmx `#id` targets; prints `file:line:col: code: message`, exits 1 on problems; warmup mode, no connections; `vukem serve` runs it after each rebuild and only warns ([frontend.md](frontend.md#typed-views-and-viewcheck)) |
 | app: `codegen:routes [-o file]` | Typed `routes.ts` for the frontend (`route(name, params, query)`, `RouteName`, `routes`); default `resources/js/routes.ts`, `-o -` prints to stdout; runs in warmup mode, no connections ([frontend.md](frontend.md)) |
+| app: `codegen:models [-o file] [-pkg name] [-check]` | Typed column references (`cols.Users.Email.Eq(...)`) for the models listed with `vukem.WithModels(orm.ModelOf[T]()...)`; default `app/models/cols/cols_gen.go`, `-o -` prints to stdout, `-check` writes nothing and fails when the file is out of date; runs in warmup mode, no connections ([database.md](database.md#typed-columns)) |
 | app: `codegen:client [-lang ts\|go] [-o file] [-package name] [-prefix /api]` | Typed API client from the OpenAPI document: TypeScript `createClient` (default `resources/js/api.ts`) or a stdlib-only Go `Client` (default `internal/apiclient/client.go`, package `apiclient`); `-o -` prints to stdout; `-prefix` keeps only routes under that path prefix (overriding `OPENAPI_PREFIX`), so page routes stay out of the client; runs in warmup mode ([api.md](api.md#client-generation)) |
 | `vukem make:proto <Name> [--force]` | gRPC service skeleton `proto/<name>/v1/<name>.proto` (package `<name>.v1`, `go_package` under `gen/`, one `Get<Name>` RPC), plus `buf.yaml` and a `buf.gen.yaml` running `protoc-gen-go` and `protoc-gen-connect-go` through `go tool` when they do not exist yet; prints the `go get -tool` lines ([api.md](api.md#code-generation)) |
 | `vukem codegen:rpc [--protoc] [-proto dir] [-out dir]` | Generate Go and connect-go code: `buf generate` with `buf.gen.yaml` (`go tool buf` when buf is a tool of the module, else `buf` on `PATH`), otherwise `protoc` with the plugins built by `go tool -n`; refuses to run until both plugins are `tool` directives in `go.mod` ([api.md](api.md#code-generation)) |
@@ -101,7 +102,7 @@ Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seed
 
 ### BETA
 
-Shipped: `make:proto`, `codegen:rpc`, app: `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:client`, `openapi:serve` (via `apidocs.Command()`), `queue:work`, `queue:failed`, `queue:retry`, `queue:forget`, `schedule:run`, `schedule:work`, `schedule:list` (see the table above).
+Shipped: `make:proto`, `codegen:rpc`, app: `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:models`, `codegen:client`, `openapi:serve` (via `apidocs.Command()`), `queue:work`, `queue:failed`, `queue:retry`, `queue:forget`, `schedule:run`, `schedule:work`, `schedule:list` (see the table above).
 
 Also shipped: `install:inertia`, `ssr:start`, `ssr:check`, `down`/`up` (maintenance mode).
 

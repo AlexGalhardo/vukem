@@ -200,6 +200,70 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 
 The ORM needs MySQL to report matched rows for `UPDATE` (`clientFoundRows=true`, the default of `drivers/mysql`): with `false`, an update that changes nothing looks like a missing row (`ErrNotFound`). That includes connections wrapped with `database.FromSQL`, whose DSN the framework does not see.
 
+### Transactions
+
+`db.Tx(ctx, fn)` commits when `fn` returns nil and rolls back on an error or a panic. `db.TxWith(ctx, database.TxOptions{Isolation: sql.LevelSerializable, ReadOnly: true}, fn)` takes an isolation level and a read-only flag (a level the driver does not support is its error, wrapped as `database: begin: ...`). On SQLite a read-only transaction of a file database runs on the reader pool, so it never waits for the single writer, and the reader opens the file read-only; an in-memory database has one connection for both, so the transaction runs with `PRAGMA query_only` instead. A write inside it fails either way. A `Tx` is not safe for concurrent use, and neither is `Savepoint`.
+
+- `database.RunInTx(ctx, ex, fn)` joins the caller's transaction when `ex` is a `*database.Tx`: everything is all or nothing. `CreateMany`, `Sync` and the queue use it.
+- `database.Nested(ctx, ex, fn)` opens a transaction on a `*database.DB` and a **savepoint** on a `*database.Tx`: an error or panic from `fn` undoes only `fn`'s work and the outer transaction stays usable. `tx.Savepoint(ctx, fn)` is the same on a `Tx`. The savepoint name is generated (`vk_sp_<n>`), never taken from the caller, and `AfterCommit` hooks registered inside a rolled-back savepoint are dropped.
+- On MySQL, DDL commits implicitly, which ends the transaction: run schema changes as migrations, not inside a savepoint. Serializable isolation can fail at commit with a serialization error on PostgreSQL; the error comes back as it is and nothing retries it.
+
+```go
+err := db.Tx(ctx, func(tx *database.Tx) error {
+	if err := orm.Create(ctx, tx, &order); err != nil { return err }
+	if err := tx.Savepoint(ctx, func(sp *database.Tx) error {
+		return orm.Create(ctx, sp, &optionalAudit)
+	}); err != nil {
+		slog.WarnContext(ctx, "audit skipped", "err", err) // the order still commits
+	}
+	return nil
+})
+```
+
+### Optimistic locking
+
+Mark one `int64` column `orm:"version"` and `Update` / `UpdateOnly` stop losing concurrent changes:
+
+```go
+type Article struct {
+	orm.Model
+	Title   string
+	Version int64 `orm:"version"`
+}
+```
+
+`Create` (and `CreateMany`, `Upsert`) start the version at 1. An `Upsert` that updates an existing row bumps its version too (and writes the new one back into the struct, with `RETURNING` or one extra `SELECT` on MySQL), so a reader from before it gets `ErrStale`. `Update` adds `"version" = "version" + 1` to the `SET` and `AND "version" = ?` (the version the struct holds) to the `WHERE`, then increments the struct's field. When no row matches, one more query tells the two cases apart: the row exists, so it changed since it was read (`orm.ErrStale`, HTTP 409), or it is gone (`orm.ErrNotFound`, 404).
+
+- The version has to travel with the payload: a form that does not send it back gets a struct with version 0, so `Update` fails with `ErrStale`.
+- `Query.Update(ctx, orm.Set{...})` does not validate the version: it increments it without comparing (unless `version` is in the `Set`); `Delete` does not compare it either. The version column cannot be written through `UpdateOnly`.
+
+### Typed columns
+
+Optional codegen on top of the string API, which stays the base: `codegen:models` writes one variable per table with a typed reference for every column, and `Filter`, `OrFilter`, `FilterJoined` and `Sort` turn them into the same `Where*` / `OrderBy` calls, so there is one validation of the column and one SQL generator.
+
+```go
+// bootstrap/app.go: the app lists its models (core cannot discover them)
+vukem.WithModels(orm.ModelOf[models.User](), orm.ModelOf[models.Post]())
+```
+
+```bash
+./app codegen:models               # app/models/cols/cols_gen.go
+./app codegen:models -check        # CI: fails when the file is out of date
+```
+
+```go
+// before (still valid)
+users, err := orm.QueryOf[models.User](db).
+	Where("active", true).Where("age", ">=", 18).OrderBy("created_at", orm.Desc).Get(ctx)
+
+// after
+users, err := orm.QueryOf[models.User](db).
+	Filter(cols.Users.Active.Eq(true), cols.Users.Age.Gte(18)).
+	Sort(cols.Users.CreatedAt.Desc()).Get(ctx)
+```
+
+The compiler rejects `cols.Users.Email.Eq(42)` (the column holds a `string`) and `Filter(cols.Users.Email.Eq("x"))` on a `Post` query. `FilterJoined(cols.Users.Name.Eq("Ada"))` filters a joined model's column once it is joined. A column of a generic type (`orm.JSON[T]`, `orm.Encrypted[T]`, `sql.Null[T]`) is generated as `any`, which gives up the value type check for that column. `Eq` with a nil pointer is `= NULL`, which never matches: use `IsNull`. A generated file lists every non-standard-library package under an explicit import alias (the last path element, or the one before a `/vN` suffix); a model in `package main` cannot be imported and is an error. `-check` ignores CRLF line endings and needs `-o` to name the file.
+
 ### Joins and projections
 
 Joins name the other model as a type parameter, so its table and columns are checked against its metadata; nothing typed by hand becomes an identifier. The result stays `[]T`: read other tables' columns with `SelectAs` and `Scan[R]`, which maps result columns to the fields of any struct by name (a column the struct has no field for, or a repeated one, is an error, so a misspelt alias shows up in a test).
@@ -540,9 +604,7 @@ Checked against the code at v0.40.0. Until one of these lands, the workaround is
 | --- | --- | --- |
 | Query shape | `RIGHT`/`FULL` joins, self joins and table aliases, CTEs, `UNION`, window functions | `orm.Raw` |
 | Relations | Polymorphic and has-many-through relations, a limit per parent in `WithWhere` | Load the second level with its own query |
-| Writes | Find-or-create (two hidden queries; `Upsert` covers most uses), a version column for optimistic locking | `db.ExecContext` inside `db.Tx` |
-| Transactions | Savepoints, isolation levels and read-only transactions (`db.Tx` starts every transaction with the driver default) | `db.SQL().BeginTx` with `sql.TxOptions` |
-| Columns | Compile-time column references (names are strings checked at run time) | The runtime check fails before the query runs |
+| Writes | Find-or-create (two hidden queries; `Upsert` covers most uses), automatic retry on a serialization failure | `db.ExecContext` inside `db.Tx` |
 | Migrations | Table rebuild on SQLite, changing a column's type, reading an existing schema, generating a migration from a diff, detecting migrations that conflict across branches | `s.Raw`; write the migration by hand |
 | Databases | Turso / libSQL | A SQLite file |
 
