@@ -319,7 +319,8 @@ type Typenamer interface {
 // FieldOption tunes a bound field.
 type FieldOption func(*binding)
 
-// Cost sets the complexity cost of a field (default 1).
+// Cost sets the complexity cost of a field (default 1; 0 keeps the default).
+// A negative n makes New fail.
 func Cost(n int) FieldOption { return func(b *binding) { b.cost = n } }
 
 // New builds a schema from SDL and options. It fails on SDL errors,
@@ -877,6 +878,10 @@ func (b *builder) bind() error {
 			if f.argMap[a] == nil {
 				return fmt.Errorf("graphql: binding %s: Go argument %q is not an argument of the field", key, a)
 			}
+		}
+
+		if bd.cost < 0 {
+			return fmt.Errorf("graphql: binding %s: Cost(%d) must not be negative", key, bd.cost)
 		}
 
 		f.resolve = bd.resolve

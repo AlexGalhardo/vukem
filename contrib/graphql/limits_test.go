@@ -128,6 +128,26 @@ func TestLimitsConfigurable(t *testing.T) {
 	}
 }
 
+func TestCostZeroKeepsDefault(t *testing.T) {
+	t.Parallel()
+
+	build := func(opts ...FieldOption) *Schema {
+		s, err := New(`type Query { a: Int }`,
+			Query("a", func(context.Context, NoArgs) (int, error) { return 1, nil }, opts...))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return s
+	}
+
+	for _, opts := range [][]FieldOption{nil, {Cost(0)}} {
+		if r := build(opts...).Execute(t.Context(), Request{Query: `{ a }`}); len(r.Errors) > 0 {
+			t.Errorf("opts %v: errors = %v", len(opts), r.Errors)
+		}
+	}
+}
+
 // introspectionBomb nests a fragment n levels deep, each level selecting
 // the previous one twice through aliases and once through a list.
 func introspectionBomb(n int) string {
@@ -226,6 +246,55 @@ func TestSecurity_A06_GraphQLComplexityUsesSDLDefaults(t *testing.T) {
 			CodeLimitExceeded,
 		},
 		{"explicit value wins", Request{Query: `{ items(first: 2) { expensive } }`}, ""},
+	}
+
+	for _, tt := range tests {
+		if r := s.Execute(t.Context(), tt.req); firstCode(r) != tt.want {
+			t.Errorf("%s: code = %q (%v), want %q", tt.name, firstCode(r), r.Errors, tt.want)
+		}
+	}
+}
+
+func TestSecurity_A06_GraphQLComplexityPageSizeArguments(t *testing.T) {
+	t.Parallel()
+
+	type item struct {
+		ID int `json:"id"`
+	}
+
+	// The default is 1: an omitted argument is cheap, but an explicit null
+	// reaches the resolver as nil, which may mean "no page size".
+	s, err := New(`type Item { id: Int expensive: Int }
+		type Query { items(first: Int = 1, last: Int): [Item!]! }`,
+		Query("items", func(context.Context, map[string]any) ([]item, error) { return nil, nil }),
+		Field("Item", "expensive", func(context.Context, *item, NoArgs) (int, error) { return 0, nil }, Cost(50)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		req  Request
+		want string
+	}{
+		{"omitted uses the default", Request{Query: `{ items { expensive } }`}, ""},
+		{"literal null is the worst case", Request{Query: `{ items(first: null) { expensive } }`}, CodeLimitExceeded},
+		{
+			"null variable is the worst case",
+			Request{Query: `query ($n: Int) { items(first: $n) { expensive } }`, Variables: map[string]any{"n": nil}},
+			CodeLimitExceeded,
+		},
+		{
+			"the largest argument counts",
+			Request{Query: `{ items(first: 2, last: 1000000) { expensive } }`},
+			CodeLimitExceeded,
+		},
+		{
+			"the largest argument counts, any order",
+			Request{Query: `{ items(last: 2, first: 1000000) { expensive } }`},
+			CodeLimitExceeded,
+		},
 	}
 
 	for _, tt := range tests {
