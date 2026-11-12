@@ -22,7 +22,52 @@ This is the <Term tip="Insecure Direct Object Reference: the app trusts an id fr
 ## Quick start
 
 <Steps>
-<Step title="1. Give the model a tenant column">
+<Step title="1. Add the tables">
+
+Every tenant-owned table gets a `workspace_id` column with an index. A `memberships` table links users to workspaces.
+
+```go title="database/migrations/20261112090000_create_workspaces.go"
+package migrations
+
+import "github.com/AlexGalhardo/vukem/schema"
+
+func m20261112090000CreateWorkspaces() schema.Migration {
+	return schema.Migration{
+		ID: "20261112090000_create_workspaces",
+		Up: func(s *schema.Schema) error {
+			err := s.Create("memberships", func(t *schema.Table) {
+				t.ID()
+				t.String("workspace_id")
+				t.String("user_id")
+				t.String("role") // owner, admin or member
+				t.Timestamps()
+				t.UniqueIndex("workspace_id", "user_id")
+			})
+			if err != nil {
+				return err
+			}
+
+			return s.Create("tasks", func(t *schema.Table) {
+				t.ID()
+				t.String("workspace_id")
+				t.String("title")
+				t.Timestamps()
+				t.Index("workspace_id")
+			})
+		},
+		Down: func(s *schema.Schema) error {
+			if err := s.DropIfExists("tasks"); err != nil {
+				return err
+			}
+
+			return s.DropIfExists("memberships")
+		},
+	}
+}
+```
+
+</Step>
+<Step title="2. Give the model a tenant column">
 
 ```go title="models/task.go"
 package models
@@ -48,19 +93,34 @@ func (t *Task) BeforeCreate(ctx context.Context) error {
 ```
 
 </Step>
-<Step title="2. Mount the middleware">
+<Step title="3. Check membership and mount the middleware">
+
+`isMember` answers one question: does this user belong to this workspace?
+
+```go title="routes/web.go"
+func isMember(db database.Executor) func(context.Context, string, tenancy.ID) (bool, error) {
+	return func(ctx context.Context, user string, ws tenancy.ID) (bool, error) {
+		return orm.QueryOf[models.Membership](db).
+			Where("workspace_id", string(ws)).
+			Where("user_id", user).
+			Exists(ctx)
+	}
+}
+```
+
+Mount it after `auth.Required`, on the routes that belong to a workspace:
 
 ```go title="routes/web.go"
 r.Group("/w/{workspace}", func(g *router.Group) {
 	g.Use(auth.Required(web), tenancy.Middleware(tenancy.Config{
 		Resolve: tenancy.PathValue("workspace"),
-		Member:  isMember,
+		Member:  isMember(db),
 	}))
 })
 ```
 
 </Step>
-<Step title="3. Scope every query">
+<Step title="4. Scope every query">
 
 ```go title="handlers/tasks.go"
 tasks, err := orm.QueryOf[models.Task](db).
@@ -105,6 +165,29 @@ With the `Session` resolver, `tenancy.Switch(r, key, id)` stores the chosen work
 
 `orm.Upsert` runs no hooks, so call `tenancy.Assign` yourself before it.
 
+Updates and deletes take the same scope, so a forged id in a form can only touch the current tenant's rows:
+
+```go title="handlers/tasks.go"
+n, err := orm.QueryOf[models.Task](db).
+	Scope(tenancy.Scope[models.Task](ctx, "workspace_id")).
+	Where("id", id).
+	Delete(ctx)
+// n == 0: the task is not in this workspace, answer 404
+```
+
+### What happens under the hood
+
+On each request the middleware runs these steps:
+
+1. It reads the signed-in user from `auth.Principal`.
+2. It calls `Resolve` to get the tenant id.
+3. It calls `Member` with both ids.
+4. It stores the tenant in the request context with `tenancy.With` and calls your handler.
+
+Any failed step stops the request with 404 through the app's error handler. Resolver and membership errors are logged with `slog.Warn`, without the request's cookies or headers.
+
+`Scope` reads the tenant once, when you build the query. Without a tenant it adds an empty `WHERE column IN ()`, which the ORM turns into a condition that is always false.
+
 ### Jobs, commands and tests
 
 Outside a request there is no middleware. Put the tenant in the context yourself with `tenancy.With(ctx, id)`.
@@ -116,11 +199,20 @@ Outside a request there is no middleware. Put the tenant in the context yourself
 | `Resolve` | yes | finds the tenant of the request |
 | `Member` | yes | reports whether the user belongs to the tenant |
 
+The package returns these errors:
+
+| Error | When |
+| --- | --- |
+| `tenancy.ErrNoTenant` | `Assign` or `Switch` ran with no tenant |
+| `tenancy.ErrNoSession` | the `Session` resolver or `Switch` ran without the session middleware |
+
 ## Security
 
 - Always scope reads, updates and deletes: an unscoped query sees every tenant.
 - The tenant id from the URL is only a claim; `Member` is what makes it true.
 - Cross-tenant admin screens should use an unscoped query on purpose, behind their own authorization.
+- The `Header` resolver trusts nothing by itself: a client can send any value, and `Member` still decides.
+- Keep the tenant column out of request binding. `Assign` overwrites it on create, but an update that copies the whole form could move a row to another tenant.
 
 ## Testing
 
@@ -136,12 +228,24 @@ rows, _ := orm.QueryOf[models.Task](db).
 // len(rows) == 0
 ```
 
+Test the HTTP side too. A user who is not a member must get a 404, never the page:
+
+```go title="routes/web_test.go"
+app.Client(t).ActingAs("web", alice).
+	Get("/w/globex/tasks").
+	AssertStatus(http.StatusNotFound)
+```
+
 ## Common mistakes
 
 - Forgetting `Scope` on one query. Wrong: `orm.QueryOf[Task](db).Get(ctx)` returns every tenant's rows. Right: add `.Scope(tenancy.Scope[Task](ctx, "workspace_id"))`.
 - Mounting `tenancy.Middleware` before `auth.Required`. The user is not known yet, so every request is a 404.
+- Creating rows in a job without a tenant. The insert fails with `tenancy: no tenant`; wrap the job's context with `tenancy.With(ctx, id)`.
+- Calling `orm.Upsert` and expecting the tenant to be set. Upsert runs no hooks, so call `tenancy.Assign` first.
+- Using `Session` without the session middleware. Every request is a 404, and the log shows `tenancy: no session (add session middleware to the router stack)`.
 
 ## Next steps
 
 - [Authorization](/docs/security/authorization) for roles inside a tenant.
+- [Personal finance SaaS example](/docs/getting-started/finance-saas) for workspaces, invites and billing per tenant in a full app.
 - [Authentication](/docs/security/authentication) for the signed-in user.
