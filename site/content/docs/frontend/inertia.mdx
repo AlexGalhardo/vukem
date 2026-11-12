@@ -712,6 +712,16 @@ Rules for the struct:
 
 `vukem codegen:pages -check` fails when `page-props.ts` is stale, `vukem codegen --check` does the same for every generated file, and `vukem serve` regenerates them after each build. The map form, `inertia.Render(c, "Name", inertia.Props{...})`, keeps working beside the typed one. Scroll props are not typed yet.
 
+### TypeScript for your own Go types
+
+`codegen:pages` builds its declarations with `openapi.TypeScriptTypes(roots map[string]reflect.Type) (string, error)`, which you can also call for Go types that are not in an OpenAPI document, such as a payload you send over SSE or a WebSocket. It writes one exported type per named struct reached, then one alias per entry of `roots`, sorted by name. A field the server always sends is required; one with `omitempty` or `omitzero` is optional, and a struct without fields is `Record<string, never>`. There is no header, so the caller writes its own.
+
+```go
+ts, err := openapi.TypeScriptTypes(map[string]reflect.Type{
+	"CartEvent": reflect.TypeFor[CartEvent](),
+})
+```
+
 ## Typed routes
 
 `vukem codegen:routes` writes `resources/js/routes.ts` with every **named** route, so components build URLs with type checks instead of string concatenation:
