@@ -58,13 +58,29 @@ Weekly, on Monday:
 3. Every Monday `starter-deps.yml` runs `go run ./internal/tools/starterdeps -write`, the starter end-to-end tests, and opens or updates the `chore/starter-deps` pull request. `task deps:starters` lists what is behind without changing anything.
 4. Quarterly: count third-party modules per `go.mod` (`go mod graph`); every new direct dependency needs a decision under the [dependency policy](architecture.md#dependency-policy).
 
-The starter dependencies (JS packages, markdownlint, Biome, React Email, htmx and the make:proto tool versions) always follow the latest stable release, never a pre-release. Three rules sit on top of that:
+Everything `vukem new` scaffolds always follows its latest stable release, never a pre-release. That covers:
+
+- the JS packages of the starters, markdownlint, Biome, React Email, htmx, and the package manager versions in `pm.go`;
+- the make:proto tool versions, `stripeVersion` and `studioVersion`;
+- the Docker images of the generated Dockerfile and compose file and of the toolchain image (tag and index digest), plus Bun and its two SHA-256 checksums there;
+- the GitHub Actions pinned by SHA in the generated workflows (latest release, commit SHA resolved from its tag).
+
+Some rules sit on top of that:
 
 - htmx follows the newest 4.x and never changes major (decision F2); updating it replaces the vendored `htmx.min.js` and `htmxSHA256`.
-- Vue and Svelte starters keep TypeScript 6.x until `vue-tsc` and `svelte-check` list 7 in their peerDependencies.
+- Vue and Svelte starters keep TypeScript 6.x until `vue-tsc` and `svelte-check` list 7 in their peerDependencies. An open-ended `>=5` does not count.
 - Within one `package.json`, every version satisfies the peerDependencies of the others.
+- Every image stays on its major line, and `golang` also on its minor, which must match the `go` directive of `go.mod`; a Go minor bump is a toolchain decision made by hand. Alpine variants follow the newest alpine release the image publishes.
+- yarn stays on Classic 1.x, and Bun follows the `oven/bun` image tag.
 
-The Dockerfile image digests, the actions pinned in the generated workflows, the package manager versions in `pm.go` and the `stripeVersion` and `studioVersion` tags are not covered and stay manual. A pull request opened with `GITHUB_TOKEN` does not trigger the required checks; push an empty commit to the branch to run them. The repository setting that lets Actions create pull requests must be on.
+`-write` also rewrites the old version where `docs/*.md` and `site/content/docs/**/*.mdx` mention it next to the package name (`htmx 4.0.0`, `react-email@6.11.6`, `oven/bun:1.4.4-alpine`). `site/content/versions/` and `CHANGELOG.md` are history and never change. When a docs page changes, the workflow commits it and then runs `npm ci && npm run last-updated` in `site/`, in a second commit, because the date comes from git history.
+
+The workflow needs a way to open the pull request and to run the required checks on it. Pick one:
+
+1. Enable the repository setting Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests". The pull request is then opened with `GITHUB_TOKEN`, which does not trigger the required checks, so push an empty commit to `chore/starter-deps` to run them.
+2. Add a `STARTER_DEPS_TOKEN` secret (a fine-grained PAT or a GitHub App token with contents and pull requests write). The workflow pushes and opens the pull request with it when it is set, so CI runs on its own; it falls back to `GITHUB_TOKEN` otherwise.
+
+If `gh pr create` is refused, the run fails with an `::error::` that names both options, and `ci-failure.yml` opens the issue.
 
 A module added to the repository must be added to the `gomod` directories in `.github/dependabot.yml`, to the `vuln.yml` matrix and to `MODULES` in `Taskfile.yml`.
 
