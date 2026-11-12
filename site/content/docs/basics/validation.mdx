@@ -500,6 +500,8 @@ Helpers:
 z.String().Min(3).Message("too_small", "Give it at least {min} letters.")
 ```
 
+`WithMessage(text)` on a string or number schema sets the message of the rule declared just before it, so two `Regex` rules can say different things: `z.String().Min(3).WithMessage("Too short.").Regex(re).WithMessage("Bad format.")`. The precedence is `WithMessage` (the rule), then `Message` (the schema), then the default. The issue keeps its `code` and `params` but has no `key`.
+
 A message set this way is never translated. Use catalog keys (below) when your app speaks several languages.
 
 ## What the client receives
