@@ -2060,7 +2060,7 @@ func dbPullCommand() Command {
 // overwrite one, so a generated migration never replaces a migration that
 // shares its ID (a second run in the same second) or one the developer edited.
 func createFile(path string, src []byte) error {
-	//nolint:gosec // G703: the developer chose the output directory
+	//nolint:gosec,nolintlint // G703 (2.15+): the developer chose the output directory
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
