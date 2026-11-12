@@ -494,6 +494,30 @@ func Publish(ctx context.Context, ex database.Executor, p *models.Post) error {
 }
 ```
 
+### Isolation levels and savepoints
+
+`db.TxWith(ctx, database.TxOptions{Isolation: sql.LevelSerializable, ReadOnly: true}, fn)` takes an isolation level and a read-only flag; a level the driver does not support is its error, wrapped as `database: begin: ...`. On SQLite, a read-only transaction of a file database runs on the reader pool, so it never waits for the single writer; a write inside it fails.
+
+`database.Nested(ctx, ex, fn)` opens a transaction on a `*database.DB` and a **savepoint** on a `*database.Tx`. `tx.Savepoint(ctx, fn)` is the same on a `Tx`. An error or panic from `fn` undoes only `fn`'s work and the outer transaction stays usable; `AfterCommit` hooks registered inside a rolled-back savepoint are dropped.
+
+```go
+err := db.Tx(ctx, func(tx *database.Tx) error {
+	if err := orm.Create(ctx, tx, &order); err != nil {
+		return err
+	}
+
+	if err := tx.Savepoint(ctx, func(sp *database.Tx) error {
+		return orm.Create(ctx, sp, &optionalAudit)
+	}); err != nil {
+		slog.WarnContext(ctx, "audit skipped", "err", err) // the order still commits
+	}
+
+	return nil
+})
+```
+
+On MySQL, DDL commits implicitly and ends the transaction, so run schema changes as migrations, not inside a savepoint. A serialization failure under serializable isolation comes back as it is: nothing retries it. A `Tx` is not safe for concurrent use.
+
 ### Limits that must lock first: `LockKey`
 
 A transaction does not make "count, then insert" safe by itself. Two requests can both count `0` against a limit of `1` and both insert, because `Count` on an empty set locks nothing. On SQLite this cannot happen (`BEGIN IMMEDIATE` makes the whole transaction the only writer), but on PostgreSQL READ COMMITTED lets both through. Take a lock on the thing you limit before you count:
