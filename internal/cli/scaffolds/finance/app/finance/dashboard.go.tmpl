@@ -79,9 +79,10 @@ func (s *Service) Dashboard(ctx context.Context, month string) (Dashboard, error
 	months := monthsBack(month, 6)
 	points := map[string]*MonthPoint{}
 
-	for _, m := range months {
-		d.Months = append(d.Months, MonthPoint{Month: m})
-		points[m] = &d.Months[len(d.Months)-1]
+	d.Months = make([]MonthPoint, len(months))
+	for i, m := range months {
+		d.Months[i] = MonthPoint{Month: m}
+		points[m] = &d.Months[i]
 	}
 
 	cats, err := s.Categories(ctx)

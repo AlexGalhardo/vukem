@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **cli:** Preserve every month's finance chart totals by allocating the complete history before indexing it (ST-3).
+
 - **cli:** Keep workspace settings props separate from the shared workspace switcher (ST-2).
 
 - **cli:** Keep empty finance-dashboard chart collections as JSON arrays so a new workspace renders before its first transaction (ST-1).
