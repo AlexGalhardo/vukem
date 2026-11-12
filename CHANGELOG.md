@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **cli:** Keep empty finance-dashboard chart collections as JSON arrays so a new workspace renders before its first transaction (ST-1).
+
 ## [0.43.0] - 2026-11-12
 
 ### Added
