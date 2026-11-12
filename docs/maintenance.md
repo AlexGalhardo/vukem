@@ -45,6 +45,7 @@ After each [PLAN.md](PLAN.md) task group:
 3. Post-release, 15 minutes:
    - `gh run list --workflow release.yml` is green;
    - `cosign verify-blob` on the published `checksums.txt` ([SECURITY.md](../.github/SECURITY.md#verifying-release-artifacts));
+   - the `image` job of `release.yml` is green and `cosign verify` passes on the new `ghcr.io/alexgalhardo/vukem` digest ([SECURITY.md](../.github/SECURITY.md#verifying-the-container-image)); after the first image release, set the package visibility to public (GitHub → profile → Packages → `vukem` → Package settings), or anonymous `docker pull` fails;
    - read the score at <https://api.scorecard.dev/projects/github.com/AlexGalhardo/vukem> and record it in the pinned "Scorecard tracking" issue;
    - bump the reference apps once the Go proxy serves the version.
 

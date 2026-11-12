@@ -57,3 +57,19 @@ gh attestation verify vukem_<version>_<os>_<arch>.tar.gz -R AlexGalhardo/vukem
 ```
 
 Supply-chain details: [docs/tooling.md](../docs/tooling.md#supply-chain).
+
+## Verifying the container image
+
+Stable releases also publish `ghcr.io/alexgalhardo/vukem`. The digest is signed with cosign keyless by the same workflow, and has an SBOM, SLSA provenance and a GitHub build provenance attestation. Resolve the digest of the tag you use, verify it, then pull by digest:
+
+```sh
+IMAGE=ghcr.io/alexgalhardo/vukem
+DIGEST=$(docker buildx imagetools inspect "$IMAGE:X.Y.Z" --format '{{json .Manifest.Digest}}' | tr -d '"')
+cosign verify "$IMAGE@$DIGEST" \
+  --certificate-identity-regexp '^https://github\.com/AlexGalhardo/vukem/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify "oci://$IMAGE@$DIGEST" -R AlexGalhardo/vukem
+docker pull "$IMAGE@$DIGEST"
+```
+
+Prefer the exact version or the digest over `latest`, which moves on every stable release.

@@ -122,6 +122,34 @@ The starter ships tests for the home page, the posts CRUD and uploads. They use 
 </Step>
 </Steps>
 
+## Running the CLI in Docker
+
+If you do not want to install Go, every stable release publishes a toolchain image: `ghcr.io/alexgalhardo/vukem`. It holds the `vukem` CLI, Go, Bun and git, and runs as a non-root user (uid 1000) in `/work`.
+
+```bash
+docker run --rm -it -v "$PWD:/work" \
+  ghcr.io/alexgalhardo/vukem:X.Y.Z new todo --module example.com/todo
+```
+
+The image's entrypoint is `vukem`, so the arguments are a normal `vukem` command. To serve the project, publish the port:
+
+```bash
+docker run --rm -it -v "$PWD:/work" -p 3000:3000 \
+  ghcr.io/alexgalhardo/vukem:X.Y.Z serve
+```
+
+The image sets `HOST=0.0.0.0` and `PORT=3000`. Without `HOST`, the app listens on `localhost` inside the container and `-p 3000:3000` cannot reach it.
+
+The tags are:
+
+- `X.Y.Z`: one exact release;
+- `X.Y`: the newest patch of a minor;
+- `latest`: the newest stable release.
+
+Pin the exact version, or its digest, in anything you want to reproduce. `latest` moves on every release; [verify the signature](https://github.com/AlexGalhardo/vukem/blob/main/.github/SECURITY.md#verifying-the-container-image) before you trust a digest.
+
+The same image works as a dev container image and as a CI base: set `image` in `devcontainer.json`, or use it as the job container and run `vukem` directly. Files in `/work` belong to uid 1000, so on Linux hosts a different uid needs `--user "$(id -u):$(id -g)"`.
+
 ## What `vukem new` does
 
 `vukem new <name>` runs these steps in order, and stops at the first one that fails:
