@@ -49,12 +49,13 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── crypt/                        AES-256-GCM encryption, key rotation, encrypted cookies
 ├── i18n/                         JSON catalogs, CLDR plurals, locale middleware, translated validation
 ├── devtools/                     /_vukem dev dashboard: requests, SQL (N+1), jobs, events, mail, logs
+├── loadtest/                     load generator behind `vukem bench`: scenarios, thresholds, baselines, live dashboard
 ├── vukemtest/                    fluent HTTP test client, DB helpers, fakes
 ├── cmd/vukem/                 global CLI
 ├── internal/
 │   ├── cli/stubs/                embedded generator templates
 │   ├── codemod/                  go/ast edits for bootstrap/*.go
-│   └── tools/commitlint/         Conventional Commits validator
+│   └── tools/                    repo tooling (apicheck, commitlint, configref, covergate, fixinline, labelsync, modcheck, release, snippetcheck)
 ├── drivers/
 │   ├── postgres/                 module …/drivers/postgres (pgx)
 │   ├── mysql/                    module …/drivers/mysql (go-sql-driver/mysql; MySQL 8, MariaDB 11)
@@ -62,6 +63,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   ├── mongo/                    module …/drivers/mongo (mongo-driver v2)
 │   ├── otel/                     module …/drivers/otel (OpenTelemetry tracing)
 │   ├── s3/                       module …/drivers/s3 (stdlib SigV4 client, no AWS SDK)
+│   ├── turso/                    module …/drivers/turso (experimental: local SQLite-compatible file, optional Turso Cloud sync)
 │   └── websocket/                module …/drivers/websocket (coder/websocket, broadcast protocol)
 ├── contrib/
 │   ├── cloudflare/               module …/contrib/cloudflare (client IP, origin lock, visitor headers, edge cache, purge, Access JWT)
@@ -71,7 +73,8 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   ├── http3/                    module …/contrib/http3 (HTTP/3 over QUIC on quic-go)
 │   ├── imaging/                  module …/contrib/imaging (thumbnails from storage.Disk: bounded decode, EXIF orientation)
 │   ├── qrcode/                   module …/contrib/qrcode (PNG and SVG QR codes, rsc.io/qr)
-│   └── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
+│   ├── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
+│   └── studio/                   module …/contrib/studio (experimental database browser behind `vukem studio`: SQL, MongoDB, Redis)
 ├── internal/cli/starter/         app skeletons embedded by `vukem new`
 ├── docs/
 └── go.work                       local development; nested-module CI jobs run with GOWORK=off
