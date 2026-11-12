@@ -202,17 +202,83 @@ vukem studio [flags]
 | `-mongo-watch` | bool | `false` | Reserved: change streams instead of polling are not implemented yet (Studio polls). |
 | `-redis-notify` | bool | `false` | Reserved: keyspace notifications instead of polling are not implemented yet (Studio polls). |
 
-**Sources**: the SQL database from `DATABASE_URL`, MongoDB from `MONGO_URL` (and `MONGO_DATABASE`) and Redis from `REDIS_URL`; a source that is not configured is not shown. A page refreshes itself when its data changes (the server polls every `-refresh` and sends a server-sent event only on a change; at most 8 streams at a time).
+**Sources**
 
-**SQL browser**: the table list shows the number of rows of each table (a `COUNT(*)` with a shared 2 second budget; a table that did not finish shows no number). A table opens as a grid with filters (`column:op:value`, with `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `contains`, `starts`, `null` and `notnull`), sorting and paging: by the primary key it pages with a keyset cursor, by another column with an offset capped at page 1000, 50 rows a page and at most 200. Table, column and sort names come only from the database catalog and values are bound parameters, so a name Studio cannot find is a 404 and nothing is sent to the database. A row opens on its own page with every value (up to 64 KiB) and a "Referenced by" list that links to each table pointing at it, already filtered to that row. A table without a primary key has no row page.
+- SQL: the database in `DATABASE_URL`.
+- MongoDB: `MONGO_URL` (and `MONGO_DATABASE` when the URL has no database).
+- Redis: `REDIS_URL`.
 
-**Export**: the grid view (filters and sort included) downloads as JSON Lines (`/s/{source}/t/{table}/export`) or CSV (`?format=csv`), with full values, at most 100000 rows. When the cap is reached the trailer `X-Studio-Truncated: true` says so. A CSV cell that starts with `=`, `+`, `-` or `@` gets a leading quote so a spreadsheet shows it as text. Exporting only reads, so it works without `-write`.
+A source that is not configured is not shown. A page refreshes itself when its data changes: the server polls every `-refresh` and sends an event only on a change, with at most 8 open streams.
 
-**SQL console**: one statement at a time (a second statement, an unterminated quote or a MySQL `/*!` comment is refused before it runs). It does not analyse the text to decide it is safe: PostgreSQL and MySQL run it in a read-only transaction that always rolls back, and SQLite on the read-only connection (an in-memory SQLite database has no such connection, so its console needs write mode). Results stop at 1000 rows and the statement at 30 seconds. "Explain" prefixes `EXPLAIN` (`EXPLAIN QUERY PLAN` on SQLite). Database errors are not shown: the page says the statement could not run, and the details go to Studio's own log.
+**SQL browser**
 
-**Editing** (`-write`): SQL rows can be inserted, updated and deleted, documents inserted, replaced and deleted, and Redis strings, hash fields and TTLs edited, with a typed confirmation for every deletion (the primary key, joined by commas when it has several columns, the document's `_id`, or the key name). The SQL forms exist only for a table with a primary key, never change the primary key, send only the columns you submit, check each value against the declared column type before any SQL (whole numbers, booleans, decimals, dates and JSON, with a `NULL` box per nullable column; binary columns are read-only) and roll back unless exactly one row changed. A value that was cut for display is not offered for editing, because saving it would write the cut text back. With `-write` the SQL console gets a "Write mode" switch, off by default, that runs the statement in a transaction and commits only if it succeeded. Every write is logged on stderr (source, action, target, the key and the columns, the result; never the values; a console statement is cut at 200 bytes). With `-write` and `APP_ENV=production` you still need `-allow-production`. The MongoDB console refuses `$where`, `$function` and `$accumulator` always, and `$out` and `$merge` without `-write`. The Redis console runs only the commands on an allow-list (reads always, writes with `-write`); `KEYS`, `FLUSHALL`, `CONFIG`, `EVAL` and the rest are refused. Keys are browsed with `SCAN`, never `KEYS`. Every write rides on the session cookie and the browser's cross-origin check, like every other request.
+The table list shows the row count of each table, under a shared 2 second budget. A table that does not finish in time shows no number.
 
-**Security**: it listens on loopback only and answers 403 to any other peer, to a request with a proxy header, and to a `Host` that is not a loopback name. The start URL carries a random token that is traded for an `HttpOnly`, `SameSite=Strict` cookie. Every response has a strict Content Security Policy. Without `-write` nothing writes to the database. Passwords and URLs never appear in the output.
+A table opens as a grid:
+
+- Filters use `column:op:value`, with `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `contains`, `starts`, `null` and `notnull`.
+- Sorting by the primary key pages with a keyset cursor; sorting by another column uses an offset capped at page 1000.
+- A page has 50 rows by default and at most 200.
+
+Table, column and sort names come only from the database catalog, and values are bound parameters. A name Studio cannot find answers 404, and nothing reaches the database.
+
+A row opens on its own page with every value (up to 64 KiB) and a "Referenced by" list of the tables that point at it. A table without a primary key has no row page.
+
+**Export**
+
+The grid, with its filters and sort, downloads as JSON Lines (`/s/{source}/t/{table}/export`) or CSV (`?format=csv`). Exports carry full values and stop at 100,000 rows, with the trailer `X-Studio-Truncated: true` when the cap is hit.
+
+A CSV cell that starts with `=`, `+`, `-` or `@` gets a leading quote, so a spreadsheet shows it as text. Exporting only reads, so it works without `-write`.
+
+**SQL console**
+
+Without write mode the console runs reads only, and checks every statement before it runs:
+
+- One statement at a time: a second statement, an unterminated quote or a MySQL `/*!` comment is refused.
+- It must start with a read verb (`SELECT`, `WITH`, `SHOW`, `EXPLAIN`, `DESCRIBE`, `TABLE`, `VALUES`) and cannot use `INTO`.
+- Functions with side effects are refused, such as `pg_sleep`, `pg_terminate_backend`, `SLEEP`, `GET_LOCK`, `LOAD_FILE` and `load_extension`.
+
+The check is a first barrier, not the guarantee. PostgreSQL and MySQL also run the statement in a read-only transaction that always rolls back, and SQLite uses a read-only connection.
+
+An in-memory SQLite database has no read-only connection, so its console needs write mode. Results stop at 1,000 rows and a statement at 30 seconds; "Explain" prefixes `EXPLAIN` (`EXPLAIN QUERY PLAN` on SQLite).
+
+Database errors are not shown on the page. The page says the statement could not run, and the details go to Studio's own log.
+
+**Editing** (`-write`)
+
+With `-write` you can change data in every source:
+
+- SQL: insert, update and delete rows.
+- MongoDB: insert, replace and delete documents.
+- Redis: edit strings, hash fields and TTLs.
+
+Every deletion asks you to type a confirmation: the primary key (joined by commas when it has several columns), the document's `_id`, or the key name.
+
+The SQL forms follow these rules:
+
+- They exist only for a table with a primary key, and never change the primary key.
+- They send only the columns you submit.
+- They check each value against the column type before any SQL: whole numbers, booleans, decimals, dates and JSON, with a `NULL` box for nullable columns. Binary columns are read-only.
+- They roll back unless exactly one row changed.
+- A value that was cut for display is not offered for editing, because saving it would write the cut text back.
+
+In the SQL console, `-write` adds a "Write mode" switch, off by default. It runs the statement in a transaction and commits only if it succeeds.
+
+Every write is logged on stderr with the source, action, target, key, columns and result, never the values. A console statement is cut at 200 bytes in the log.
+
+The other consoles have their own limits:
+
+- MongoDB always refuses `$where`, `$function` and `$accumulator`, and refuses `$out` and `$merge` without `-write`.
+- Redis runs only commands on an allow-list: reads always, writes with `-write`. `KEYS`, `FLUSHALL`, `CONFIG`, `EVAL` and the rest are refused, and keys are browsed with `SCAN`.
+
+With `-write` and `APP_ENV=production` you still need `-allow-production`. Every write rides on the session cookie and the browser's cross-origin check, like any other request.
+
+**Security**
+
+- Studio listens on loopback only, and answers 403 to any other peer, to a request with a proxy header, and to a `Host` that is not a loopback name.
+- The start URL carries a random token, traded for an `HttpOnly`, `SameSite=Strict` session cookie.
+- Every response has a strict Content Security Policy.
+- Without `-write` nothing writes to the database, and passwords and URLs never appear in the output.
 
 ```text
 vukem-studio v0.1.0 (read-only)
