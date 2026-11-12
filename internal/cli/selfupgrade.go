@@ -111,29 +111,35 @@ func newSelfUpgrader(env *Env) *selfUpgrader {
 func inGoBin(env *Env, exe string) bool {
 	var dirs []string
 
-	if v, _ := env.Getenv("GOBIN"); v != "" {
+	if v, ok := env.Getenv("GOBIN"); ok && v != "" {
 		dirs = append(dirs, v)
 	}
 
-	if v, _ := env.Getenv("GOPATH"); v != "" {
+	if v, ok := env.Getenv("GOPATH"); ok && v != "" {
 		dirs = append(dirs, filepath.Join(filepath.SplitList(v)[0], "bin"))
 	} else if home, err := os.UserHomeDir(); err == nil {
 		dirs = append(dirs, filepath.Join(home, "go", "bin"))
 	}
 
-	dir := filepath.Dir(exe)
+	// Both sides are resolved: macOS temp dirs live behind /var -> /private/var
+	// and Windows runners hand out 8.3 short names that EvalSymlinks expands.
+	dir := resolvedDir(filepath.Dir(exe))
 
 	for _, d := range dirs {
-		if r, err := filepath.EvalSymlinks(d); err == nil {
-			d = r
-		}
-
-		if filepath.Clean(d) == filepath.Clean(dir) {
+		if resolvedDir(d) == dir {
 			return true
 		}
 	}
 
 	return false
+}
+
+func resolvedDir(d string) string {
+	if r, err := filepath.EvalSymlinks(d); err == nil {
+		d = r
+	}
+
+	return filepath.Clean(d)
 }
 
 // selfUpgradeCommand updates the vukem CLI itself to the latest stable release.
