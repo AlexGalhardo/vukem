@@ -104,7 +104,7 @@ Context helpers for components (they only get the request `ctx`), all in the cor
 
 ## HTMX
 
-The starter vendors **htmx 4.0.0** at `resources/public/js/htmx.min.js`, served by the static middleware, so no Node or CDN is needed. Its SHA-256 is pinned in `internal/cli/new.go` and checked by a test: upgrading means replacing the file and the hash together. The layout loads it with the request's CSP nonce:
+The starter vendors **htmx 4.0.1** at `resources/public/js/htmx.min.js`, served by the static middleware, so no Node or CDN is needed. Its SHA-256 is pinned in `internal/cli/new.go` and checked by a test: upgrading means replacing the file and the hash together. The layout loads it with the request's CSP nonce:
 
 ```html
 {{htmxScript (asset "js/htmx.min.js")}}

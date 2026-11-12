@@ -18,7 +18,7 @@ import (
 const (
 	protobufVersion = "v1.36.12"
 	connectVersion  = "v1.21.1"
-	bufVersion      = "v1.74.0"
+	bufVersion      = "v1.75.0"
 
 	protocGenGo        = "google.golang.org/protobuf/cmd/protoc-gen-go"
 	protocGenConnectGo = "connectrpc.com/connect/cmd/protoc-gen-connect-go"

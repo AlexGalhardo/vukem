@@ -464,7 +464,7 @@ go get github.com/AlexGalhardo/vukem/contrib/grpc
 vukem codegen:rpc             # gen/invoice/v1/*.pb.go and invoicev1connect/*.connect.go
 ```
 
-- **buf** (recommended): `codegen:rpc` runs `buf generate` with the `buf.gen.yaml` from `make:proto`, whose plugins are `local: ["go", "tool", "protoc-gen-go"]` and `["go", "tool", "protoc-gen-connect-go"]`. Pin buf too with `go get -tool github.com/bufbuild/buf/cmd/buf@v1.74.0` (then `go tool buf` is used), or install it on `PATH`. `buf lint` and `buf breaking` use the generated `buf.yaml` (STANDARD, FILE).
+- **buf** (recommended): `codegen:rpc` runs `buf generate` with the `buf.gen.yaml` from `make:proto`, whose plugins are `local: ["go", "tool", "protoc-gen-go"]` and `["go", "tool", "protoc-gen-connect-go"]`. Pin buf too with `go get -tool github.com/bufbuild/buf/cmd/buf@v1.75.0` (then `go tool buf` is used), or install it on `PATH`. `buf lint` and `buf breaking` use the generated `buf.yaml` (STANDARD, FILE).
 - **protoc**: without `buf.gen.yaml` or buf (or with `--protoc`), `codegen:rpc` calls `protoc -I proto` on every `.proto` under `-proto` with the two plugins built by `go tool -n`, writing `paths=source_relative` output to `-out` (`gen`).
 - Generated code is committed like any source; regenerate after editing a `.proto`.
 

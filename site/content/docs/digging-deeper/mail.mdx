@@ -260,7 +260,7 @@ If your app already uses React (an Inertia React starter), you can write emails 
 
 ```shell
 vukem make:mail Welcome --react
-npm install -E -D react-email@6.11.6 @react-email/components@1.0.12
+npm install -E -D react-email@6.11.11 @react-email/components@1.0.12
 ```
 
 `make:mail --react` writes `app/mail/welcome.go`, the component `resources/js/emails/welcome.tsx` and a helper `resources/js/emails/go.ts`. The trick is in the component's default props: they are Go template actions, which `email export` copies into the HTML unchanged.

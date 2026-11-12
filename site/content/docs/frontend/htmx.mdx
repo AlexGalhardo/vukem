@@ -119,7 +119,7 @@ The same URL returns the full page to a browser and only the list to htmx.
 
 ## Loading htmx
 
-The starter **vendors** htmx 4.0.0 at `resources/public/js/htmx.min.js`. The static middleware serves it, so you need no CDN and no Node to run htmx. The file's SHA-256 is pinned in the CLI (`internal/cli/new.go`) and a test checks it, so a tampered file fails the build. To upgrade, replace the file and its hash together.
+The starter **vendors** htmx 4.0.1 at `resources/public/js/htmx.min.js`. The static middleware serves it, so you need no CDN and no Node to run htmx. The file's SHA-256 is pinned in the CLI (`internal/cli/new.go`) and a test checks it, so a tampered file fails the build. To upgrade, replace the file and its hash together.
 
 The layout loads it with the `htmxScript` view function:
 
