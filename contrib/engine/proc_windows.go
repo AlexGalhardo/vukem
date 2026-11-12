@@ -4,6 +4,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,5 +46,11 @@ func killProcessGroup(cmd *exec.Cmd) error {
 		}
 	}
 
-	return cmd.Process.Kill()
+	// TerminateProcess on a process that is already exiting (taskkill failed
+	// because the tree was going down) answers ACCESS_DENIED: it is gone.
+	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
+		return err
+	}
+
+	return nil
 }
