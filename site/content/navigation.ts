@@ -81,6 +81,7 @@ export const navigation: NavCategory[] = [
       "passkeys",
       "secret-scanning",
       "authorization",
+      "multi-tenancy",
       "rate-limiting",
       "bot-challenge",
       "security-headers",
