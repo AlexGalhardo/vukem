@@ -1,0 +1,41 @@
+name: image
+
+# Builds the toolchain image on pull requests that change what goes into it,
+# so a broken Dockerfile or a CLI that no longer builds there is caught before
+# a release. Nothing is pushed; release.yml publishes the image.
+on:
+  pull_request:
+    paths:
+      - ".config/docker/**"
+      - ".github/workflows/image.yml"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: .config/docker/vukem.Dockerfile
+          load: true
+          tags: vukem:ci
+      - name: Smoke test
+        run: |
+          docker run --rm vukem:ci version
+          docker run --rm --entrypoint sh vukem:ci -c 'go version && bun --version && git --version'
