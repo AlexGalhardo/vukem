@@ -127,7 +127,8 @@ jobs:
         run: (Get-CimInstance Win32_Processor).Name
       - name: go test
         shell: bash # PowerShell would split -coverprofile=coverage.out at the dot
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
+        # internal/cli builds every starter end to end: ~7 min on a slow Windows runner, near the 10 min default
+        run: go test -race -count=1 -timeout=20m -coverprofile=coverage.out ./...
       - name: go test (vukem_nosqlite)
         run: go test -tags vukem_nosqlite -count=1 -run TestOpenSQLiteWithoutDriver ./database/
       - name: Coverage gate
