@@ -86,7 +86,12 @@ func commands() []command {
 			"Update the project: framework, Go and JS dependencies, and the starter migration notes (--dry-run writes nothing)",
 			updateCmd,
 		},
-		{"upgrade", "", "Moved: update a project with vukem update", upgradeMovedCmd},
+		{
+			"upgrade",
+			"",
+			"Update the vukem CLI itself to the latest stable release (--check, --version vX.Y.Z)",
+			selfUpgradeCommand,
+		},
 		{"install:auth", "", "Add login, registration, password reset and email verification", installAuth},
 		{"install:api", "", "Add API tokens, /api/v1 routes, CORS and rate limiting", installAPI},
 		{"install:billing", "", "Add Stripe subscriptions: plans, Checkout, Billing Portal, webhooks", installBilling},

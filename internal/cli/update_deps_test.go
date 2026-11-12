@@ -299,25 +299,3 @@ func TestUpdateDryRunWritesNothing(t *testing.T) {
 		t.Fatalf(".vukem was created: %v", err)
 	}
 }
-
-func TestUpgradeNameDoesNotUpdate(t *testing.T) {
-	t.Parallel()
-
-	dir := updateProject(t)
-	before := fileHashes(t, dir)
-
-	var out, errOut strings.Builder
-
-	code := Run(
-		t.Context(),
-		[]string{"upgrade"},
-		Env{Dir: dir, Stdout: &out, Stderr: &errOut, Now: fixedNow, Version: "v0.2.0"},
-	)
-	if code == 0 || !strings.Contains(errOut.String(), "vukem update") {
-		t.Fatalf("code=%d out=%q err=%q", code, out.String(), errOut.String())
-	}
-
-	if diff := cmp.Diff(before, fileHashes(t, dir)); diff != "" {
-		t.Fatalf("upgrade changed a file (-before +after):\n%s", diff)
-	}
-}

@@ -186,13 +186,6 @@ func planUpdates(ctx context.Context, env *Env, gomod []byte, state, cli string,
 	return append(changes, more...), nil
 }
 
-// upgradeMovedCmd keeps the old name from silently updating a project.
-func upgradeMovedCmd(*flag.FlagSet) func(context.Context, *Env, []string) error {
-	return func(context.Context, *Env, []string) error {
-		return errors.New("vukem upgrade no longer updates a project: run vukem update")
-	}
-}
-
 // renderReferenceStarter renders the current starter into a temporary
 // directory (check) or into .vukem/upgrade/starter/, and returns its cleanup.
 func renderReferenceStarter(env *Env, mod string, check bool) (string, func(), error) {
