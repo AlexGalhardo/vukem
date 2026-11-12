@@ -429,18 +429,21 @@ func TestErrorClasses(t *testing.T) {
 		}
 	}()
 
+	// Only the timeout case runs on a short budget: a slow runner can take
+	// longer than 100ms to accept and close, which turned "eof" into "timeout".
 	tests := []struct {
 		name, url, want string
+		timeout         time.Duration
 	}{
-		{"timeout", slow.URL, "timeout"},
-		{"refused", closedURL, "connection refused"},
-		{"eof", "http://" + ln.Addr().String(), "eof"},
+		{"timeout", slow.URL, "timeout", 100 * time.Millisecond},
+		{"refused", closedURL, "connection refused", 5 * time.Second},
+		{"eof", "http://" + ln.Addr().String(), "eof", 5 * time.Second},
 	}
 
 	for _, tt := range tests {
 		r, err := Start(
 			t.Context(),
-			Config{Concurrency: 1, Requests: 1, Timeout: 100 * time.Millisecond},
+			Config{Concurrency: 1, Requests: 1, Timeout: tt.timeout},
 			Static(Request{URL: tt.url + "/"}),
 		)
 		if err != nil {
