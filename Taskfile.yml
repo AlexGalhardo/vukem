@@ -137,6 +137,11 @@ tasks:
       - go install golang.org/x/exp/cmd/apidiff@{{.APIDIFF_VERSION}}
       - go run ./internal/tools/apicheck {{.CLI_ARGS}}
 
+  deps:starters:
+    desc: List the scaffolded dependencies behind their latest stable release (needs network; exit 1 when one is); apply with go run ./internal/tools/starterdeps -write
+    cmds:
+      - go run ./internal/tools/starterdeps -check
+
   tidy:
     desc: Tidy every module
     cmds:

@@ -54,7 +54,16 @@ Weekly, on Monday:
 
 1. Dependabot opens grouped PRs (`go-deps`, `actions`, `site-deps`, plus Docker for `docs/media` and `.config`); `vuln.yml` scans every module at 06:17 UTC. Merge the PRs once CI is green. Actions stay pinned by full commit SHA with a `# vX.Y.Z` comment. A digest PR for `.config/compose.yaml` must update the matching `services:` images (and `RUSTFS_IMAGE`) in `ci.yml` in the same PR.
 2. On every `golang.org/x/crypto` upgrade, re-run `govulncheck` (CI and the weekly `vuln.yml` do) and check whether `GO-2026-5932` (`golang.org/x/crypto/openpgp`, never imported, so not called) has a fixed release.
-3. Quarterly: count third-party modules per `go.mod` (`go mod graph`); every new direct dependency needs a decision under the [dependency policy](architecture.md#dependency-policy).
+3. Every Monday `starter-deps.yml` runs `go run ./internal/tools/starterdeps -write`, the starter end-to-end tests, and opens or updates the `chore/starter-deps` pull request. `task deps:starters` lists what is behind without changing anything.
+4. Quarterly: count third-party modules per `go.mod` (`go mod graph`); every new direct dependency needs a decision under the [dependency policy](architecture.md#dependency-policy).
+
+The starter dependencies (JS packages, markdownlint, Biome, React Email, htmx and the make:proto tool versions) always follow the latest stable release, never a pre-release. Three rules sit on top of that:
+
+- htmx follows the newest 4.x and never changes major (decision F2); updating it replaces the vendored `htmx.min.js` and `htmxSHA256`.
+- Vue and Svelte starters keep TypeScript 6.x until `vue-tsc` and `svelte-check` list 7 in their peerDependencies.
+- Within one `package.json`, every version satisfies the peerDependencies of the others.
+
+The Dockerfile image digests, the actions pinned in the generated workflows, the package manager versions in `pm.go` and the `stripeVersion` and `studioVersion` tags are not covered and stay manual. A pull request opened with `GITHUB_TOKEN` does not trigger the required checks; push an empty commit to the branch to run them. The repository setting that lets Actions create pull requests must be on.
 
 A module added to the repository must be added to the `gomod` directories in `.github/dependabot.yml`, to the `vuln.yml` matrix and to `MODULES` in `Taskfile.yml`.
 
