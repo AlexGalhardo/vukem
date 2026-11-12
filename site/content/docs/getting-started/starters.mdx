@@ -63,7 +63,7 @@ The package manager comes from `--pm` (`npm`, `bun`, `pnpm` or `yarn`). Without 
 
 ## HTMX on Vite
 
-The default starter renders pages with Go's [`html/template`](https://pkg.go.dev/html/template), which escapes every value so user input cannot inject HTML. It vendors **htmx 4.0.0** at `resources/public/js/htmx.min.js` (pinned by its SHA-256 in the CLI's tests), served by the static middleware, and builds CSS and scripts with Vite 8 and Tailwind CSS v4 (`@tailwindcss/vite`):
+The default starter renders pages with Go's [`html/template`](https://pkg.go.dev/html/template), which escapes every value so user input cannot inject HTML. It vendors **htmx 4.0.1** at `resources/public/js/htmx.min.js` (pinned by its SHA-256 in the CLI's tests), served by the static middleware, and builds CSS and scripts with Vite 8 and Tailwind CSS v4 (`@tailwindcss/vite`):
 
 ```text
 package.json, vite.config.ts

@@ -402,7 +402,7 @@ vukem codegen:rpc [-proto proto] [-out gen] [--protoc]
 
 It picks a backend in this order:
 
-1. **buf** (recommended), when `buf.gen.yaml` exists and `--protoc` is not set: `go tool buf generate` if buf is a tool of your module (`go get -tool github.com/bufbuild/buf/cmd/buf@v1.74.0`), else `buf generate` from your `PATH`.
+1. **buf** (recommended), when `buf.gen.yaml` exists and `--protoc` is not set: `go tool buf generate` if buf is a tool of your module (`go get -tool github.com/bufbuild/buf/cmd/buf@v1.75.0`), else `buf generate` from your `PATH`.
 2. **protoc** otherwise: `protoc -I <proto>` on every `.proto` file under `-proto` (default `proto`), with both plugins built by `go tool -n`, writing `paths=source_relative` output to `-out` (default `gen`). `-proto` and `-out` apply only to this mode; buf reads `buf.gen.yaml`.
 
 ```yaml title="buf.gen.yaml"
@@ -422,7 +422,7 @@ plugins:
 | Situation | Message |
 | --- | --- |
 | a generator is not a Go tool | `codegen:rpc runs the code generators as Go tools; add them with:` followed by the `go get -tool` lines |
-| neither buf nor protoc found | `codegen:rpc needs buf or protoc: go get -tool github.com/bufbuild/buf/cmd/buf@v1.74.0 (or install buf or protoc)` |
+| neither buf nor protoc found | `codegen:rpc needs buf or protoc: go get -tool github.com/bufbuild/buf/cmd/buf@v1.75.0 (or install buf or protoc)` |
 | no `.proto` files (protoc mode) | `codegen:rpc: no .proto files in proto (vukem make:proto creates one)` |
 
 ### Adding a streaming method
