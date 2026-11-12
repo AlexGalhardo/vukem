@@ -185,6 +185,13 @@ func (u *selfUpgrader) upgrade(ctx context.Context, check bool, pin string) erro
 		return nil
 	}
 
+	// Only an explicit --version may go back: "latest" never downgrades a newer
+	// release build. devel and pseudo-versions are not releases and still upgrade.
+	if pin == "" && stableTag.MatchString(current) && compareVersions(current, rel.Tag) > 0 {
+		fmt.Fprintf(out, "vukem %s is newer than the latest release %s; nothing to do\n", current, rel.Tag)
+		return nil
+	}
+
 	method := "archive"
 	if _, lookErr := u.lookPath("go"); lookErr == nil && u.viaGoInstall(exe) {
 		method = "go install"

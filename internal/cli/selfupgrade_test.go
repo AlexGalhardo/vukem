@@ -241,6 +241,24 @@ func TestSelfUpgrade_AlreadyAndCheck(t *testing.T) {
 	}
 }
 
+func TestSelfUpgrade_NeverDowngradesToLatest(t *testing.T) {
+	t.Parallel()
+
+	u, out, calls, exe := newUpgrader(t, fakeRelease{tag: "v0.9.0"}, "linux")
+	if err := u.upgrade(
+		t.Context(),
+		false,
+		"",
+	); err != nil ||
+		!strings.Contains(out.String(), "newer than the latest release") {
+		t.Fatalf("upgrade() err=%v out=%q, want a newer-than-latest note", err, out)
+	}
+
+	if got, _ := os.ReadFile(exe); string(got) != "old" || len(*calls) != 0 {
+		t.Fatal("upgrade() replaced a newer CLI with an older release")
+	}
+}
+
 func TestSelfUpgrade_GoInstall(t *testing.T) {
 	t.Parallel()
 
