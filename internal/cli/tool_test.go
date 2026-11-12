@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -25,6 +26,11 @@ func TestToolEnvDoesNotWaitForGrandchildren(t *testing.T) {
 
 		os.Exit(0)
 	case "grandchild":
+		// The working directory it inherits is the test's TempDir, which Windows
+		// cannot delete while a process stands in it: leave it, then say so.
+		_ = os.Chdir(os.TempDir())
+		_ = os.WriteFile(os.Getenv("VUKEM_CLI_TOOL_MARKER"), nil, 0o600)
+
 		time.Sleep(grandchildLife)
 		os.Exit(0)
 	}
@@ -35,10 +41,12 @@ func TestToolEnvDoesNotWaitForGrandchildren(t *testing.T) {
 
 	var out bytes.Buffer
 
+	marker := filepath.Join(t.TempDir(), "grandchild-started")
+
 	env := &Env{Dir: t.TempDir(), Stdout: &out, Stderr: &out, toolWaitDelay: 200 * time.Millisecond}
 	start := time.Now()
 
-	err := toolEnv(t.Context(), env, []string{"VUKEM_CLI_TOOL_HELPER=tool"},
+	err := toolEnv(t.Context(), env, []string{"VUKEM_CLI_TOOL_HELPER=tool", "VUKEM_CLI_TOOL_MARKER=" + marker},
 		os.Args[0], "-test.run=^TestToolEnvDoesNotWaitForGrandchildren$")
 	if err != nil {
 		t.Fatalf("toolEnv = %v, want nil once the tool exited 0", err)
@@ -52,9 +60,26 @@ func TestToolEnvDoesNotWaitForGrandchildren(t *testing.T) {
 		t.Errorf("toolEnv returned after %v, want it not to wait for the grandchild", d)
 	}
 
-	// Let the grandchild exit before the test binary is removed (Windows
-	// cannot delete a running executable).
-	time.Sleep(grandchildLife - d + 500*time.Millisecond)
+	// Let the grandchild leave the TempDir and exit before they are removed
+	// (Windows cannot delete a directory a process stands in, nor a running
+	// executable). Its clock starts when it says it started, which on a loaded
+	// machine is well after toolEnv returned.
+	var started time.Time
+
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
+		if _, err := os.Stat(marker); err == nil {
+			started = time.Now()
+			break
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if started.IsZero() {
+		t.Fatal("the grandchild never started")
+	}
+
+	time.Sleep(grandchildLife + 500*time.Millisecond - time.Since(started))
 }
 
 const grandchildLife = 8 * time.Second
