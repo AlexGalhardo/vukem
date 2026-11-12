@@ -235,26 +235,21 @@ So N posts with relations cost `1 + len(relations)` queries, plus one per many-t
 - **Soft-deleted related rows are not loaded.** A deleted comment does not show up under its post.
 - **An unknown relation name** makes the query fail: `orm: Post has no relation "Author"`.
 - **`Each` does not eager load**; stream the parents, then load relations per batch with `Get`.
-- **Nested loading** (`"Comments.User"`) is not supported. Load the second level with its own query, shown below.
+- **Nested loading** uses a dotted path: `With("Comments.User")` loads `Comments`, then the `User` of every loaded comment (three queries for N posts). `With("Comments", "Comments.User")` does not load `Comments` twice. Each level loads all its rows, with no limit per parent.
 
-### Loading a second level by hand
+### Narrowing and counting relations
 
-To show each comment's author, collect the comments and load them with `With("User")` through a query on comments:
+- `WithWhere[R](relation, fn)` narrows a relation's rows with the `Where` conditions and `OrderBy` of the query `fn` builds (`Limit`, `Offset`, joins, locks and projections are errors).
+- `WithCount("Comments")` fills the `int64` field tagged `orm:"count:Comments"` (not a column) with one `GROUP BY` query per relation. It supports `HasMany` and `ManyToMany`.
+- `WhereHas[R](relation, fn)` and `WhereDoesntHave[R](relation, fn)` filter the parents by an `EXISTS` subquery on the relation, so they never repeat rows. `LeftJoinRelation(name)` and `JoinRelation(name)` join a relation when you need its columns (see [joins](/docs/database/orm#joins-aggregates-and-subqueries)).
 
 ```go
-post, err := orm.QueryOf[models.Post](db).Find(ctx, id)
-if err != nil {
-	return err
-}
-
-comments, err := orm.QueryOf[models.Comment](db).
-	Where("post_id", post.ID).
-	With("User").
-	OrderBy("id", orm.Asc).
+posts, err := orm.QueryOf[models.Post](db).
+	WhereHas[models.Comment]("Comments", func(q orm.Query[models.Comment]) orm.Query[models.Comment] {
+		return q.Where("approved", true)
+	}).
 	Get(ctx)
 ```
-
-Two queries, however many comments the post has.
 
 ## Reading relations
 
