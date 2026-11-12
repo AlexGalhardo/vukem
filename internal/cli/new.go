@@ -205,7 +205,7 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 	}
 
 	// After writeAppKey: the app needs its key to boot and type the pages.
-	if kind == exampleTodo && st.kind == "inertia" {
+	if kind != exampleNone && st.kind == "inertia" {
 		refreshPageProps(ctx, &project)
 	}
 

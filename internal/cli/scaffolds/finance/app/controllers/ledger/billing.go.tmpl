@@ -1,0 +1,153 @@
+package ledger
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/billing"
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/pages"
+	"{{.Module}}/app/workspaces"
+)
+
+// BillingHandlers serve the billing page, Stripe Checkout and the Billing
+// Portal of the current workspace. Only its owner can start or manage a
+// subscription; every member sees the plan.
+type BillingHandlers struct {
+	h *Handlers
+	b *billing.Billing
+}
+
+// NewBilling returns the billing handlers.
+func NewBilling(h *Handlers, b *billing.Billing) *BillingHandlers {
+	return &BillingHandlers{h: h, b: b}
+}
+
+// Show renders the plan, the limits and the subscription.
+func (bh *BillingHandlers) Show(c *web.Ctx) error {
+	ws, err := bh.h.WS.Current(c.Context())
+	if err != nil {
+		return err
+	}
+
+	lim, err := bh.h.WS.Limits(c.Context())
+	if err != nil {
+		return err
+	}
+
+	props := pages.BillingProps{
+		Limits: lim, TrialDays: billing.TrialDays, CanManage: bh.h.can(c, workspaces.AbilityManageBilling) == nil,
+		Configured: bh.b.Stripe != nil, Currencies: bh.b.Config.Currencies, Checkout: c.Query("checkout") == "success",
+	}
+
+	if sub, ok, err := bh.b.Subscription(c.Context(), ws.ID); err != nil {
+		return err
+	} else if ok {
+		props.Subscription = &pages.BillingStatus{
+			Status: sub.Status, Valid: sub.Valid(), CancelAtPeriodEnd: sub.CancelAtPeriodEnd,
+		}
+		if sub.CurrentPeriodEnd.Valid {
+			props.Subscription.CurrentPeriodEnd = sub.CurrentPeriodEnd.V.Format("January 2, 2006")
+		}
+	}
+
+	return pages.Billing.Render(c, props)
+}
+
+// Checkout sends the owner to Stripe Checkout for the plan in the URL, in
+// the optional "currency" form field.
+func (bh *BillingHandlers) Checkout(c *web.Ctx) error {
+	if err := bh.h.can(c, workspaces.AbilityManageBilling); err != nil {
+		return err
+	}
+
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	ws, err := bh.h.WS.Current(c.Context())
+	if err != nil {
+		return err
+	}
+
+	target, err := bh.b.Checkout(c.Context(), ws, u.Email, c.Param("plan"), strings.ToLower(c.FormValue("currency")))
+	if err != nil {
+		return back(c, "/billing", err)
+	}
+
+	return away(c, target)
+}
+
+// Portal sends the owner to the Stripe Billing Portal.
+func (bh *BillingHandlers) Portal(c *web.Ctx) error {
+	if err := bh.h.can(c, workspaces.AbilityManageBilling); err != nil {
+		return err
+	}
+
+	ws, err := bh.h.WS.Current(c.Context())
+	if err != nil {
+		return err
+	}
+
+	target, err := bh.b.Portal(c.Context(), ws)
+	if err != nil {
+		return back(c, "/billing", err)
+	}
+
+	return away(c, target)
+}
+
+// away leaves the app for a Stripe page: a full page visit for Inertia,
+// the URL for JSON clients, a 303 redirect for forms.
+func away(c *web.Ctx, target string) error {
+	switch {
+	case inertia.IsInertia(c.Request()):
+		return inertia.Location(c, target)
+	case c.WantsJSON():
+		return c.JSON(http.StatusOK, map[string]string{"url": target})
+	}
+
+	return c.RedirectStatus(http.StatusSeeOther, target)
+}
+
+// Revenue is the admin overview of the business: MRR and subscriptions.
+// It reads across workspaces on purpose, behind the admin panel's gate.
+func Revenue(h *Handlers) func(c *web.Ctx) error {
+	return func(c *web.Ctx) error {
+		ctx := c.Context()
+		props := pages.AdminRevenueProps{}
+
+		subs, err := orm.QueryOf[models.WorkspaceSubscription](h.WS.DB).Get(ctx)
+		if err != nil {
+			return err
+		}
+
+		for i := range subs {
+			switch subs[i].Status {
+			case "active":
+				props.Active++
+				props.MRRCents += subs[i].UnitAmount
+			case "trialing":
+				props.Trialing++
+			case "past_due":
+				props.PastDue++
+			}
+		}
+
+		if props.Workspaces, err = orm.QueryOf[models.Workspace](h.WS.DB).Count(ctx); err != nil {
+			return err
+		}
+
+		if props.Users, err = orm.QueryOf[models.User](h.WS.DB).Count(ctx); err != nil {
+			return err
+		}
+
+		return pages.AdminRevenue.Render(c, props)
+	}
+}

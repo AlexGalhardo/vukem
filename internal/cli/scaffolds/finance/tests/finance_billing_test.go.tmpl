@@ -1,0 +1,487 @@
+package tests
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/contrib/stripe"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+	"github.com/AlexGalhardo/vukem/webhook"
+
+	"{{.Module}}/app/billing"
+	appmail "{{.Module}}/app/mail"
+)
+
+const (
+	stripeSecret  = "whsec_test_vukem"
+	stripeKey     = "rk_test_vukem"
+	testCustomer  = "cus_1"
+	testSubscript = "sub_1"
+)
+
+// fakeStripe stands in for api.stripe.com: it serves the objects the app
+// asks for and records what it was sent. Tests never reach the network.
+type fakeStripe struct {
+	t   *testing.T
+	srv *httptest.Server
+
+	mu        sync.Mutex
+	customers []url.Values
+	checkouts []url.Values
+	portals   []url.Values
+	subs      map[string]map[string]any
+}
+
+func newFakeStripe(t *testing.T) *fakeStripe {
+	t.Helper()
+
+	f := &fakeStripe{t: t, subs: map[string]map[string]any{}}
+	mux := http.NewServeMux()
+
+	record := func(list *[]url.Values, reply func(url.Values) map[string]any) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+
+			f.mu.Lock()
+			*list = append(*list, r.PostForm)
+			n := len(*list)
+			f.mu.Unlock()
+
+			out := reply(r.PostForm)
+			if out["id"] == "cus_" {
+				out["id"] = "cus_" + strconv.Itoa(n)
+			}
+
+			f.json(w, out)
+		}
+	}
+
+	mux.HandleFunc("POST /v1/customers", record(&f.customers, func(url.Values) map[string]any {
+		return map[string]any{"id": "cus_"}
+	}))
+	mux.HandleFunc("POST /v1/checkout/sessions", record(&f.checkouts, func(url.Values) map[string]any {
+		return map[string]any{"id": "cs_test_1", "url": "https://checkout.stripe.com/c/pay/cs_test_1"}
+	}))
+	mux.HandleFunc("POST /v1/billing_portal/sessions", record(&f.portals, func(url.Values) map[string]any {
+		return map[string]any{"id": "bps_1", "url": "https://billing.stripe.com/p/session/test_1"}
+	}))
+	mux.HandleFunc("GET /v1/subscriptions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		sub, ok := f.subs[r.PathValue("id")]
+		f.mu.Unlock()
+
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			f.json(w, map[string]any{"error": map[string]any{
+				"type": "invalid_request_error", "code": "resource_missing",
+			}})
+
+			return
+		}
+
+		f.json(w, sub)
+	})
+
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+stripeKey {
+			t.Errorf("%s %s: wrong Authorization", r.Method, r.URL.Path)
+		}
+
+		mux.ServeHTTP(w, r)
+	}))
+	t.Cleanup(f.srv.Close)
+
+	return f
+}
+
+func (f *fakeStripe) json(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		f.t.Error(err)
+	}
+}
+
+func (f *fakeStripe) sent() (customers, checkouts, portals []url.Values) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append(
+			[]url.Values(nil),
+			f.customers...), append(
+			[]url.Values(nil),
+			f.checkouts...), append(
+			[]url.Values(nil),
+			f.portals...)
+}
+
+// setSubscription makes the fake API serve the test subscription of customer.
+func (f *fakeStripe) setSubscription(customer, status string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.subs[testSubscript] = map[string]any{
+		"id": testSubscript, "customer": customer, "status": status, "cancel_at_period_end": false,
+		"items": map[string]any{"data": []any{map[string]any{
+			"id": "si_1", "price": map[string]any{"id": "price_pro", "unit_amount": 900}, "quantity": 1,
+			"current_period_end": time.Now().Add(30 * 24 * time.Hour).Unix(),
+		}}},
+	}
+}
+
+func billingApp(t *testing.T, f *fakeStripe) *vukemtest.App {
+	t.Helper()
+
+	return newApp(t, map[string]string{
+		"STRIPE_KEY": stripeKey, "STRIPE_WEBHOOK_SECRET": stripeSecret, "STRIPE_API_BASE": f.srv.URL,
+		"STRIPE_PRICE_PRO": "price_pro", "STRIPE_CURRENCIES": "usd,brl",
+	})
+}
+
+func postStripe(t *testing.T, app *vukemtest.App, id, typ string, object map[string]any) *vukemtest.Response {
+	t.Helper()
+
+	payload, err := json.Marshal(map[string]any{
+		"id": id, "type": typ, "created": time.Now().Unix(), "data": map[string]any{"object": object},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return app.Client(t).
+		WithHeader("Stripe-Signature", stripe.SignForTest(payload, stripeSecret, time.Now())).
+		Do(http.MethodPost, billing.WebhookPath, bytes.NewReader(payload), "application/json")
+}
+
+func TestCheckoutStartsATrialForTheWorkspace(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeStripe(t)
+	app := billingApp(t, f)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	ws := strconv.FormatInt(ana.Workspace.ID, 10)
+
+	ana.Client.PostForm("/billing/checkout/pro", nil).
+		AssertStatus(http.StatusSeeOther).AssertRedirect("https://checkout.stripe.com/c/pay/cs_test_1")
+
+	customers, checkouts, _ := f.sent()
+	if len(customers) != 1 || customers[0].Get("metadata[workspace_id]") != ws {
+		t.Fatalf("customers = %v, want one for workspace %s", customers, ws)
+	}
+
+	form := checkouts[0]
+	for key, want := range map[string]string{
+		"mode": "subscription", "customer": "cus_1", "client_reference_id": ws,
+		"line_items[0][price]": "price_pro", "subscription_data[trial_period_days]": "14",
+		"subscription_data[metadata][workspace_id]": ws,
+	} {
+		if got := form.Get(key); got != want {
+			t.Errorf("checkout %s = %q, want %q", key, got, want)
+		}
+	}
+
+	vukemtest.AssertDatabaseHas(
+		t,
+		app,
+		"workspaces",
+		map[string]any{"id": ana.Workspace.ID, "stripe_customer_id": "cus_1"},
+	)
+
+	// A currency outside STRIPE_CURRENCIES never reaches Stripe; an unknown plan is a 404.
+	ana.Client.PostForm("/billing/checkout/pro", url.Values{"currency": {"jpy"}}).AssertRedirect("/billing")
+	ana.Client.PostForm("/billing/checkout/gold", nil).AssertNotFound()
+
+	if _, checkouts, _ := f.sent(); len(checkouts) != 1 {
+		t.Errorf("checkouts = %d, want 1", len(checkouts))
+	}
+
+	// Coming back from Checkout grants nothing: only the webhook does.
+	ana.Client.Inertia("").Get("/billing?checkout=success").AssertInertia("Billing").PropEquals("limits.plan", "free")
+}
+
+func TestOnlyTheOwnerManagesBilling(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeStripe(t)
+	app := billingApp(t, f)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	mia := newVerifiedUser(t, app, "Mia", "mia@example.com")
+	join(t, app, ana, mia, "admin")
+
+	m := browser(t, app, mia, ana.Workspace.ID)
+	m.PostForm("/billing/checkout/pro", nil).AssertForbidden()
+	m.PostForm("/billing/portal", nil).AssertForbidden()
+	m.Inertia("").Get("/billing").AssertInertia("Billing").PropEquals("canManage", false)
+
+	// The portal needs a customer: a workspace that never checked out has none.
+	ana.Client.PostForm("/billing/portal", nil).AssertRedirect("/billing")
+
+	if customers, _, portals := f.sent(); len(customers) != 0 || len(portals) != 0 {
+		t.Errorf("stripe saw customers %v, portals %v", customers, portals)
+	}
+}
+
+func TestStripeWebhookTurnsTheWorkspaceIntoPro(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeStripe(t)
+	app := billingApp(t, f)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	ws := strconv.FormatInt(ana.Workspace.ID, 10)
+
+	ana.Client.PostForm("/billing/checkout/pro", nil).AssertStatus(http.StatusSeeOther)
+	f.setSubscription(testCustomer, "trialing")
+
+	// A forged webhook is refused and changes nothing.
+	payload := []byte(`{"id":"evt_forged","type":"customer.subscription.created","data":{"object":{"id":"sub_1"}}}`)
+	forged := app.Client(t).WithHeader("Stripe-Signature", "t=1,v1=00").
+		Do(http.MethodPost, billing.WebhookPath, bytes.NewReader(payload), "application/json")
+
+	if forged.Status() < 400 {
+		t.Errorf("a forged webhook answered %d", forged.Status())
+	}
+
+	vukemtest.AssertDatabaseCount(t, app, "workspace_subscriptions", 0)
+
+	// A delayed payment method completes unpaid: no access yet.
+	postStripe(t, app, "evt_1", "checkout.session.completed", map[string]any{
+		"id": "cs_test_1", "mode": "subscription", "payment_status": "unpaid", "customer": testCustomer,
+		"subscription": testSubscript, "client_reference_id": ws,
+	}).AssertOK()
+	vukemtest.AssertDatabaseCount(t, app, "workspace_subscriptions", 0)
+
+	postStripe(
+		t,
+		app,
+		"evt_2",
+		"customer.subscription.created",
+		map[string]any{"id": testSubscript, "customer": testCustomer},
+	).AssertOK()
+	vukemtest.AssertDatabaseHas(t, app, "workspace_subscriptions", map[string]any{
+		"workspace_id": ana.Workspace.ID, "stripe_subscription_id": testSubscript, "status": "trialing",
+		"price_id": "price_pro", "unit_amount": 900,
+	})
+	ana.Client.Inertia("").Get("/dashboard").AssertInertia("Dashboard").PropEquals("workspace.plan", "pro")
+
+	// The same event twice is processed once.
+	postStripe(
+		t,
+		app,
+		"evt_2",
+		"customer.subscription.created",
+		map[string]any{"id": testSubscript, "customer": testCustomer},
+	).AssertOK()
+	vukemtest.AssertDatabaseCount(t, app, "workspace_subscriptions", 1)
+
+	// A failed renewal: past_due drops the workspace to Free and the owner is told.
+	f.setSubscription(testCustomer, "past_due")
+	postStripe(t, app, "evt_3", "invoice.payment_failed", map[string]any{
+		"id": "in_1", "customer": testCustomer,
+		"parent": map[string]any{"subscription_details": map[string]any{"subscription": testSubscript}},
+	}).AssertOK()
+	vukemtest.AssertDatabaseHas(
+		t,
+		app,
+		"workspace_subscriptions",
+		map[string]any{"stripe_subscription_id": testSubscript, "status": "past_due"},
+	)
+	ana.Client.Inertia("").Get("/dashboard").AssertInertia("Dashboard").PropEquals("workspace.plan", "free")
+
+	if !hasSubject(app, "ana@example.com", "Your payment failed") {
+		t.Errorf("no payment failed mail: %+v", app.Mails().SentTo("ana@example.com"))
+	}
+
+	// Paid again: the receipt shows the amount; a zero invoice sends none.
+	f.setSubscription(testCustomer, "active")
+	postStripe(t, app, "evt_4", "invoice.paid", map[string]any{
+		"id": "in_2", "customer": testCustomer, "amount_paid": 900, "currency": "usd",
+		"hosted_invoice_url": "https://invoice.stripe.com/i/in_2",
+		"parent":             map[string]any{"subscription_details": map[string]any{"subscription": testSubscript}},
+	}).AssertOK()
+	postStripe(t, app, "evt_5", "invoice.paid", map[string]any{
+		"id": "in_3", "customer": testCustomer, "amount_paid": 0, "currency": "usd",
+		"parent": map[string]any{"subscription_details": map[string]any{"subscription": testSubscript}},
+	}).AssertOK()
+
+	receipts := 0
+
+	for _, m := range app.Mails().SentTo("ana@example.com") {
+		if strings.HasPrefix(m.Subject, "Your receipt") {
+			receipts++
+
+			if m.Subject != "Your receipt for $9.00" || !strings.Contains(m.HTML, "https://invoice.stripe.com/i/in_2") {
+				t.Errorf("receipt = %q", m.Subject)
+			}
+		}
+	}
+
+	if receipts != 1 {
+		t.Errorf("receipts = %d, want 1", receipts)
+	}
+
+	ana.Client.Inertia("").Get("/dashboard").AssertInertia("Dashboard").PropEquals("workspace.plan", "pro")
+
+	// The trial warning from Stripe, three days ahead.
+	postStripe(
+		t,
+		app,
+		"evt_6",
+		"customer.subscription.trial_will_end",
+		map[string]any{"id": testSubscript, "customer": testCustomer},
+	).AssertOK()
+
+	if !hasSubject(app, "ana@example.com", "Your Pro trial is ending") {
+		t.Errorf("no trial ending mail")
+	}
+
+	// Cancelling ends the access.
+	f.setSubscription(testCustomer, "canceled")
+	postStripe(
+		t,
+		app,
+		"evt_7",
+		"customer.subscription.deleted",
+		map[string]any{"id": testSubscript, "customer": testCustomer},
+	).AssertOK()
+	ana.Client.Inertia("").Get("/dashboard").AssertInertia("Dashboard").PropEquals("workspace.plan", "free")
+
+	// The portal opens for the workspace's customer.
+	browser(t, app, ana.User, ana.Workspace.ID).PostForm("/billing/portal", nil).
+		AssertRedirect("https://billing.stripe.com/p/session/test_1")
+}
+
+func hasSubject(app *vukemtest.App, to, subject string) bool {
+	sent := app.Mails().SentTo(to)
+	for i := range sent {
+		if sent[i].Subject == subject {
+			return true
+		}
+	}
+
+	return false
+}
+
+func TestSubscriptionOfAnotherWorkspaceCustomerIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeStripe(t)
+	app := billingApp(t, f)
+	signUp(t, app, "Ana", "ana@example.com")
+
+	// An event for a customer no workspace owns changes nothing.
+	f.setSubscription("cus_unknown", "active")
+	postStripe(
+		t,
+		app,
+		"evt_1",
+		"customer.subscription.updated",
+		map[string]any{"id": testSubscript, "customer": "cus_unknown"},
+	).AssertOK()
+	vukemtest.AssertDatabaseCount(t, app, "workspace_subscriptions", 0)
+}
+
+// ---- Resend: bounces and complaints ----
+
+func postResend(t *testing.T, app *vukemtest.App, secret, id string, body string) *vukemtest.Response {
+	t.Helper()
+
+	now := time.Now()
+
+	sig, err := webhook.SignStandard(secret, id, now, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return app.Client(t).
+		WithHeader("svix-id", id).WithHeader("svix-timestamp", strconv.FormatInt(now.Unix(), 10)).
+		WithHeader("svix-signature", sig).
+		Do(http.MethodPost, appmail.ResendWebhookPath, strings.NewReader(body), "application/json")
+}
+
+func TestResendWebhookSuppressesBouncedAddresses(t *testing.T) {
+	t.Parallel()
+
+	secret, err := webhook.NewSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := newApp(t, map[string]string{"RESEND_WEBHOOK_SECRET": secret})
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	makePro(t, app, ana)
+
+	bounce := `{"type":"email.bounced","created_at":"2026-11-01T10:00:00Z","data":{"email_id":"e1","to":["Gone@Example.com"],"bounce":{"type":"Permanent","message":"no mailbox"}}}`
+
+	// Unsigned and badly signed requests are refused.
+	app.Client(t).
+		Do(http.MethodPost, appmail.ResendWebhookPath, strings.NewReader(bounce), "application/json").
+		AssertUnauthorized()
+
+	if r := postResend(
+		t,
+		app,
+		"whsec_"+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		"msg_1",
+		bounce,
+	); r.Status() < 400 {
+		t.Errorf("a request signed with another secret answered %d", r.Status())
+	}
+
+	vukemtest.AssertDatabaseCount(t, app, "email_suppressions", 0)
+
+	// A transient bounce and a delivery change nothing; a permanent bounce suppresses.
+	transient := strings.ReplaceAll(bounce, "Permanent", "Transient")
+	postResend(t, app, secret, "msg_2", transient).AssertStatus(http.StatusNoContent)
+	postResend(
+		t,
+		app,
+		secret,
+		"msg_3",
+		`{"type":"email.delivered","created_at":"2026-11-01T10:00:00Z","data":{"email_id":"e2","to":["ok@example.com"]}}`,
+	).AssertStatus(http.StatusNoContent)
+	vukemtest.AssertDatabaseCount(t, app, "email_suppressions", 0)
+
+	postResend(t, app, secret, "msg_4", bounce).AssertStatus(http.StatusNoContent)
+	postResend(t, app, secret, "msg_5", bounce).AssertStatus(http.StatusNoContent) // Resend retries: still one row
+	vukemtest.AssertDatabaseHas(
+		t,
+		app,
+		"email_suppressions",
+		map[string]any{"address": "gone@example.com", "reason": "email.bounced"},
+	)
+	vukemtest.AssertDatabaseCount(t, app, "email_suppressions", 1)
+
+	// The mailer drops the address: the invitation succeeds and sends nothing.
+	ana.Client.PostForm("/workspace/invites", url.Values{"email": {"gone@example.com"}, "role": {"member"}}).
+		AssertRedirect("/workspace")
+
+	if n := len(app.Mails().SentTo("gone@example.com")); n != 0 {
+		t.Errorf("a suppressed address got %d mails", n)
+	}
+
+	postResend(
+		t,
+		app,
+		secret,
+		"msg_6",
+		`{"type":"email.complained","created_at":"2026-11-01T10:00:00Z","data":{"email_id":"e3","to":["angry@example.com"]}}`,
+	).AssertStatus(http.StatusNoContent)
+	vukemtest.AssertDatabaseCount(t, app, "email_suppressions", 2)
+}
+
+func TestResendWebhookWithoutASecretRefuses(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+
+	app.Client(t).Do(http.MethodPost, appmail.ResendWebhookPath, strings.NewReader("{}"), "application/json").
+		AssertStatus(http.StatusServiceUnavailable)
+}

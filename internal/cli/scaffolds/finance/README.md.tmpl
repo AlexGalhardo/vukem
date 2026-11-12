@@ -1,0 +1,68 @@
+# {{.Name}}
+
+A personal finance SaaS built with [Vukem](https://vukem.dev): Go on the server, React with Inertia and Tailwind in the browser, SQLite out of the box.
+
+It has sign-up with email verification, password reset and optional two-factor authentication, workspaces with roles and invitations, Stripe billing (Free and Pro, 14-day trial), email through Resend with React Email templates, and the finance itself: accounts, categories, transactions, monthly budgets, a dashboard with charts and CSV import.
+
+## Run it
+
+```sh
+npm install        # once, unless vukem new already did
+npm run build:emails
+vukem migrate
+vukem serve        # http://localhost:3000, with reload
+go test ./...
+```
+
+Register at <http://localhost:3000/register>. Development writes emails to the log (`MAIL_MAILER=log`): copy the verification link from the output of `vukem serve`.
+
+Set `ADMIN_EMAILS=you@example.com` in `.env` to open the admin panel at `/admin` (users, workspaces, subscriptions) and the revenue page at `/admin/revenue`.
+
+## Plans
+
+| | Free | Pro |
+| --- | --- | --- |
+| Accounts | 1 | unlimited |
+| Transactions per month | 100 | unlimited |
+| Members | 1 | unlimited |
+| CSV import | no | yes |
+| Budgets and alerts | no | yes |
+
+The workspace is what pays, not the user: only its owner can start or manage a subscription. The first subscription of a workspace gets a 14-day trial. The limits live in `app/workspaces/limits.go`.
+
+## Stripe
+
+1. Create a sandbox with `stripe sandbox create`, and a recurring price for Pro.
+2. Put a restricted key (`rk_...`) in `STRIPE_KEY` and the price id in `STRIPE_PRICE_PRO`.
+3. Run `stripe listen --forward-to localhost:3000/stripe/webhook` and put the `whsec_...` it prints in `STRIPE_WEBHOOK_SECRET`.
+
+Access is granted by webhooks only, never by the page Checkout returns to. The webhook also sends the trial-ending, payment-failed and receipt emails.
+
+## Email
+
+Production sends with Resend: set `MAIL_MAILER=resend`, `MAIL_FROM` (a verified domain) and `RESEND_API_KEY`. In the Resend dashboard add a webhook for `email.bounced` and `email.complained` pointing at `https://your-app/webhooks/resend`, and put its signing secret in `RESEND_WEBHOOK_SECRET`: bounced and complaining addresses stop receiving mail.
+
+The templates are React Email components in `resources/js/emails`. Run `npm run build:emails` after you change one: it writes `resources/emails`, which the app embeds and fills with Go values when it sends.
+
+## PostgreSQL
+
+SQLite is the default. For PostgreSQL install the driver and set `DATABASE_URL` as in the [database docs](https://vukem.dev/docs/database/overview). Money is stored as integer cents (`BIGINT`) and each workspace has an ISO 4217 currency, so no amount is ever a float. Dates are `YYYY-MM-DD` text, which sorts and compares the same on both databases.
+
+## How it fits together
+
+| Path | What |
+| --- | --- |
+| `app/workspaces` | workspaces, members, invites, plan limits and the role policies; `tenant.go` here and in `app/models` are the only code that calls the tenancy package |
+| `app/finance` | accounts, transactions, budgets, dashboard, CSV import, monthly summary |
+| `app/billing` | Stripe Checkout, Customer Portal and webhooks per workspace |
+| `app/mail` | the mailables and the Resend webhook |
+| `app/jobs` | the queued CSV import and the scheduled monthly summary |
+| `app/controllers/ledger` | the page handlers |
+| `routes/finance.go` | every route, and which middleware guards it |
+| `resources/js` | the React pages, charts (plain SVG) and email components |
+
+Every table of the finance app has a `workspace_id`, and every query goes through `workspaces.Scoped`, so a workspace never reads or writes another one's rows. `tests/finance_test.go` checks it.
+
+## Documentation
+
+The full guide is at <https://vukem.dev/docs/finance-saas>; everything else is at <https://vukem.dev/docs>.

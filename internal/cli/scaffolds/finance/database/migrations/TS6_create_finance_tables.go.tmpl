@@ -1,0 +1,154 @@
+package migrations
+
+import "github.com/AlexGalhardo/vukem/schema"
+
+// Money is stored as integer cents (int64) with the ISO 4217 currency of
+// the workspace; dates are ISO "YYYY-MM-DD" strings so SQLite and Postgres
+// order and compare them alike. Every domain table carries workspace_id.
+func m{{.TS6}}CreateFinanceTables() schema.Migration {
+	return schema.Migration{
+		ID: "{{.TS6}}_create_finance_tables",
+		Up: func(s *schema.Schema) error {
+			steps := []func() error{
+				func() error {
+					return s.Create("workspaces", func(t *schema.Table) {
+						t.ID()
+						t.String("name")
+						t.String("currency", 3).Default("USD")
+						t.String("stripe_customer_id").Nullable().Unique()
+						t.Timestamps()
+					})
+				},
+				func() error {
+					return s.Create("memberships", func(t *schema.Table) {
+						t.ID()
+						t.ForeignID("workspace_id").Constrained("workspaces").CascadeOnDelete()
+						t.ForeignID("user_id").Constrained("users").CascadeOnDelete()
+						t.String("role")
+						t.Timestamps()
+						t.UniqueIndex("workspace_id", "user_id")
+						t.Index("user_id")
+					})
+				},
+				func() error {
+					return s.Create("invites", func(t *schema.Table) {
+						t.ID()
+						t.ForeignID("workspace_id").Constrained("workspaces").CascadeOnDelete()
+						t.String("email")
+						t.String("role")
+						t.String("token_hash").Unique()
+						t.Timestamp("expires_at")
+						t.Timestamp("accepted_at").Nullable()
+						t.Timestamps()
+						t.Index("workspace_id")
+					})
+				},
+				func() error {
+					return s.Create("accounts", func(t *schema.Table) {
+						t.ID()
+						t.ForeignID("workspace_id").Constrained("workspaces").CascadeOnDelete()
+						t.String("name")
+						t.String("kind")
+						t.BigInteger("opening_cents").Default(0)
+						t.Timestamps()
+						t.Index("workspace_id")
+					})
+				},
+				func() error {
+					return s.Create("categories", func(t *schema.Table) {
+						t.ID()
+						t.ForeignID("workspace_id").Constrained("workspaces").CascadeOnDelete()
+						t.String("name")
+						t.String("kind")
+						t.Timestamps()
+						t.UniqueIndex("workspace_id", "name")
+					})
+				},
+				func() error {
+					return s.Create("imports", func(t *schema.Table) {
+						t.ID()
+						t.ForeignID("workspace_id").Constrained("workspaces").CascadeOnDelete()
+						t.ForeignID("account_id").Constrained("accounts").CascadeOnDelete()
+						t.String("filename")
+						t.Text("content")
+						t.Text("mapping").Default("")
+						t.String("status")
+						t.Integer("imported").Default(0)
+						t.Integer("failed").Default(0)
+						t.Text("error").Default("")
+						t.Timestamps()
+						t.Index("workspace_id")
+					})
+				},
+				func() error {
+					return s.Create("transactions", func(t *schema.Table) {
+						t.ID()
+						t.ForeignID("workspace_id").Constrained("workspaces").CascadeOnDelete()
+						t.ForeignID("account_id").Constrained("accounts").CascadeOnDelete()
+						t.ForeignID("category_id").Nullable().Constrained("categories")
+						t.String("kind")
+						t.BigInteger("amount_cents")
+						t.String("description")
+						t.String("occurred_on", 10)
+						t.ForeignID("import_id").Nullable()
+						t.Timestamps()
+						t.Index("workspace_id", "occurred_on")
+						t.Index("account_id")
+					})
+				},
+				func() error {
+					return s.Create("budgets", func(t *schema.Table) {
+						t.ID()
+						t.ForeignID("workspace_id").Constrained("workspaces").CascadeOnDelete()
+						t.ForeignID("category_id").Constrained("categories").CascadeOnDelete()
+						t.BigInteger("limit_cents")
+						t.Timestamps()
+						t.UniqueIndex("workspace_id", "category_id")
+					})
+				},
+				func() error {
+					return s.Create("workspace_subscriptions", func(t *schema.Table) {
+						t.ID()
+						t.ForeignID("workspace_id").Constrained("workspaces").CascadeOnDelete()
+						t.String("stripe_subscription_id").Unique()
+						t.String("status")
+						t.String("price_id")
+						t.BigInteger("unit_amount").Default(0)
+						t.Timestamp("current_period_end").Nullable()
+						t.Boolean("cancel_at_period_end").Default(false)
+						t.Timestamps()
+						t.Index("workspace_id")
+					})
+				},
+				func() error {
+					return s.Create("email_suppressions", func(t *schema.Table) {
+						t.ID()
+						t.String("address").Unique()
+						t.String("reason")
+						t.Timestamps()
+					})
+				},
+			}
+
+			for _, step := range steps {
+				if err := step(); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(s *schema.Schema) error {
+			for _, table := range []string{
+				"email_suppressions", "workspace_subscriptions", "budgets", "transactions", "imports",
+				"categories", "accounts", "invites", "memberships", "workspaces",
+			} {
+				if err := s.DropIfExists(table); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
+}

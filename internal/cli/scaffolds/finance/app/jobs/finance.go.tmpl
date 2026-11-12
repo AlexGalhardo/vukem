@@ -1,0 +1,61 @@
+package jobs
+
+import (
+	"context"
+
+	vukem "github.com/AlexGalhardo/vukem"
+
+	"{{.Module}}/app/finance"
+	"{{.Module}}/app/workspaces"
+)
+
+// service builds the finance service the jobs share.
+func service(app *vukem.App) (*finance.Service, error) {
+	ws, err := workspaces.New(app)
+	if err != nil {
+		return nil, err
+	}
+
+	return finance.New(app, ws)
+}
+
+// ImportCSV turns the rows of an uploaded statement into transactions. It
+// carries the workspace, because a job has no request to take a tenant from.
+type ImportCSV struct {
+	WorkspaceID int64 `json:"workspaceId"`
+	ImportID    int64 `json:"importId"`
+}
+
+// Kind names the job's handler; keep it stable across deploys.
+func (ImportCSV) Kind() string { return "import_csv" }
+
+// HandleImportCSV runs the import under the tenant context of its workspace.
+func HandleImportCSV(app *vukem.App) func(ctx context.Context, j ImportCSV) error {
+	return func(ctx context.Context, j ImportCSV) error {
+		fin, err := service(app)
+		if err != nil {
+			return err
+		}
+
+		return fin.RunImport(workspaces.WithTenant(ctx, j.WorkspaceID), j.ImportID)
+	}
+}
+
+// MonthlySummary emails every workspace owner how the month that just ended
+// went. routes/schedule.go runs it on the first day of each month.
+type MonthlySummary struct{}
+
+// Kind names the job's handler; keep it stable across deploys.
+func (MonthlySummary) Kind() string { return "monthly_summary" }
+
+// HandleMonthlySummary sends the summaries of the previous month.
+func HandleMonthlySummary(app *vukem.App) func(ctx context.Context, j MonthlySummary) error {
+	return func(ctx context.Context, _ MonthlySummary) error {
+		fin, err := service(app)
+		if err != nil {
+			return err
+		}
+
+		return fin.SendAllMonthlySummaries(ctx, finance.PreviousMonth(app.Now()))
+	}
+}

@@ -78,11 +78,12 @@ func TestSecurity_A02_StarterViewsRespectCSP(t *testing.T) {
 
 	check := func(fsys fs.FS) fs.WalkDirFunc {
 		return func(p string, d fs.DirEntry, err error) error {
-			// Emails are not served pages; JSX/Vue/Svelte event props are not
-			// inline HTML handlers.
+			// Emails (the views of mail and the exported React Email templates) are
+			// not served pages; JSX/Vue/Svelte event props are not inline HTML handlers.
 			isView := strings.HasSuffix(p, ".html") || strings.HasSuffix(p, ".templ") ||
 				strings.HasSuffix(p, ".templ.tmpl")
-			if err != nil || d.IsDir() || strings.Contains(p, "/views/mail/") || !isView {
+			if err != nil || d.IsDir() || strings.Contains(p, "/views/mail/") ||
+				strings.Contains(p, "/resources/emails/") || !isView {
 				return err
 			}
 
