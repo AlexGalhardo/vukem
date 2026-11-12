@@ -529,3 +529,150 @@ func TestKindOfAndSplitList(t *testing.T) {
 		t.Errorf("splitList (-want +got):\n%s", diff)
 	}
 }
+
+// sqliteCatalog answers the SQLite catalog queries of one table, the way an
+// engine does whose pragma_table_xinfo reports a declared type without its
+// size (Turso: "VARCHAR" for VARCHAR(40)) while sqlite_master keeps the
+// CREATE TABLE text.
+func sqliteCatalog(t *testing.T, createSQL string, cols ...[]driver.Value) fakeExec {
+	t.Helper()
+
+	ex, _ := newFakeExec(t, database.SQLite,
+		fakeAnswer{
+			match: "INSTR(LOWER(sql), 'autoincrement')",
+			cols:  []string{"autoinc", "check", "sql"},
+			rows:  [][]driver.Value{v(false, false, createSQL)},
+		},
+		fakeAnswer{match: "COUNT(*)", cols: []string{"n"}, rows: [][]driver.Value{v(int64(1))}},
+		fakeAnswer{
+			match: "pragma_table_xinfo",
+			cols:  []string{"name", "type", "notnull", "dflt", "pk", "hidden"}, rows: cols,
+		},
+		fakeAnswer{match: "type = 'trigger'", cols: []string{"name"}},
+		fakeAnswer{match: "pragma_index_list", cols: []string{"name", "unique", "origin", "partial"}},
+		fakeAnswer{match: "pragma_foreign_key_list", cols: []string{"id", "table", "from", "to", "on_delete"}},
+	)
+
+	return ex
+}
+
+func TestInspectSQLiteRecoversTheDeclaredSizeFromTheCreateTable(t *testing.T) {
+	t.Parallel()
+
+	create := "CREATE TABLE \"t\" (\n" +
+		"  id INTEGER PRIMARY KEY,\n" +
+		"  `label` VARCHAR (40) NOT NULL DEFAULT ('a,b'),\n" +
+		"  [price] NUMERIC (10, 2) CHECK (price > (1 + 2)),\n" +
+		"  \"code\" CHAR (26),\n" +
+		"  note TEXT DEFAULT 'x(y',\n" +
+		"  CONSTRAINT note_ck CHECK (length(note) < 10),\n" +
+		"  label2 VARCHAR(7)\n)"
+
+	// The pragma drops the size; label2 already carries it.
+	ex := sqliteCatalog(t, create,
+		v("id", "INTEGER", int64(1), nil, int64(1), int64(0)),
+		v("label", "VARCHAR", int64(1), nil, int64(0), int64(0)),
+		v("price", "NUMERIC", int64(0), nil, int64(0), int64(0)),
+		v("code", "CHAR", int64(0), nil, int64(0), int64(0)),
+		v("note", "TEXT", int64(0), nil, int64(0), int64(0)),
+		v("label2", "VARCHAR(7)", int64(0), nil, int64(0), int64(0)),
+	)
+
+	tbl, ok, err := InspectTable(t.Context(), ex, "t")
+	if err != nil || !ok {
+		t.Fatalf("InspectTable = %v, %v", ok, err)
+	}
+
+	type got struct {
+		typ, kind        string
+		length, prec, sc int
+	}
+
+	have := map[string]got{}
+	for _, c := range tbl.Columns {
+		have[c.Name] = got{c.Type, c.Kind, c.Length, c.Precision, c.Scale}
+	}
+
+	want := map[string]got{
+		"id":     {"integer", "BigInteger", 0, 0, 0},
+		"label":  {"varchar(40)", "String", 40, 0, 0},
+		"price":  {"numeric(10,2)", "Decimal", 0, 10, 2},
+		"code":   {"char(26)", "ULID", 26, 0, 0},
+		"note":   {"text", "Text", 0, 0, 0},
+		"label2": {"varchar(7)", "String", 7, 0, 0},
+	}
+
+	for name, w := range want {
+		if have[name] != w {
+			t.Errorf("%s = %+v, want %+v", name, have[name], w)
+		}
+	}
+}
+
+func TestInspectSQLiteKeepsThePragmaTypeWhenTheColumnIsNotInTheSQL(t *testing.T) {
+	t.Parallel()
+
+	for name, create := range map[string]string{
+		"a column the text does not mention": "CREATE TABLE t (other TEXT)",
+		"a broken statement":                 "CREATE TABLE t (label VARCHAR(40",
+		"no statement at all":                "",
+		"a view-like text without a list":    "CREATE TABLE t AS SELECT 1",
+	} {
+		ex := sqliteCatalog(t, create, v("label", "VARCHAR", int64(0), nil, int64(0), int64(0)))
+
+		tbl, _, err := InspectTable(t.Context(), ex, "t")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+
+		if c := tbl.Columns[0]; c.Type != "varchar" || c.Kind != "" || c.Length != 0 {
+			t.Errorf("%s: column = %+v, want the pragma type unchanged", name, c)
+		}
+	}
+}
+
+// Turso names an expression in pragma_index_info instead of returning NULL,
+// so a name that is not a column of the table is an expression.
+func TestInspectSQLiteTakesAnIndexedNameThatIsNotAColumnForAnExpression(t *testing.T) {
+	t.Parallel()
+
+	ex, _ := newFakeExec(t, database.SQLite,
+		fakeAnswer{
+			match: "INSTR(LOWER(sql), 'autoincrement')",
+			cols:  []string{"autoinc", "check", "sql"},
+			rows:  [][]driver.Value{v(false, false, "CREATE TABLE t (id INTEGER, label TEXT)")},
+		},
+		fakeAnswer{match: "COUNT(*)", cols: []string{"n"}, rows: [][]driver.Value{v(int64(1))}},
+		fakeAnswer{
+			match: "pragma_table_xinfo",
+			cols:  []string{"name", "type", "notnull", "dflt", "pk", "hidden"},
+			rows: [][]driver.Value{
+				v("id", "INTEGER", int64(0), nil, int64(0), int64(0)),
+				v("label", "TEXT", int64(0), nil, int64(0), int64(0)),
+			},
+		},
+		fakeAnswer{match: "type = 'trigger'", cols: []string{"name"}},
+		fakeAnswer{
+			match: "pragma_index_list",
+			cols:  []string{"name", "unique", "origin", "partial"},
+			rows:  [][]driver.Value{v("t_expr", int64(0), "c", int64(0)), v("t_plain", int64(0), "c", int64(0))},
+		},
+		fakeAnswer{
+			match: "pragma_index_info",
+			cols:  []string{"name"},
+			rows:  [][]driver.Value{v("lower (label)"), v("id")},
+		},
+		fakeAnswer{match: "pragma_foreign_key_list", cols: []string{"id", "table", "from", "to", "on_delete"}},
+	)
+
+	tbl, _, err := InspectTable(t.Context(), ex, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, ix := range tbl.Indexes {
+		if !ix.Expression || len(ix.Columns) != 1 || ix.Columns[0] != "id" {
+			t.Errorf("index %s = %+v, want an expression index with only the plain column id", ix.Name, ix)
+		}
+	}
+}
