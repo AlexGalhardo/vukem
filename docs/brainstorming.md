@@ -176,6 +176,7 @@ The maintainer moved the post-1.0 backlog into BETA. Choices that keep the core 
 | GraphQL field merging (2026-11-11) | Fields of one response key are grouped by (parent type, field, canonical arguments) before the pairwise comparison, so repeated identical fields cost one comparison and validation stays linear for an unauthenticated query. |
 | `vukem db` and MySQL (2026-11-11) | The app `db` console opens `sqlite3` and `psql` (password in `PGPASSWORD`, never in argv); `mysql://` and `mariadb://` are refused until the maintainer picks between the deprecated `MYSQL_PWD` and a 0600 option file. |
 | Issue standard (2026-11-11) | Issue forms with `area:*` labels from `.github/labels.txt` (`task labels:sync`); no issue `type:` until the account has the types; no Discussions; the vukem-video feedback prefix is `VD-` for new entries. |
+| Row-level tenancy (2026-11-12) | Core package `tenancy` (see [tenancy.md](tenancy.md)): `Middleware` resolves the tenant (`Session`, `Header`, `PathValue`), checks membership of the `auth.Principal` user and answers 404 for a missing tenant, a non-member or a resolver error; the tenant rides the context (`From`, `With`); `Scope[T](ctx, column)` filters queries and matches nothing without a tenant; `Assign` fills the tenant column in a `BeforeCreate` hook. `ID` is a string, like `AuthID()`. |
 
 ## Open questions
 

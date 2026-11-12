@@ -21,6 +21,7 @@ Two sources, one owner per kind of content: `docs/` is canonical for contracts a
 | Security review (B.5.2, ASVS 5.0 L2) | [security-review.md](security-review.md) |
 | Databases, ORM, migrations | [database.md](database.md) |
 | Authentication and authorization | [authentication.md](authentication.md) |
+| Row-level multi-tenancy (workspaces) | [tenancy.md](tenancy.md) |
 | Admin panel | [admin.md](admin.md) |
 | Views, HTMX, SSE, WebSockets, broadcasting, Inertia, Vite | [frontend.md](frontend.md) |
 | CLI | [cli.md](cli.md) |
