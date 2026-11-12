@@ -33,6 +33,7 @@ vukem new shop --api            # JSON-only REST API
 vukem new site --minimal        # HTMX without a database
 vukem new blog --pm bun         # bun install instead of npm install
 vukem new blog --no-install     # skip installing frontend dependencies
+vukem new blog --example none   # leave out the example app
 ```
 
 On a terminal without a stack flag, `vukem new` asks which stack you want; in scripts and CI it picks HTMX. Only one of `--api`, `--templ` and `--inertia` may be given, and `--minimal` cannot be combined with any of them:
@@ -40,6 +41,14 @@ On a terminal without a stack flag, `vukem new` asks which stack you want; in sc
 ```text
 usage error: --minimal is an HTMX starter: drop --api, --templ and --inertia
 ```
+
+A terminal also asks *Example app?* before the stack. `--example todo|finance|none` answers it (`--no-example` means `none`), and without a terminal the to-do example is included.
+
+- **to-do** (default): a finished tasks list in the style of the chosen stack, with a migration, validation and tests. [Your first app](/docs/getting-started/first-app) builds the HTMX one step by step.
+- **finance**: a personal finance SaaS on Inertia React with authentication, an admin panel, workspaces, Stripe and Resend. It forces the Inertia React stack, so `--api`, `--templ` and other `--inertia` values are refused.
+- **none**: the empty starter.
+
+`--minimal` has no database, so it has no example.
 
 ## Comparison
 
@@ -54,6 +63,7 @@ usage error: --minimal is an HTMX starter: drop --api, --templ and --inertia
 ### What every starter shares
 
 - **SQLite, migrations and an example CRUD** of posts, backed by the pure-Go driver, with a factory and a seeder (all but Minimal).
+- **A to-do example app** (tasks CRUD with validation, a migration and tests) next to the posts, unless you pass `--example none` (all but Minimal).
 - **Tests** that pass with `go test ./...` on a fresh project, without Node.js.
 - **A fresh `APP_KEY`** in `.env`, copied from `.env.example`.
 - **A production `Dockerfile`** and a `.dockerignore`. Web starters build the Vite assets with the chosen package manager in a first stage; every starter then builds a static Go binary with the tags in `.buildtags` and runs it as a non-root user on Alpine with `APP_ENV=production`, `HOST=0.0.0.0`, `PORT=3000`, `LOG_FORMAT=json` and `MAIL_MAILER=log` (so the image boots before you configure a mailer). The `.dockerignore` keeps `.env` files, `.git/`, `.vukem/`, `node_modules`, `storage/` and local Vite output out of the image. Railway and other platforms build it as is: see [Docker and Railway](/docs/deployment/docker-and-railway).
