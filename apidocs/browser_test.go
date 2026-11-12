@@ -63,6 +63,18 @@ var (
 	serverCaption = regexp.MustCompile(`(?s)<span[^>]*>\s*Server\s*</span>`)
 )
 
+// teardownHang reports whether Chromium dumped the whole DOM and only then
+// hung on shutdown: on macOS runners it sometimes stalls on the failing
+// CVDisplayLink, and its teardown watchdog kills it with exit status 2 after
+// the dump. Anything else, or a truncated DOM, stays a failure.
+func teardownHang(err error, dom []byte, stderr string) bool {
+	var exitErr *exec.ExitError
+
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 2 &&
+		strings.Contains(stderr, "Teardown watchdog expired") &&
+		strings.HasSuffix(strings.TrimSpace(string(dom)), "</html>")
+}
+
 // TestBrowser_APIDocsNoCSPViolations loads the page in headless Chromium
 // under the app's default secure headers and fails on any CSP violation
 // the console reports (A13), and on any <label> left labelling nothing
@@ -101,7 +113,7 @@ func TestBrowser_APIDocsNoCSPViolations(t *testing.T) {
 	// ErrWaitDelay means Chromium exited cleanly but a helper still held a
 	// pipe: the DOM on stdout is complete.
 	dom, err := cmd.Output()
-	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) && !teardownHang(err, dom, stderr.String()) {
 		t.Fatalf("%s: %v\n%s", chrome, err, stderr.String())
 	}
 
@@ -172,4 +184,32 @@ func bodyOf(dom []byte) []byte {
 	}
 
 	return dom
+}
+
+func TestTeardownHang(t *testing.T) {
+	// A bad test flag makes the test binary exit with status 2.
+	exit2 := exec.CommandContext(t.Context(), os.Args[0], "-test.bogusflag").Run()
+
+	const watchdog = "Teardown watchdog expired; recording dump and terminating."
+
+	tests := []struct {
+		name   string
+		err    error
+		dom    string
+		stderr string
+		want   bool
+	}{
+		{"complete dom, watchdog, exit 2", exit2, "<html></html>\n", watchdog, true},
+		{"truncated dom", exit2, "<html><body>", watchdog, false},
+		{"no watchdog message", exit2, "<html></html>", "crash", false},
+		{"not an exit error", context.DeadlineExceeded, "<html></html>", watchdog, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := teardownHang(tt.err, []byte(tt.dom), tt.stderr); got != tt.want {
+				t.Errorf("teardownHang = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
