@@ -16,7 +16,7 @@ export const navigation: NavCategory[] = [
     title: "Getting started",
     dir: "getting-started",
     prefix: "",
-    pages: ["introduction", "prerequisites", "installation", "quick-start", "key-concepts", "starters", "first-app", "configuration", "directory-structure", "showcase"],
+    pages: ["introduction", "prerequisites", "installation", "quick-start", "key-concepts", "starters", "first-app", "finance-saas", "configuration", "directory-structure", "showcase"],
   },
   {
     title: "Coming from",

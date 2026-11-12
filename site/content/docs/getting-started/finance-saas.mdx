@@ -1,0 +1,533 @@
+---
+title: Personal finance SaaS
+description: Scaffold a complete multi-tenant SaaS with vukem new --example finance, and learn how workspaces, Stripe billing, Resend email and CSV import fit together.
+---
+
+`vukem new money --example finance` creates a small but complete SaaS for personal finances. It has sign-up, workspaces with roles, Stripe subscriptions, transactional email, budgets, a dashboard with charts and CSV import of bank statements.
+
+You will learn:
+
+- how to scaffold the app and what each part of it does
+- how workspaces isolate every row of data with the `tenancy` package
+- how the Free and Pro plans are enforced, and how Stripe grants access
+- how emails are written as React components and sent through Resend
+- how budgets, alerts, the dashboard and the CSV import work
+- how the generated tests prove isolation, limits, webhooks and mail
+
+The example is a starting point you read and change, not a library. Every file is yours the moment `vukem new` writes it. You need Go 1.27.4 or newer, the `vukem` CLI ([Installation](/docs/installation)) and Node.js, because the pages are React.
+
+## The idea
+
+A SaaS sells one product to many customers, and the customers must never see each other's data. Think of a building with one lock per apartment: the building is shared, the rooms are not.
+
+In this app the apartment is a **workspace**. A workspace owns accounts, transactions and budgets, and it is what pays for a plan. People belong to workspaces with a role, and a person may belong to several.
+
+Four questions drive the design:
+
+| Question | Answer in the app |
+| --- | --- |
+| Whose data is this request about? | The workspace stored in the session, checked on every request |
+| May this person do it? | The role in that workspace, through `authz` abilities |
+| How much may the workspace do? | Its plan: Free or Pro |
+| Who must be told? | The owners, by email, sent through a queue |
+
+The `finance` example needs the Inertia + React stack and refuses the others:
+
+```bash
+vukem new money --example finance --api
+```
+
+The error names the flags that conflict:
+
+```text
+usage error: --example finance is an Inertia React app: drop --api, --templ and --inertia
+```
+
+## Quick start
+
+<Steps>
+<Step title="Create the project">
+
+```bash
+vukem new money --example finance
+cd money
+```
+
+Without a terminal you pick the example with `--example finance`. With a terminal, `vukem new` asks *Example app?* and offers to-do, finance or none.
+
+</Step>
+<Step title="Create the database">
+
+```bash
+vukem migrate
+```
+
+SQLite is the default, so there is nothing to install. The migration `create_finance_tables` makes the workspaces, memberships, invites, accounts, categories, transactions, budgets, imports, subscriptions and suppression tables.
+
+</Step>
+<Step title="Start it">
+
+```bash
+vukem serve
+```
+
+Open `http://localhost:3000` and register. Development writes emails to the log (`MAIL_MAILER=log`): copy the verification link from the terminal.
+
+</Step>
+<Step title="Record a transaction">
+
+After you verify the email and log in, the first visit to `/dashboard` creates your workspace, a **Main account** and a set of categories. Add an expense on the Transactions page and see the charts move.
+
+</Step>
+<Step title="Open the admin panel">
+
+Set `ADMIN_EMAILS=you@example.com` in `.env` and restart. The panel is at `/admin` and the revenue page at `/admin/revenue`.
+
+</Step>
+</Steps>
+
+Stripe and Resend need accounts of yours. They are optional while you develop: billing answers *Billing is not configured.* until you set the keys, and emails go to the log.
+
+## What the example adds
+
+The scaffold starts from the Inertia + React starter, runs the same installers as `vukem install:auth --2fa` and `vukem install:admin --stack inertia`, then adds the finance code on top.
+
+| Path | What it holds |
+| --- | --- |
+| `app/workspaces` | Workspaces, members, invites, plan limits, role policies |
+| `app/finance` | Accounts, transactions, budgets, dashboard numbers, CSV import, monthly summary |
+| `app/billing` | Stripe Checkout, Customer Portal and webhooks, per workspace |
+| `app/mail` | The mailables and the Resend webhook |
+| `app/jobs` | The queued CSV import and the scheduled monthly summary |
+| `app/controllers/ledger` | The page handlers |
+| `routes/finance.go` | Every route and the middleware that guards it |
+| `resources/js` | React pages, SVG charts and the email components |
+| `resources/emails` | The exported email templates the app embeds |
+| `tests` | The generated tests, next to those of the auth and admin installers |
+
+The starter's Posts demo is removed, because the finance app replaces it.
+
+## Authentication
+
+Authentication is `vukem install:auth --2fa`: registration with email verification, login, password reset, remember-me, rate limits and optional two-factor authentication with TOTP. The [authentication](/docs/security/authentication) and [two-factor](/docs/security/two-factor) pages explain each rule.
+
+Two changes make it fit the finance app:
+
+- `/dashboard` is the finance dashboard and lives inside a workspace, so it is removed from `routes/auth.go`.
+- The verification and reset emails are React Email components (`verify_email` and `reset_password`).
+
+Anyone who is not signed in is sent to `/login`, and a signed-in user with an unverified email is sent to `/email/verify`. Both are tested.
+
+## The admin panel
+
+The admin panel is `vukem install:admin --stack inertia`: React pages over the panel's JSON, an audit log and the ability checks. Admins are the users listed in `ADMIN_EMAILS` whose email is **verified**. Without that check anyone could sign up first with an admin's address.
+
+The finance app adds `/admin/revenue`, a page with the monthly recurring revenue (MRR), the active, trialing and past-due subscriptions and the number of workspaces and users:
+
+```go title="app/controllers/ledger/billing.go"
+for _, s := range subs {
+	switch s.Status {
+	case "active":
+		props.Active++
+		props.MRRCents += s.UnitAmount
+	case "trialing":
+		props.Trialing++
+	case "past_due":
+		props.PastDue++
+	}
+}
+```
+
+MRR sums the monthly unit price Stripe reports for each active subscription, in USD. It is the one place that reads across workspaces on purpose, behind the admin check. Anyone else gets a 404.
+
+## Workspaces and tenancy
+
+Every domain table has a `workspace_id` column. The [`tenancy` package](/docs/security/multi-tenancy) resolves the workspace of each request, checks that the user belongs to it and scopes queries. It fails closed: no workspace means no rows.
+
+The app keeps all calls to the package in two small files. `app/workspaces/tenant.go` is the request side:
+
+```go title="app/workspaces/tenant.go"
+// Scoped starts a query on T limited to the workspace of ctx. With no
+// workspace in ctx it matches nothing.
+func Scoped[T any](ctx context.Context, ex database.Executor) orm.Query[T] {
+	return orm.QueryOf[T](ex).Scope(tenancy.Scope[T](ctx, "workspace_id"))
+}
+```
+
+`app/models/tenant.go` is the write side. Each domain model takes its workspace from the context in `BeforeCreate`, whatever the request sent:
+
+```go title="app/models/tenant.go"
+// SetTenant implements tenancy.Scoped.
+func (m *Account) SetTenant(id tenancy.ID) { m.WorkspaceID = tenantID(id) }
+
+// BeforeCreate stamps the tenant.
+func (m *Account) BeforeCreate(ctx context.Context) error { return tenancy.Assign(ctx, m) }
+```
+
+Services never build a bare query on a domain table. They call `workspaces.Scoped[models.Transaction](ctx, db)`, so a forgotten `Where` cannot leak a row.
+
+### Choosing the current workspace
+
+The workspace id lives in the session, and the middleware runs after `auth.Required` and `auth.Verified`:
+
+```go title="routes/finance.go"
+r.Group("", func(g *router.Group) {
+	g.Use(required, verified, ws.Middleware(), shareWorkspace(ws, acc, admins))
+
+	g.Get("/dashboard", h.Dashboard).Name("dashboard")
+	g.Get("/transactions", h.Transactions).Name("transactions.index")
+	// ...
+})
+```
+
+`ws.Middleware()` does three things:
+
+1. It reads the workspace from the session. A missing or stale value is replaced by the user's first workspace, and a user with none gets a personal one (and the welcome email).
+2. It lets `tenancy.Middleware` check the membership. A workspace that is not the user's answers 404, never 403, so ids cannot be probed.
+3. It puts the user's role in the context for the policies.
+
+The switcher in the header posts to `/workspaces/{workspace}/switch`. Switching to someone else's workspace changes nothing: the next request checks the membership and falls back to your own.
+
+### Roles and policies
+
+A membership has one of three roles. The abilities are `authz` abilities, defined once in `app/workspaces/policy.go`:
+
+| Ability | Owner | Admin | Member |
+| --- | --- | --- | --- |
+| `transactions.record`: add and delete transactions | yes | yes | yes |
+| `data.manage`: accounts, categories, budgets, imports | yes | yes | no |
+| `members.manage`: invite, remove, rename the workspace | yes | yes | no |
+| `billing.manage`: choose a plan, open the portal | yes | no | no |
+
+Handlers call `h.can(c, workspaces.AbilityManageData)` and a denied user gets a 403. The owner can never be removed, so a workspace always has someone who pays.
+
+### Invitations
+
+An owner or admin invites by email with a role of `admin` or `member`. The invitation stores only the SHA-256 of a random token and expires after seven days. The link in the email is `/invites/{token}`:
+
+- It needs a signed-in user with a verified email **equal to the invited address**.
+- Anyone else, and any unknown, used or expired token, gets a 404.
+- Accepting adds the membership and switches to the workspace.
+
+Members and pending invitations count against the plan's member limit, so Free cannot invite anyone.
+
+## Plans and billing
+
+Billing belongs to the workspace. The Stripe customer, the subscription and the checkout metadata all carry the workspace id, and only the owner may start or manage a subscription.
+
+| | Free | Pro |
+| --- | --- | --- |
+| Accounts | 1 | unlimited |
+| Transactions per month | 100 | unlimited |
+| Members | 1 | unlimited |
+| CSV import | no | yes |
+| Budgets and alerts | no | yes |
+
+The limits are code, not configuration. Change them in `app/workspaces/limits.go`:
+
+```go title="app/workspaces/limits.go"
+var (
+	Free = Limits{Plan: "free", Accounts: 1, Transactions: 100, Members: 1}
+	Pro  = Limits{
+		Plan: "pro", Accounts: Unlimited, Transactions: Unlimited,
+		Members: Unlimited, CSVImport: true, Budgets: true,
+	}
+)
+```
+
+A workspace is on Pro while it has a subscription that is `active` or `trialing`. Anything else (`past_due`, `unpaid`, `canceled`) is Free again, and the data stays. A refused action answers with the reason and sends the user to `/billing`:
+
+```text
+The free plan allows 1 account. Upgrade to Pro to remove this limit.
+```
+
+### Checkout, trial and portal
+
+`POST /billing/checkout/pro` creates a Stripe customer for the workspace, then a Checkout Session in subscription mode. The first subscription of a workspace gets a 14-day trial (`TrialDays` in `app/billing/billing.go`). A workspace that subscribed before gets none.
+
+```go title="app/billing/billing.go"
+item := stripe.Params{"price": p.Price, "quantity": 1}
+params := stripe.Params{
+	"mode":                "subscription",
+	"customer":            customer,
+	"client_reference_id": id,
+	"line_items":          []stripe.Params{item},
+	"subscription_data":   data,
+	"success_url":         b.URL + "/billing?checkout=success",
+	"cancel_url":          b.URL + "/billing",
+}
+```
+
+`POST /billing/portal` sends the owner to the Stripe Customer Portal to change the plan, update the card, read invoices or cancel.
+
+### Webhooks grant access
+
+The page Checkout returns to grants nothing. `POST /stripe/webhook` does, after it verifies the `Stripe-Signature`, ignores event ids it has seen and loads the current subscription from Stripe, so out-of-order events cannot leave stale data.
+
+| Stripe event | What the app does |
+| --- | --- |
+| `checkout.session.completed` | Links the customer to the workspace named by `client_reference_id`, then syncs |
+| `customer.subscription.created`, `updated`, `deleted`, `paused`, `resumed` | Syncs the subscription |
+| `customer.subscription.trial_will_end` | Emails the owners (trial ending) |
+| `invoice.payment_failed` | Syncs, then emails the owners (payment failed) |
+| `invoice.paid` | Syncs, then emails the receipt unless the amount is zero |
+
+A sync error answers 500 so Stripe delivers the event again. A failed email is logged and never fails the webhook.
+
+## Email with Resend and React Email
+
+Every email is a [React Email](https://react.email) component in `resources/js/emails`, exported to HTML at build time and filled with Go values when it is sent. No Node process runs in production. The [mail](/docs/digging-deeper/mail#react-email-templates) page explains the mechanism.
+
+| Email | Sent when | Component |
+| --- | --- | --- |
+| Welcome | The first workspace of a user is created | `welcome` |
+| Verify email | Sign-up and resend | `verify_email` |
+| Password reset | A reset is requested | `reset_password` |
+| Workspace invite | An owner or admin invites someone | `workspace_invite` |
+| Trial ending | Stripe warns three days before the trial ends | `trial_ending` |
+| Payment failed | A renewal fails | `payment_failed` |
+| Receipt | An invoice is paid | `receipt` |
+| Budget alert | A category reaches 80% or 100% of its budget | `budget_alert` |
+| Monthly summary | The first day of each month, 08:00 | `monthly_summary` |
+
+A component's props are Go template actions, so the HTML keeps them until the send:
+
+```tsx title="resources/js/emails/receipt.tsx"
+type Props = { workspace: string; amount: string; url: string };
+
+export default function Receipt({
+  workspace = go(".Workspace"),
+  amount = go(".Amount"),
+  url = go(".URL"),
+}: Partial<Props>) {
+  return (
+    <Shell
+      preview="Your receipt"
+      title={`Receipt for ${amount}`}
+      action="View the invoice"
+      href={url}
+    >
+      <Text>Thanks. We charged {amount} for the Pro plan of {workspace}.</Text>
+    </Shell>
+  );
+}
+```
+
+The matching mailable lives in `app/mail/finance.go`. Its fields are the names the component reads:
+
+```go title="app/mail/finance.go"
+// Receipt confirms a paid invoice. Amount is formatted ("$9.00").
+type Receipt struct {
+	To, Workspace, Amount, URL string
+}
+
+// Content implements mail.Mailable.
+func (m Receipt) Content() mail.Content { return mail.React("receipt", m) }
+```
+
+After you change a component, rebuild the HTML and commit it:
+
+```bash
+npm run build:emails
+```
+
+### Resend in production
+
+Development uses `MAIL_MAILER=log`. Production sets three values:
+
+```bash title=".env"
+MAIL_MAILER=resend
+MAIL_FROM="Finance <no-reply@yourdomain.com>"
+RESEND_API_KEY=re_...
+```
+
+Mail is queued with `SendLater`, so a slow provider never slows a page. Set `QUEUE_CONNECTION=database` (or Redis) and run `vukem queue:work` so the queue survives restarts.
+
+### Bounces and complaints
+
+Resend reports bounces and complaints to `POST /webhooks/resend`. In the Resend dashboard add a webhook for `email.bounced` and `email.complained`, and put its signing secret in `RESEND_WEBHOOK_SECRET`.
+
+The endpoint verifies the signature with `webhook.Standard`, decodes the event with `mail.ParseResendEvent`, and stores permanent bounces, complaints and Resend's own suppressions in `email_suppressions`. The mailer reads that table before every send, so those addresses stop receiving mail while the action that caused the email still succeeds. Without a secret the endpoint answers 503.
+
+## Accounts, categories and transactions
+
+An account is a place money sits (checking, savings, card or cash) with an opening balance. A category belongs to the income or the expense kind. A transaction has a kind, a positive amount, an account, an optional category, a description and an ISO date.
+
+Money is `int64` cents, never a float. `finance.ParseAmount` reads what people type:
+
+| Input | Cents |
+| --- | --- |
+| `12.34` or `12,34` | 1234 |
+| `1,234.56` or `1.234,56` | 123456 |
+| `-$5` or `(5.00)` | -500 |
+| `1.005` | error: more than two decimals |
+
+A single separator is the decimal one. Each workspace has an ISO 4217 currency (`USD` by default) that you change in the workspace settings.
+
+The Transactions page filters by period, category, account and kind through the query string, for example `/transactions?from=2026-02-01&to=2026-02-28&categoryId=3`. A new transaction checks that the account and the category belong to the workspace, so a forged id answers with a message instead of linking another workspace's row.
+
+## Budgets and alerts
+
+A budget is a monthly limit for one expense category (Pro). The Budgets page shows the spending of the current month against each limit.
+
+When an expense makes a category cross **80%** or **100%** of its budget, the owners get an email. The check compares the spending before and after the new transaction, so it fires once per threshold:
+
+```go title="app/finance/service.go"
+before := spent - delta
+percent := 0
+
+for _, p := range []int64{80, 100} {
+	if before*100 < p*b.LimitCents && spent*100 >= p*b.LimitCents {
+		percent = int(p)
+	}
+}
+```
+
+## Dashboard and charts
+
+The dashboard shows the balance (opening balances plus income minus expenses), the income and expenses of the last six months, the spending by category this month and the budget progress. Pass `?month=2026-03` to see another month.
+
+The charts are plain SVG components (`BarChart` and `DonutChart` in `resources/js/components/charts`), so the app has no chart dependency. Each bar and slice has a `<title>` with its value, so the numbers are available without hovering tricks.
+
+## CSV import
+
+CSV import is a Pro feature in two steps, and the second one runs in a queued job.
+
+1. **Upload.** `POST /import` takes an account and a file up to 2 MiB. The server reads the header (`,` or `;` separated) and shows the first five rows.
+2. **Map and confirm.** You choose the date, description, amount and optional category columns and a date format. `POST /import/{id}` stores the mapping and dispatches the `import_csv` job.
+
+The job creates the transactions under the workspace that started it:
+
+- A negative amount is an expense and a positive one income. Tick *Positive amounts are expenses* for statements that use the other convention.
+- Categories are matched by name and kind. An unknown category leaves the transaction uncategorised.
+- A row that does not parse is counted and skipped, and the first five reasons are saved on the import.
+- The statement is deleted from the database when the job finishes, and a retried job does nothing.
+
+Budget alerts are checked once per category and month at the end of the import, not per row. The upload limit of 2 MiB and 20,000 rows per import are constants in `app/finance/importer.go`.
+
+## The monthly summary
+
+`routes/schedule.go` runs the `monthly_summary` job on the first day of each month at 08:00:
+
+```go title="routes/schedule.go"
+s.Job(jobs.MonthlySummary{}).MonthlyOn(1, "08:00").WithoutOverlapping()
+```
+
+`vukem serve` runs the schedule in process. With several servers set `SCHEDULE_IN_SERVE=false` and run `vukem schedule:work` on one of them. A workspace without transactions in the month gets no email.
+
+## PostgreSQL
+
+SQLite is the default and the tests use it in memory. To move to PostgreSQL install the driver as described in the [database overview](/docs/database/overview#postgresql) and set `DATABASE_URL`.
+
+The schema is written for both databases:
+
+- Money is `BIGINT` cents and the currency is a three-letter column, so no amount is a float.
+- Dates are `YYYY-MM-DD` text, which sorts and compares the same on both.
+- The tenant id is an integer column. The `tenancy` package passes ids as strings, and the database converts them for the comparison.
+
+Run the generated tests against your PostgreSQL before you rely on it. The example was tested with SQLite.
+
+## Configuration
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `APP_URL` | `http://localhost:3000` | Base URL of links in emails and Stripe return URLs |
+| `APP_KEY` | generated by `vukem new` | Encrypts sessions and signs verification links |
+| `DATABASE_URL` | `file:storage/database.sqlite` | The database |
+| `ADMIN_EMAILS` | empty | Comma-separated verified emails that may use `/admin` |
+| `STRIPE_KEY` | empty | Restricted Stripe key (`rk_...`); billing answers 503 without it |
+| `STRIPE_WEBHOOK_SECRET` | empty | Verifies `POST /stripe/webhook` (`whsec_...`) |
+| `STRIPE_PRICE_PRO` | empty | The recurring price id of the Pro plan |
+| `STRIPE_CURRENCIES` | empty | Currencies a checkout may ask for, for example `usd,brl` |
+| `MAIL_MAILER` | `log` | `log` in development, `resend` in production |
+| `MAIL_FROM` | `Finance <no-reply@example.com>` | The sender; use a domain verified in Resend |
+| `RESEND_API_KEY` | empty | Required when `MAIL_MAILER=resend` |
+| `RESEND_WEBHOOK_SECRET` | empty | Verifies `POST /webhooks/resend`; empty refuses every request |
+| `QUEUE_CONNECTION` | `sync` | Use `database` or Redis in production so `SendLater` and imports run in a worker |
+| `SCHEDULE_IN_SERVE` | `true` | Runs the monthly summary inside `vukem serve` |
+| `CACHE_STORE` | memory | Use `database` or Redis when several servers run: it remembers processed Stripe events |
+
+In production the app refuses to boot when Stripe is not configured (`billing: STRIPE_KEY is not set`) or when `MAIL_MAILER` is unset.
+
+## Security
+
+The example turns on every secure default of the framework and adds its own:
+
+- **Tenant isolation.** Reads go through `Scoped`, inserts take the workspace from the context, and a forged session value or id is a 404 or a message, never another workspace's row.
+- **Least privilege.** Roles gate every write. Billing belongs to the owner only.
+- **Fail closed.** A missing Stripe secret or Resend secret refuses the webhook instead of accepting it.
+- **Signed webhooks.** Stripe and Resend requests are verified before the body is read, and replays inside the tolerance are ignored.
+- **Invitations.** Tokens are random, stored hashed, tied to one verified address and single use.
+- **CSV.** The upload is bounded in size and rows, parsed with `encoding/csv`, and every value goes through the money and date parsers. Nothing from the file reaches SQL as text.
+- **Mail.** Props are escaped by `html/template` for where they land, and suppressed addresses are never mailed.
+
+See the [security overview](/docs/security/overview) for the rest.
+
+## Testing
+
+`go test ./...` runs the generated tests with `vukemtest`, a fake Stripe server and the in-memory mailer. No test reaches the network.
+
+| Test | What it proves |
+| --- | --- |
+| `TestTenancyIsolatesWorkspaces` | Another workspace sees, deletes or writes nothing of yours |
+| `TestRolesDecideWhoMayDoWhat` | Owner, admin and member abilities |
+| `TestFreePlanLimits` | 1 account, 100 transactions a month, 1 member, no budgets or import |
+| `TestStripeWebhookTurnsTheWorkspaceIntoPro` | Webhook sync, past due, receipt, trial warning, cancellation |
+| `TestBudgetAlertsAt80And100Percent` | One email per threshold |
+| `TestResendWebhookSuppressesBouncedAddresses` | Signature, bounce, complaint, suppression |
+| `TestCSVImportMapsColumnsAndRunsAsAJob` | Mapping, job, skipped rows, categories |
+
+The Stripe test starts a fake server and points the app at it with `STRIPE_API_BASE`, which the app honours only in tests:
+
+```go title="tests/finance_billing_test.go"
+return newApp(t, map[string]string{
+	"STRIPE_KEY": stripeKey, "STRIPE_WEBHOOK_SECRET": stripeSecret, "STRIPE_API_BASE": f.srv.URL,
+	"STRIPE_PRICE_PRO": "price_pro", "STRIPE_CURRENCIES": "usd,brl",
+})
+```
+
+Run `npm run typecheck` for the React code. `vukem build` builds the assets and the binary.
+
+## Common mistakes
+
+**Querying a domain table without the scope.**
+
+```go title="wrong"
+orm.QueryOf[models.Transaction](db).Where("id", id).First(ctx)
+```
+
+```go title="right"
+workspaces.Scoped[models.Transaction](ctx, db).Where("id", id).First(ctx)
+```
+
+The first reads any workspace's row. The second matches nothing without a workspace in `ctx`.
+
+**Inserting outside a workspace.** A job or a command has no request, so it has no workspace. `orm.Create` fails with `tenancy: no tenant` until you wrap the context:
+
+```go title="app/jobs/finance.go"
+return fin.RunImport(workspaces.WithTenant(ctx, j.WorkspaceID), j.ImportID)
+```
+
+**Forgetting to rebuild the emails.** After you edit a component the old HTML is still embedded. A name with no exported page fails at the first send:
+
+```text
+mail: React email "welcome" not found
+```
+
+**Resend without a key.**
+
+```text
+vukem: MAIL_MAILER=resend needs RESEND_API_KEY
+```
+
+**Billing not configured in development.** Pro features answer with *Billing is not configured.* and the log shows `billing is not configured`. Set `STRIPE_KEY` and `STRIPE_PRICE_PRO`, and run `stripe listen --forward-to localhost:3000/stripe/webhook` for the webhook secret.
+
+**Trusting the Checkout success page.** The page at `/billing?checkout=success` grants nothing. Pro starts when the webhook arrives, so refresh in a moment.
+
+## Next steps
+
+- [Multi-tenancy](/docs/security/multi-tenancy): the `tenancy` package, its guarantees and its limits
+- [Billing](/docs/digging-deeper/billing): Stripe in depth, including webhooks and Connect
+- [Mail](/docs/digging-deeper/mail): transports, React Email, suppression and testing
+- [Queue](/docs/digging-deeper/queue) and [Scheduler](/docs/digging-deeper/scheduler): running the jobs in production
+- [Admin panel](/docs/digging-deeper/admin): resources, policies and the audit log
