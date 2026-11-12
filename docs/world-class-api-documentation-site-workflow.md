@@ -55,7 +55,8 @@ Reference pages (CLI, configuration lists) replace 3–5 with complete tables, o
 ## Writing style
 
 - **Second person, present tense, active voice**: "You register a route", not "Routes are registered".
-- **Short sentences.** One idea per sentence; split anything over ~25 words.
+- **Short sentences.** One idea per sentence; aim for ~25 words and never go over ~50.
+- **Short paragraphs.** At most two sentences per paragraph. A third point opens a new paragraph, and three or more parallel facts (flags, limits, rules, steps) become a bulleted list. A dense block of prose is the first thing to rewrite: developers scan a page, they do not read it.
 - **Motivation before API.** "Instead of writing the same login check in every handler, put it in a middleware" — then the code.
 - **"may" for options, "should" for recommendations, "must" for requirements.**
 - **Name things consistently**: the same word for the same thing on every page (handler, middleware, provider, guard, seeder, migration). A term's first use on a page can carry a `<Term>` tooltip.

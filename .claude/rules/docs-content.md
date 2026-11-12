@@ -10,6 +10,7 @@ Full rationale and examples: [docs/world-class-api-documentation-site-workflow.m
 - Write for someone learning Go and Vukem at the same time; explain why before how, and document every option, default, environment variable, error and edge case the code has.
 - Page order: opening (what + problem, "You will learn" bullets) → the idea (analogy, Go links) → quick start (`<Steps>`) → in depth (one H2 per capability, with what happens under the hood) → configuration table → security → testing → common mistakes (wrong vs right + real error text) → next steps.
 - Second person, present tense, short sentences; "may" / "should" / "must"; no "simply", "just", "easy", "powerful".
+- Short paragraphs: at most two sentences per paragraph, and no sentence over ~50 words (aim for ~25). A third point starts a new paragraph; three or more parallel facts (flags, limits, rules, steps) become a bulleted list. Never leave a wall of text: readers scan, they do not read.
 - Code: verified against the current source, file path on every file snippet (` ```go title="routes/web.go" `), imports when it is the whole file, one running example per page, output shown, lines kept under ~80 columns (code wraps, never scrolls).
 - Link Go language concepts to go.dev (tour, Effective Go, pkg.go.dev std, spec) and standards to their source; internal links are root-relative.
 - Callouts: info, tip, warning (warning only for data loss, security or breaking behaviour), at most three per page; use `<Term tip="…">` for first-use definitions, tables for options and mappings.
