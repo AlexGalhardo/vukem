@@ -49,9 +49,11 @@ import (
 )
 
 const (
-	htmxPkg  = "htmx.org"
-	htmxFile = "internal/cli/starter/resources/public/js/htmx.min.js"
-	newGo    = "internal/cli/new.go"
+	htmxPkg         = "htmx.org"
+	frameworkModule = "github.com/AlexGalhardo/vukem"
+	bunImageRepo    = "oven/bun"
+	htmxFile        = "internal/cli/starter/resources/public/js/htmx.min.js"
+	newGo           = "internal/cli/new.go"
 )
 
 func main() {
@@ -74,7 +76,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, u urls) i
 		return 2
 	}
 
-	rows, err := plan(ctx, newClient(u), *root)
+	client := newClient(u)
+	client.ghToken = os.Getenv("GITHUB_TOKEN")
+
+	rows, err := plan(ctx, client, *root)
 	if err != nil {
 		fmt.Fprintf(stderr, "starterdeps: %v\n", err)
 		return 1
@@ -91,9 +96,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, u urls) i
 		return 0
 	}
 
-	if err := apply(ctx, newClient(u), *root, rows); err != nil {
+	docs, err := apply(ctx, client, *root, rows)
+	if err != nil {
 		fmt.Fprintf(stderr, "starterdeps: %v\n", err)
 		return 1
+	}
+
+	for _, d := range docs {
+		fmt.Fprintf(stdout, "docs updated: %s\n", d)
 	}
 
 	return 0
@@ -144,6 +154,10 @@ func plan(ctx context.Context, c *client, root string) ([]row, error) {
 	var rows []row
 
 	for _, g := range order {
+		if groups[g][0].follow != "" {
+			continue
+		}
+
 		latest, err := c.resolveGroup(ctx, groups[g])
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", g, err)
@@ -152,6 +166,25 @@ func plan(ctx context.Context, c *client, root string) ([]row, error) {
 		for _, p := range groups[g] {
 			rows = append(rows, row{p, latest[p.pkg]})
 		}
+	}
+
+	return followRows(pins, rows)
+}
+
+// followRows adds the pins that copy the tag version of a Docker pin.
+func followRows(pins []pin, rows []row) ([]row, error) {
+	for _, p := range pins {
+		if p.follow == "" {
+			continue
+		}
+
+		i := slices.IndexFunc(rows, func(r row) bool { return r.kind == dockerImg && r.pkg == p.follow })
+		if i < 0 {
+			return nil, fmt.Errorf("%s follows %s, which is not pinned", p.pkg, p.follow)
+		}
+
+		tag, _, _ := strings.Cut(rows[i].latest, "@")
+		rows = append(rows, row{p, tagShape.FindStringSubmatch(tag)[2]})
 	}
 
 	return rows, nil
@@ -163,16 +196,38 @@ var starterManifests = []string{"internal/cli/starter/package.json"}
 var constPins = []struct {
 	pkg, name, file string
 	kind            kind
-	major           int
+	major           int16
+	// follow copies the tag version of that Docker pin (bun), so the CLI, the
+	// workflow and the assets image never disagree.
+	follow string
+	// pattern overrides the Go constant pattern; group 2 is the version.
+	pattern string
 }{
-	{"markdownlint-cli2", "markdownlintVersion", "internal/cli/standards.go", npmPkg, 0},
-	{"@biomejs/biome", "biomeVersion", "internal/cli/standards.go", npmPkg, 0},
-	{"react-email", "reactEmailCLIVersion", "internal/cli/generate.go", npmPkg, 0},
-	{"@react-email/components", "reactEmailComponentsVersion", "internal/cli/generate.go", npmPkg, 0},
-	{htmxPkg, "htmxVersion", newGo, npmPkg, 4},
-	{"google.golang.org/protobuf", "protobufVersion", "internal/cli/rpc.go", goMod, 0},
-	{"connectrpc.com/connect", "connectVersion", "internal/cli/rpc.go", goMod, 0},
-	{"github.com/bufbuild/buf", "bufVersion", "internal/cli/rpc.go", goMod, 0},
+	{"markdownlint-cli2", "markdownlintVersion", "internal/cli/standards.go", npmPkg, 0, "", ""},
+	{"@biomejs/biome", "biomeVersion", "internal/cli/standards.go", npmPkg, 0, "", ""},
+	{"react-email", "reactEmailCLIVersion", "internal/cli/generate.go", npmPkg, 0, "", ""},
+	{"@react-email/components", "reactEmailComponentsVersion", "internal/cli/generate.go", npmPkg, 0, "", ""},
+	{htmxPkg, "htmxVersion", newGo, npmPkg, 4, "", ""},
+	{"google.golang.org/protobuf", "protobufVersion", "internal/cli/rpc.go", goMod, 0, "", ""},
+	{"connectrpc.com/connect", "connectVersion", "internal/cli/rpc.go", goMod, 0, "", ""},
+	{"github.com/bufbuild/buf", "bufVersion", "internal/cli/rpc.go", goMod, 0, "", ""},
+	{"npm", "npmVersion", "internal/cli/pm.go", npmPkg, 0, "", ""},
+	{"pnpm", "pnpmVersion", "internal/cli/pm.go", npmPkg, 0, "", ""},
+	// yarn stays on Classic (1.x): the generated Dockerfile installs with
+	// --frozen-lockfile, which Yarn 2+ replaced with --immutable.
+	{"yarn", "yarnVersion", "internal/cli/pm.go", npmPkg, 1, "", ""},
+	{"bun", "bunVersion", "internal/cli/pm.go", npmPkg, 0, bunImageRepo, ""},
+	{
+		"bun",
+		"bun-v",
+		"internal/cli/standards/workflows/ci.yml.tmpl",
+		npmPkg,
+		0,
+		bunImageRepo,
+		`(bun-v)([0-9][^"]*)(")`,
+	},
+	{frameworkModule + "/contrib/stripe", "stripeVersion", "internal/cli/billing.go", goMod, 0, "", ""},
+	{frameworkModule + "/contrib/studio", "studioVersion", "internal/cli/studio.go", goMod, 0, "", ""},
 }
 
 func read(root, file string) (string, error) {
@@ -213,6 +268,9 @@ func discover(root string) ([]pin, error) {
 
 	for _, c := range constPins {
 		re := regexp.MustCompile(`(\b` + c.name + `\s*=\s*")([^"]+)(")`)
+		if c.pattern != "" {
+			re = regexp.MustCompile(c.pattern)
+		}
 
 		text, err := read(root, c.file)
 		if err != nil {
@@ -233,12 +291,27 @@ func discover(root string) ([]pin, error) {
 				group:   c.file + ":" + c.name,
 				current: m[2],
 				major:   c.major,
+				follow:  c.follow,
 				re:      re,
 			},
 		)
 	}
 
-	return pins, nil
+	images, err := refPins(root, imageRef, 1, 2, dockerImg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := checkGoMinor(root, images); err != nil {
+		return nil, err
+	}
+
+	actions, err := refPins(root, actionRef, 2, 3, ghAction)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(append(pins, images...), actions...), nil
 }
 
 // manifestPins turns every dependency of a package.json into a pin; the
@@ -299,40 +372,41 @@ func manifestPins(root, file string) ([]pin, error) {
 }
 
 // apply rewrites every pin that is behind and, for htmx, the vendored file.
-func apply(ctx context.Context, c *client, root string, rows []row) error {
+func apply(ctx context.Context, c *client, root string, rows []row) ([]string, error) {
 	for i := range rows {
 		r := &rows[i]
 		if !r.behind() {
 			continue
 		}
 
-		if err := replaceOnce(root, r.file, r.re, r.latest); err != nil {
-			return fmt.Errorf("%s: %w", r.pkg, err)
+		if err := replaceAll(root, r.file, r.re, r.latest); err != nil {
+			return nil, fmt.Errorf("%s: %w", r.pkg, err)
 		}
 
 		if r.pkg == htmxPkg {
 			if err := vendorHTMX(ctx, c, root, r.latest); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	return nil
+	return syncDocs(root, rows)
 }
 
-func replaceOnce(root, file string, re *regexp.Regexp, version string) error {
+func replaceAll(root, file string, re *regexp.Regexp, version string) error {
 	text, err := read(root, file)
 	if err != nil {
 		return err
 	}
 
 	idx := re.FindAllStringSubmatchIndex(text, -1)
-	if len(idx) != 1 {
-		return fmt.Errorf("%s: want exactly one match of %s, got %d", file, re, len(idx))
+	if len(idx) == 0 {
+		return fmt.Errorf("%s: no match of %s", file, re)
 	}
 
-	m := idx[0]
-	text = text[:m[4]] + version + text[m[5]:]
+	for i := range slices.Backward(idx) {
+		text = text[:idx[i][4]] + version + text[idx[i][5]:]
+	}
 
 	return writeSource(root, file, []byte(text))
 }
@@ -362,5 +436,5 @@ func vendorHTMX(ctx context.Context, c *client, root, version string) error {
 
 	sum := sha256.Sum256(b)
 
-	return replaceOnce(root, newGo, regexp.MustCompile(`(\bhtmxSHA256\s*=\s*")([^"]+)(")`), hex.EncodeToString(sum[:]))
+	return replaceAll(root, newGo, regexp.MustCompile(`(\bhtmxSHA256\s*=\s*")([^"]+)(")`), hex.EncodeToString(sum[:]))
 }
