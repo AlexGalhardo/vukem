@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/drivers/turso
 go 1.27.4
 
 require (
-	github.com/AlexGalhardo/vukem v0.42.0
+	github.com/AlexGalhardo/vukem v0.43.0
 	turso.tech/database/tursogo v0.8.3
 )
 

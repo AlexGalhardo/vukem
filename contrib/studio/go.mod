@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/contrib/studio
 go 1.27.4
 
 require (
-	github.com/AlexGalhardo/vukem v0.42.0
+	github.com/AlexGalhardo/vukem v0.43.0
 	github.com/AlexGalhardo/vukem/drivers/mongo v0.2.4
 	github.com/AlexGalhardo/vukem/drivers/mysql v0.2.2
 	github.com/AlexGalhardo/vukem/drivers/postgres v0.7.0
