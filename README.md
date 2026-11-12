@@ -133,6 +133,12 @@ A self-hosted toolbox in a single Go binary for images, videos, files, conversio
 
 One binary creates the project, generates code, runs migrations and seeders, and serves the app with live reload.
 
+Install it with `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest`, or run it from the toolchain image (CLI, Go and Bun, no local install), pinned to a release:
+
+```sh
+docker run --rm -it -v "$PWD:/work" ghcr.io/alexgalhardo/vukem:0.43.0 new todo --module example.com/todo
+```
+
 <details>
 <summary><strong>Show the CLI in action (6 GIFs)</strong></summary>
 
