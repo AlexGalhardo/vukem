@@ -12,29 +12,38 @@ import (
 // until vue-tsc and svelte-check name the next one in their peerDependencies.
 const tsHoldMajor = 6
 
-type kind int
+type kind uint8
 
 const (
 	npmPkg kind = iota
 	goMod
+	dockerImg
+	ghAction
 )
 
 // pin is one pinned dependency: where it is written and the rules that limit
 // which release counts as its latest.
 type pin struct {
-	pkg     string
-	kind    kind
+	pkg string
+
+	// Small fields grouped so the struct stays cheap to copy.
+	kind kind
+	// lockMinor keeps a Docker image on the minor line of its pinned tag.
+	lockMinor bool
+	// major locks the pin to one major line (htmx follows 4.x, decision F2).
+	major int16
+	// holdMajor caps the pin at that major until every holdUntil package in
+	// the group lists the next major in its peerDependencies for this pin.
+	holdMajor int16
+
 	file    string // path relative to the repository root
 	group   string // pins of one group must install together (peerDependencies)
 	current string
 	re      *regexp.Regexp // three groups; the second is the version
 
-	// major locks the pin to one major line (htmx follows 4.x, decision F2).
-	major int
-	// holdMajor caps the pin at that major until every holdUntil package in
-	// the group lists the next major in its peerDependencies for this pin.
-	holdMajor int
 	holdUntil []string
+	// follow names the Docker pin whose tag version this pin copies (bun).
+	follow string
 }
 
 type candidate struct {
@@ -94,6 +103,17 @@ func highest(in info, cands []candidate) (candidate, bool) {
 // resolveGroup returns the latest stable version of every pin of one group
 // such that each chosen version satisfies the peerDependencies of the others.
 func (c *client) resolveGroup(ctx context.Context, pins []pin) (map[string]string, error) {
+	if len(pins) == 1 && (pins[0].kind == dockerImg || pins[0].kind == ghAction) {
+		fn := c.latestImage
+		if pins[0].kind == ghAction {
+			fn = c.latestAction
+		}
+
+		v, err := fn(ctx, pins[0])
+
+		return map[string]string{pins[0].pkg: v}, err
+	}
+
 	infos := map[string]info{}
 
 	for _, p := range pins {
@@ -109,7 +129,7 @@ func (c *client) resolveGroup(ctx context.Context, pins []pin) (map[string]strin
 	chosen := map[string]candidate{}
 
 	for _, p := range pins {
-		cands[p.pkg] = candidates(infos[p.pkg], p.major, p.holdMajor)
+		cands[p.pkg] = candidates(infos[p.pkg], int(p.major), int(p.holdMajor))
 
 		top, ok := highest(infos[p.pkg], cands[p.pkg])
 		if !ok {
@@ -125,7 +145,7 @@ func (c *client) resolveGroup(ctx context.Context, pins []pin) (map[string]strin
 			continue
 		}
 
-		cands[p.pkg] = candidates(infos[p.pkg], p.major, 0)
+		cands[p.pkg] = candidates(infos[p.pkg], int(p.major), 0)
 		chosen[p.pkg], _ = highest(infos[p.pkg], cands[p.pkg])
 	}
 
@@ -144,7 +164,7 @@ func (c *client) resolveGroup(ctx context.Context, pins []pin) (map[string]strin
 func released(p pin, chosen map[string]candidate) bool {
 	for _, tool := range p.holdUntil {
 		c, ok := chosen[tool]
-		if !ok || !namesMajor(c.peers[p.pkg], p.holdMajor+1) {
+		if !ok || !namesMajor(c.peers[p.pkg], int(p.holdMajor)+1) {
 			return false
 		}
 	}

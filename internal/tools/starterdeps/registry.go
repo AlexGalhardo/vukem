@@ -15,13 +15,17 @@ const maxBody = 128 << 20
 
 // urls are the registries the tool talks to; tests point them at httptest.
 type urls struct {
-	npm, proxy, htmx string // htmx has one %s: the version
+	npm, proxy, htmx    string // htmx has one %s: the version
+	hub, registry, auth string // Docker Hub tags, registry and token endpoints
+	github              string
 }
 
 var defaultURLs = urls{
 	npm:   "https://registry.npmjs.org",
 	proxy: "https://proxy.golang.org",
 	htmx:  "https://cdn.jsdelivr.net/npm/htmx.org@%s/dist/htmx.min.js",
+	hub:   "https://hub.docker.com", registry: "https://registry-1.docker.io", auth: "https://auth.docker.io/token",
+	github: "https://api.github.com",
 }
 
 // info is what a registry knows about one package: the version the registry
@@ -35,6 +39,8 @@ type info struct {
 type client struct {
 	http *http.Client
 	urls urls
+	// ghToken authenticates GitHub API calls (rate limit); empty is anonymous.
+	ghToken string
 }
 
 func newClient(u urls) *client {
@@ -42,26 +48,54 @@ func newClient(u urls) *client {
 }
 
 func (c *client) get(ctx context.Context, rawURL, accept string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
+	resp, err := c.do(ctx, http.MethodGet, rawURL, map[string]string{"Accept": accept})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return io.ReadAll(io.LimitReader(resp.Body, maxBody))
+}
+
+func (c *client) head(ctx context.Context, rawURL string, headers map[string]string) (http.Header, error) {
+	resp, err := c.do(ctx, http.MethodHead, rawURL, headers)
 	if err != nil {
 		return nil, err
 	}
 
-	if accept != "" {
-		req.Header.Set("Accept", accept)
+	_ = resp.Body.Close()
+
+	return resp.Header, nil
+}
+
+func (c *client) do(ctx context.Context, method, rawURL string, headers map[string]string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+
+	for k, v := range headers {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+
+	if c.ghToken != "" && strings.HasPrefix(rawURL, c.urls.github) {
+		req.Header.Set("Authorization", "Bearer "+c.ghToken)
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: %s", rawURL, resp.Status)
+		_ = resp.Body.Close()
+
+		return nil, fmt.Errorf("%s %s: %s", method, rawURL, resp.Status)
 	}
 
-	return io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	return resp, nil
 }
 
 // npm reads the abbreviated packument, which carries dist-tags and each

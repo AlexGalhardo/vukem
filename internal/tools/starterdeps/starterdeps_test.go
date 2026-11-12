@@ -115,11 +115,20 @@ func fakeRegistry(t *testing.T, routes map[string]string) urls {
 			return
 		}
 
+		if d, ok := strings.CutPrefix(body, "digest:"); ok {
+			w.Header().Set("Docker-Content-Digest", d)
+
+			return
+		}
+
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
 
-	return urls{npm: srv.URL + "/npm", proxy: srv.URL + "/proxy", htmx: srv.URL + "/htmx/%s/htmx.min.js"}
+	return urls{
+		npm: srv.URL + "/npm", proxy: srv.URL + "/proxy", htmx: srv.URL + "/htmx/%s/htmx.min.js",
+		hub: srv.URL + "/hub", registry: srv.URL + "/registry", auth: srv.URL + "/auth", github: srv.URL + "/gh",
+	}
 }
 
 func TestResolveGroup(t *testing.T) {
@@ -231,8 +240,12 @@ func TestResolveGroupUnsatisfiable(t *testing.T) {
 }
 
 const (
-	htmxBody = "var htmx=new-4.0.1"
-	oldHTMX  = "var htmx=old"
+	oldDigest = "00000000000000000000000000000000000000000000000000000000000000aa"
+	newDigest = "sha256:11111111111111111111111111111111111111111111111111111111111111bb"
+	oldSHA    = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+	newSHA    = "4444444444444444444444444444444444444444"
+	htmxBody  = "var htmx=new-4.0.1"
+	oldHTMX   = "var htmx=old"
 )
 
 // fixture writes the smallest tree discover needs and returns its root.
@@ -257,6 +270,17 @@ func fixture(t *testing.T) string {
 		"internal/cli/standards.go":                            "const markdownlintVersion = \"0.23.3\"\nconst biomeVersion = \"2.6.4\"\n",
 		"internal/cli/generate.go":                             "const (\n\treactEmailCLIVersion = \"6.11.6\"\n\treactEmailComponentsVersion = \"1.0.12\"\n)\n",
 		"internal/cli/new.go":                                  "const (\n\thtmxVersion = \"4.0.0\"\n\thtmxSHA256  = \"00\"\n)\n",
+		"internal/cli/pm.go":                                   "const (\n\tnpmVersion  = \"12.2.0\"\n\tbunVersion  = \"1.4.4\"\n\tpnpmVersion = \"12.14.0\"\n\tyarnVersion = \"1.22.22\"\n)\n",
+		"internal/cli/billing.go":                              "const stripeVersion = \"v0.5.3\"\n",
+		"internal/cli/studio.go":                               "const studioVersion = \"v0.1.0\"\n",
+		"internal/cli/docker.go":                               "const bunImage = \"oven/bun:1.4.4-alpine@sha256:" + oldDigest + "\"\n",
+		"internal/cli/docker/Dockerfile.tmpl":                  "FROM golang:1.27.4-alpine3.24@sha256:" + oldDigest + " AS build\nFROM alpine:3.24.2@sha256:" + oldDigest + "\n",
+		"internal/cli/standards/workflows/ci.yml.tmpl":         "- uses: actions/checkout@" + oldSHA + " # v7.0.1\n- uses: actions/checkout@" + oldSHA + " # v7.0.1\n- uses: docker/login-action@" + oldSHA + " # v4.2.0\n  run: bash -s \"bun-v1.4.4\"\n",
+		"docs/maintenance.md":                                  "The starter pins htmx 4.0.0 and `react-email@6.11.6`. See buf@v1.74.0 and golang:1.27.4-alpine3.24.\nThe Bun version in that step is `1.4.4`; the tailwind note says 4.0.0 alone.\n",
+		"site/content/docs/x.mdx":                              "Image oven/bun:1.4.4-alpine pins actions/checkout v7.0.1.\n",
+		"site/content/versions/y.mdx":                          "htmx 4.0.0 stays as released.\n",
+		"CHANGELOG.md":                                         "htmx 4.0.0 stays as released.\n",
+		"go.mod":                                               "module x\n\ngo 1.27.4\n",
 		"internal/cli/rpc.go":                                  "const (\n\tprotobufVersion = \"v1.36.12\"\n\tconnectVersion  = \"v1.21.1\"\n\tbufVersion      = \"v1.74.0\"\n)\n",
 		"internal/cli/starter/resources/public/js/htmx.min.js": oldHTMX,
 	}
@@ -304,8 +328,70 @@ func fixtureRoutes(t *testing.T) map[string]string {
 		"/proxy/google.golang.org/protobuf/@v/list": "v1.36.12\n",
 		"/proxy/connectrpc.com/connect/@v/list":     "v1.21.1\n",
 		"/proxy/github.com/bufbuild/buf/@v/list":    "v1.74.0\n",
-		"/htmx/4.0.1/htmx.min.js":                   htmxBody,
+		"/npm/npm":                                  npmDoc(t, "12.2.0", map[string]peers{"12.2.0": nil}),
+		"/npm/pnpm":                                 npmDoc(t, "12.14.0", map[string]peers{"12.14.0": nil}),
+		"/npm/yarn":                                 npmDoc(t, "4.9.0", map[string]peers{"1.22.22": nil, "4.9.0": nil}),
+		"/proxy/github.com/!alex!galhardo/vukem/contrib/stripe/@v/list": "v0.5.3\nv0.6.0\nv0.7.0-rc.1\n",
+		"/proxy/github.com/!alex!galhardo/vukem/contrib/studio/@v/list": "v0.1.0\n",
+		"/hub/v2/repositories/oven/bun/tags": hubTags(
+			"1.4.4-alpine",
+			"1.4.5-alpine",
+			"1.4.5",
+			"2.0.0-alpine",
+			"1.5.0-alpine",
+			"canary-alpine",
+		),
+		"/hub/v2/repositories/library/golang/tags": hubTags(
+			"1.27.4-alpine3.24",
+			"1.27.5-alpine3.24",
+			"1.27.5-alpine3.25",
+			"1.28.0-alpine3.25",
+			"1.27.6-rc1-alpine3.25",
+			"1.27.5-bookworm",
+		),
+		"/hub/v2/repositories/library/alpine/tags": hubTags(
+			"3.24.2",
+			"3.24.4",
+			"3.25.0",
+			"4.0.0",
+			"edge",
+		),
+		"/auth": `{"token":"t"}`,
+		"/registry/v2/oven/bun/manifests/1.5.0-alpine":            "digest:" + newDigest,
+		"/registry/v2/library/golang/manifests/1.27.5-alpine3.25": "digest:" + newDigest,
+		"/registry/v2/library/alpine/manifests/3.25.0":            "digest:" + newDigest,
+		"/gh/repos/actions/checkout/releases":                     `[{"tag_name":"v7.1.0-rc.1","prerelease":true},{"tag_name":"v7.0.1"},{"tag_name":"v8.0.0","draft":true},{"tag_name":"v7.2.0"},{"tag_name":"v7"}]`,
+		"/gh/repos/actions/checkout/git/ref/tags/v7.2.0":          `{"object":{"type":"commit","sha":"` + newSHA + `"}}`,
+		"/gh/repos/docker/login-action/releases":                  `[{"tag_name":"v4.2.0"},{"tag_name":"v4.9.0"}]`,
+		"/gh/repos/docker/login-action/git/ref/tags/v4.9.0": `{"object":{"type":"tag","sha":"` + strings.Repeat(
+			"9",
+			40,
+		) + `"}}`,
+		"/gh/repos/docker/login-action/git/tags/" + strings.Repeat("9", 40): `{"object":{"type":"commit","sha":"` + strings.Repeat(
+			"5",
+			40,
+		) + `"}}`,
+		"/htmx/4.0.1/htmx.min.js": htmxBody,
 	}
+}
+
+// hubTags renders one Docker Hub tags page.
+func hubTags(names ...string) string {
+	var b strings.Builder
+
+	b.WriteString(`{"next":null,"results":[`)
+
+	for i, n := range names {
+		if i > 0 {
+			b.WriteString(",")
+		}
+
+		b.WriteString(`{"name":"` + n + `"}`)
+	}
+
+	b.WriteString("]}")
+
+	return b.String()
 }
 
 func TestCheckAndWrite(t *testing.T) {
@@ -340,6 +426,39 @@ func TestCheckAndWrite(t *testing.T) {
 	assertFile(t, root, "internal/cli/new.go", "htmxVersion = \"4.0.1\"")
 	assertFile(t, root, "internal/cli/starter/resources/public/js/htmx.min.js", htmxBody)
 
+	assertFile(t, root, "internal/cli/pm.go", "bunVersion  = \"1.5.0\"", "yarnVersion = \"1.22.22\"")
+	assertFile(t, root, "internal/cli/billing.go", "v0.6.0")
+	assertFile(t, root, "internal/cli/docker.go", "oven/bun:1.5.0-alpine@"+newDigest)
+	assertFile(
+		t,
+		root,
+		"internal/cli/docker/Dockerfile.tmpl",
+		"golang:1.27.5-alpine3.25@"+newDigest,
+		"alpine:3.25.0@"+newDigest,
+	)
+	assertFile(
+		t,
+		root,
+		"internal/cli/standards/workflows/ci.yml.tmpl",
+		"bun-v1.5.0",
+		"checkout@"+newSHA+" # v7.2.0",
+		"login-action@"+strings.Repeat("5", 40)+" # v4.9.0",
+	)
+	assertFile(
+		t,
+		root,
+		"docs/maintenance.md",
+		"htmx 4.0.1",
+		"react-email@6.11.6",
+		"buf@v1.74.0",
+		"golang:1.27.5-alpine3.25",
+		"`1.5.0`",
+		"4.0.0 alone",
+	)
+	assertFile(t, root, "site/content/docs/x.mdx", "oven/bun:1.5.0-alpine", "checkout v7.2.0")
+	assertFile(t, root, "site/content/versions/y.mdx", "htmx 4.0.0")
+	assertFile(t, root, "CHANGELOG.md", "htmx 4.0.0")
+
 	sum := sha256.Sum256([]byte(htmxBody))
 	assertFile(t, root, "internal/cli/new.go", hex.EncodeToString(sum[:]))
 
@@ -370,5 +489,26 @@ func assertFile(t *testing.T, root, name string, wants ...string) {
 		if !strings.Contains(string(b), w) {
 			t.Errorf("%s does not contain %q:\n%s", name, w, b)
 		}
+	}
+}
+
+func TestGoImageMustMatchGoMod(t *testing.T) {
+	t.Parallel()
+
+	root := fixture(t)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module x\n\ngo 1.28.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := run(
+		t.Context(),
+		[]string{"-check", "-root", root},
+		&out,
+		&errOut,
+		fakeRegistry(t, fixtureRoutes(t)),
+	); code != 1 ||
+		!strings.Contains(errOut.String(), "go.mod is on Go 1.28") {
+		t.Fatalf("code = %d, stderr = %q, want a go.mod mismatch error", code, errOut.String())
 	}
 }
