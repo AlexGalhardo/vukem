@@ -1,0 +1,55 @@
+package tests
+
+import (
+	"net/url"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/bootstrap"
+)
+
+func TestTasksCRUD(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t)
+
+	c.PostForm("/tasks", url.Values{"title": {"Buy milk"}}).
+		AssertRedirect("/tasks").
+		AssertSessionHas("success")
+
+	vukemtest.AssertDatabaseHas(t, app, "tasks", map[string]any{
+		"title": "Buy milk",
+		"done":  false,
+	})
+
+	c.Get("/tasks").AssertOK().AssertSee("Buy milk")
+
+	c.PostForm("/tasks/1", url.Values{
+		"_method": {"PUT"},
+		"title":   {"Buy oat milk"},
+		"done":    {"on"},
+	}).AssertRedirect("/tasks")
+
+	vukemtest.AssertDatabaseHas(t, app, "tasks", map[string]any{
+		"title": "Buy oat milk",
+		"done":  true,
+	})
+
+	c.HTMX().Delete("/tasks/1").AssertOK()
+	vukemtest.AssertDatabaseCount(t, app, "tasks", 0)
+}
+
+func TestTasksValidation(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).WithHeader("Referer", "/tasks").
+		PostForm("/tasks", url.Values{"title": {"x"}}).
+		AssertRedirect("/tasks").
+		AssertSessionHasErrors("title")
+
+	vukemtest.AssertDatabaseCount(t, app, "tasks", 0)
+}

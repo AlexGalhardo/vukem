@@ -1,0 +1,11 @@
+package models
+
+import "github.com/AlexGalhardo/vukem/orm"
+
+// Task is a row of the tasks table.
+type Task struct {
+	orm.Model
+
+	Title string `json:"title"`
+	Done  bool   `json:"done"`
+}

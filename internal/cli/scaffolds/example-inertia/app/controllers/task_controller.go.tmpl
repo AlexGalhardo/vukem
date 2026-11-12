@@ -1,0 +1,111 @@
+package controllers
+
+import (
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/pages"
+	"{{.Module}}/app/requests"
+)
+
+// TaskController lists, creates, edits and deletes tasks with Inertia
+// pages (resources/js/pages/Tasks). Validation errors redirect back and
+// reach the page as props.errors.
+type TaskController struct {
+	db *database.DB
+}
+
+// NewTaskController returns a TaskController that uses db.
+func NewTaskController(db *database.DB) *TaskController {
+	return &TaskController{db: db}
+}
+
+// Index lists the tasks, newest first: GET /tasks.
+func (tc *TaskController) Index(c *web.Ctx) error {
+	tasks, err := orm.QueryOf[models.Task](tc.db).
+		OrderBy("id", orm.Desc).
+		Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return pages.TasksIndex.Render(c, pages.TasksIndexProps{Tasks: tasks})
+}
+
+// Store validates and saves a new task: POST /tasks.
+func (tc *TaskController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.TaskSchema)
+	if err != nil {
+		return err
+	}
+
+	task := models.Task{Title: in.Title, Done: in.Done}
+	if err := orm.Create(c.Context(), tc.db, &task); err != nil {
+		return err
+	}
+
+	inertia.Flash(c, "success", "Task added.")
+
+	return c.RedirectRoute("tasks.index")
+}
+
+// Edit shows the edit form: GET /tasks/{task}/edit.
+func (tc *TaskController) Edit(c *web.Ctx) error {
+	task, err := tc.find(c)
+	if err != nil {
+		return err
+	}
+
+	return pages.TasksEdit.Render(c, pages.TaskProps{Task: task})
+}
+
+// Update validates and saves changes: PUT/PATCH /tasks/{task}.
+func (tc *TaskController) Update(c *web.Ctx) error {
+	task, err := tc.find(c)
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.TaskSchema)
+	if err != nil {
+		return err
+	}
+
+	task.Title, task.Done = in.Title, in.Done
+	if err := orm.Update(c.Context(), tc.db, &task); err != nil {
+		return err
+	}
+
+	inertia.Flash(c, "success", "Task updated.")
+
+	return c.RedirectRoute("tasks.index")
+}
+
+// Destroy deletes a task: DELETE /tasks/{task}.
+func (tc *TaskController) Destroy(c *web.Ctx) error {
+	task, err := tc.find(c)
+	if err != nil {
+		return err
+	}
+
+	if err := orm.Delete(c.Context(), tc.db, &task); err != nil {
+		return err
+	}
+
+	inertia.Flash(c, "success", "Task deleted.")
+
+	return c.RedirectRoute("tasks.index")
+}
+
+// find loads the task in the URL, or fails with 404 Not Found.
+func (tc *TaskController) find(c *web.Ctx) (models.Task, error) {
+	id, err := c.ParamInt("task")
+	if err != nil {
+		return models.Task{}, err
+	}
+
+	return orm.QueryOf[models.Task](tc.db).Find(c.Context(), id)
+}

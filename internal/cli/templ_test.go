@@ -116,7 +116,7 @@ func TestNewTemplProjectEndToEnd(t *testing.T) {
 	}
 
 	generated := templFiles(t, project)
-	for _, name := range []string{"layout", "home", "posts"} {
+	for _, name := range []string{"layout", "home", "posts", "tasks"} {
 		if _, ok := generated[filepath.Join(project, "resources", "views", name+"_templ.go")]; !ok {
 			t.Errorf("vukem new did not generate resources/views/%s_templ.go", name)
 		}

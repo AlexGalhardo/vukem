@@ -1,0 +1,16 @@
+package requests
+
+import "github.com/AlexGalhardo/vukem/z"
+
+// Task is the input of the new-task and edit forms.
+type Task struct {
+	Title string `json:"title" form:"title"`
+	Done  bool   `json:"done"  form:"done"`
+}
+
+// TaskSchema validates Task. An unchecked checkbox is not sent at
+// all, so "done" defaults to false.
+var TaskSchema = z.Struct[Task](z.Shape{
+	"title": z.String().Trim().Min(3).Max(120),
+	"done":  z.Bool().Default(false),
+})

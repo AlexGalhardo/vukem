@@ -1,0 +1,44 @@
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/controllers/apiv1"
+	"{{.Module}}/bootstrap"
+)
+
+func TestTasksAPI(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	writer := app.Client(t).WithToken(apiToken(t, app, "writer@example.com", apiv1.AbilityWrite))
+
+	writer.PostJSON("/api/v1/tasks", map[string]any{"title": "Buy milk"}).
+		AssertCreated().
+		AssertHeader("Location", "/api/v1/tasks/1").
+		AssertJSONPath("title", "Buy milk").
+		AssertJSONPath("done", false)
+
+	writer.PostJSON("/api/v1/tasks", map[string]any{"title": "x"}).AssertJSONValidationErrors("title")
+
+	// Anyone can read; pages come in an envelope.
+	reader := app.Client(t)
+	reader.GetJSON("/api/v1/tasks").AssertOK().AssertJSONCount("data", 1).AssertJSONPath("meta.total", 1)
+	reader.GetJSON("/api/v1/tasks/99").AssertProblem(404)
+
+	// Writes need a token that was granted AbilityWrite.
+	reader.PostJSON("/api/v1/tasks", map[string]any{"title": "Nope"}).AssertUnauthorized()
+
+	readOnly := app.Client(t).WithToken(apiToken(t, app, "reader@example.com", apiv1.AbilityRead))
+	readOnly.PostJSON("/api/v1/tasks", map[string]any{"title": "Nope"}).AssertForbidden()
+
+	writer.PatchJSON("/api/v1/tasks/1", map[string]any{"title": "Buy oat milk", "done": true}).
+		AssertOK().
+		AssertJSONPath("done", true)
+	reader.GetJSON("/api/v1/tasks?filter[done]=true").AssertOK().AssertJSONCount("data", 1)
+
+	writer.Delete("/api/v1/tasks/1").AssertNoContent()
+	vukemtest.AssertDatabaseCount(t, app, "tasks", 0)
+}

@@ -1,0 +1,29 @@
+{{define "title"}}Tasks{{end}}
+{{define "content"}}
+<h1>Tasks</h1>
+
+<form method="post" action="{{route "tasks.store"}}">
+	{{csrfField}}
+	<label>New task
+		<input name="title" value="{{old "title"}}" required
+			{{with error "title"}}aria-invalid="true"{{end}}>
+	</label>
+	{{with error "title"}}<p class="error">{{.}}</p>{{end}}
+	<button type="submit">Add</button>
+</form>
+
+<ul class="list">
+	{{range .Tasks}}
+	<li>
+		{{if .Done}}<s>{{.Title}}</s>{{else}}{{.Title}}{{end}}
+		<a href="{{route "tasks.edit" "task" .ID}}">Edit</a>
+		<button type="button" class="link danger"
+			hx-delete="{{route "tasks.destroy" "task" .ID}}"
+			hx-target="closest li" hx-swap="outerHTML"
+			hx-confirm="Delete this task?">Delete</button>
+	</li>
+	{{else}}
+	<li class="empty">Nothing to do.</li>
+	{{end}}
+</ul>
+{{end}}

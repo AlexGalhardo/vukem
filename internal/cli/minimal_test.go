@@ -37,7 +37,7 @@ func TestNewMinimalProjectEndToEnd(t *testing.T) {
 
 	for _, gone := range []string{
 		"database", "app/models", "app/requests", "app/controllers/post_controller.go",
-		"app/controllers/upload_controller.go", "resources/views/posts", "tests/posts_test.go",
+		"app/controllers/task_controller.go", "app/controllers/upload_controller.go", "resources/views/posts", "tests/posts_test.go",
 	} {
 		if _, err := os.Stat(filepath.Join(project, filepath.FromSlash(gone))); err == nil {
 			t.Errorf("%s still exists in the minimal starter", gone)

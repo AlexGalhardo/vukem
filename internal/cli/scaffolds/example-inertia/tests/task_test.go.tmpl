@@ -1,0 +1,40 @@
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/bootstrap"
+)
+
+func TestTasksCRUD(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t).Inertia("")
+
+	c.PostJSON("/tasks", map[string]any{"title": "Buy milk"}).AssertRedirect("/tasks")
+	vukemtest.AssertDatabaseHas(t, app, "tasks", map[string]any{"title": "Buy milk", "done": false})
+
+	c.Get("/tasks").AssertOK().AssertInertia("Tasks/Index").HasProp("tasks", 1)
+	c.Get("/tasks/1/edit").AssertOK().AssertInertia("Tasks/Edit").PropEquals("task.title", "Buy milk")
+
+	c.PutJSON("/tasks/1", map[string]any{"title": "Buy oat milk", "done": true}).AssertRedirect("/tasks")
+	vukemtest.AssertDatabaseHas(t, app, "tasks", map[string]any{"title": "Buy oat milk", "done": true})
+
+	c.Delete("/tasks/1").AssertRedirect("/tasks")
+	vukemtest.AssertDatabaseCount(t, app, "tasks", 0)
+}
+
+func TestTasksValidation(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t).Inertia("").WithHeader("Referer", "/tasks")
+
+	c.PostJSON("/tasks", map[string]any{"title": "x"}).AssertRedirect("/tasks")
+	c.Get("/tasks").AssertInertia("Tasks/Index").HasProp("errors.title")
+
+	vukemtest.AssertDatabaseCount(t, app, "tasks", 0)
+}
