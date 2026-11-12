@@ -33,6 +33,8 @@ vukem new [flags] <name>
 | `-pm` | string | see below | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn`. |
 | `-assets-image` | string | the package manager's image | Assets-stage base image only: an exact tag or a `sha256` digest. The runtime stays Alpine. An error on `-api`, which has no assets stage. |
 | `-no-install` | bool | `false` | Do not install frontend dependencies. |
+| `-example` | string | `todo` | Example app: `todo`, `finance` or `none`. `todo` adds a tasks CRUD in the style of the stack, with validation, a migration and tests. `finance` is a personal finance SaaS and forces Inertia React. |
+| `-no-example` | bool | `false` | Same as `-example none`. |
 | `-framework` | string | none | Path to a local Vukem checkout. Adds a `replace` directive instead of requiring a release. |
 | `-standards` | bool | `false` | `.markdownlint-cli2.jsonc`, `lint:md` and `secrets:scan` scripts, `CHANGELOG.md`, `.config/cliff.toml`, `.githooks/commit-msg` and `pre-commit` (secret scan, `gofmt`, `go vet`), `.betterleaks.toml`, version `0.1.0`, and on a stack with front-end assets `biome.json` (Biome v2, 2-space, double quotes) with `lint:js` and `format` scripts and an exact-version `@biomejs/biome` devDependency. Sets `core.hooksPath` to `.githooks`. See [Secret scanning](/docs/security/secret-scanning). |
 | `-license` | string | none | `mit`: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and the GitHub issue and pull request templates. |
@@ -43,6 +45,7 @@ vukem new [flags] <name>
 **Interactions and conflicts**
 
 - `-api`, `-templ` and `-inertia` are exclusive. `-minimal` refuses all three.
+- With no `-example`, on a terminal, `new` asks *Example app?* before the stack: to-do (default), finance or none. Without a terminal it picks to-do. `-example finance` needs Inertia React, so it refuses `-api`, `-templ` and `-inertia` with another framework. `-minimal` has no database and takes no example.
 - With none of them, on a terminal, `new` asks which stack you want. Without a terminal (CI, a pipe) it picks HTMX.
 - `-pm` default: when you omit it, `new` uses the first of `bun`, `npm`, `pnpm`, `yarn` found on `PATH`. The choice is written to `package.json` as `packageManager`, and later commands (`serve`, `build`) follow it.
 - `-api` has no frontend, so `-pm` and `-no-install` change nothing for it.
@@ -71,6 +74,7 @@ vukem new [flags] <name>
 | `usage error: choose one of --api, --templ or --inertia` | 2 | Keep one stack flag. |
 | `usage error: --minimal is an HTMX starter: drop --api, --templ and --inertia` | 2 | Drop the extra flag. |
 | `usage error: --inertia must be react, vue or svelte, not "angular"` | 2 | Use a listed framework. |
+| `usage error: --example must be todo, finance or none, not "blog"` | 2 | Use a listed example. |
 | `usage error: --license must be one of mit, not "gpl"` | 2 | Only `mit` exists. |
 | `usage error: --deploy must be railway, not "fly"` | 2 | Only `railway` exists. |
 | `usage error: unknown package manager "foo" (want bun, npm, pnpm, yarn)` | 2 | Use a listed manager. |

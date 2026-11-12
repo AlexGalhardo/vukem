@@ -15,6 +15,24 @@ You will learn:
 
 Short on time? The [Quick start](/docs/quick-start) answers a first request in about five minutes. The tutorial takes about 30 minutes. You need Go 1.27.4 or newer and the `vukem` CLI ([Installation](/docs/installation)). Node.js is **not** needed. If any Go syntax looks new, keep the [Go primer](/docs/prerequisites#go-in-15-minutes) open in another tab.
 
+## Prefer to read finished code?
+
+Run `vukem new todo --example todo` and you get this app already built. `vukem new` also offers it as the first answer of its *Example app?* question, and takes it by default without a terminal.
+
+The example adds these files to the HTMX starter:
+
+| File | What it holds |
+| --- | --- |
+| `database/migrations/20261018003311_create_tasks_table.go` | The `tasks` table |
+| `app/models/task.go`, `app/requests/task.go` | The model and the validated form input |
+| `app/controllers/task_controller.go` | The five actions |
+| `resources/views/tasks/index.html`, `edit.html` | The list page and the edit page |
+| `tests/task_test.go` | The CRUD and validation tests |
+
+It also adds the `tasks` resource to `routes/web.go` and a link to the navigation. Every other stack has its own version: templ components, Inertia pages for React, Vue or Svelte, or a token-protected `/api/v1/tasks` with `--api`.
+
+This page builds the same app by hand, so it creates the project with `--example none`. The code below is the code the example writes.
+
 ## The idea
 
 Every feature of a web app follows the same path. Think of a library: you ask the desk for a book (the **request**), the librarian looks in the catalogue (the **router**), walks to the right shelf (the **controller**), checks your card (the **validation**), takes the book from the shelves (the **database**), and hands it to you in a nice cover (the **view**).
@@ -47,12 +65,12 @@ And these are the routes you will end up with:
 <Step title="Create the project">
 
 ```bash
-vukem new todo --module example.com/todo
+vukem new todo --module example.com/todo --example none
 cd todo
 vukem migrate
 ```
 
-Press Enter at the stack question to keep HTMX. `vukem migrate` creates `storage/database.sqlite` and runs the starter's posts migration:
+`--example none` skips the *Example app?* question. Press Enter at the stack question to keep HTMX. `vukem migrate` creates `storage/database.sqlite` and runs the starter's posts migration:
 
 ```text
 Migrated: 20260101000000_create_posts_table

@@ -144,6 +144,8 @@ vukem new blog --inertia react --pm bun
 | `--minimal` | bool | `false` | HTMX starter without a database: no posts, uploads, migrations or SQLite driver |
 | `--pm` | string | first of `bun`, `npm`, `pnpm`, `yarn` on `PATH` | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn` |
 | `--no-install` | bool | `false` | Skip installing the frontend dependencies |
+| `--example` | string | `todo` | Example app: `todo` (tasks CRUD with validation, migration and tests), `finance` (personal finance SaaS, forces Inertia React) or `none` |
+| `--no-example` | bool | `false` | Same as `--example none` |
 | `--framework` | string | none | Path to a local Vukem checkout to use instead of a release |
 | `--standards` | bool | `false` | markdownlint and a `lint:md` script, `CHANGELOG.md` with `.config/cliff.toml`, Conventional Commits git hooks, a SemVer version ([project standards](#project-standards)) |
 | `--license` | string | none | `mit`: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` and `SECURITY.md` |
