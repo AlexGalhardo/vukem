@@ -67,7 +67,7 @@ services:
   # Mailpit accepts every message and shows it in a web inbox, so password
   # resets and verification emails are readable without a mail provider.
   mailpit:
-    image: axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387
+    image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
     # Only the web inbox is published; SMTP stays on the private network.
     ports: ["127.0.0.1:8025:8025"]
     environment:
