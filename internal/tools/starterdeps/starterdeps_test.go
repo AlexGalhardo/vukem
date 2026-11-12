@@ -126,8 +126,14 @@ func fakeRegistry(t *testing.T, routes map[string]string) urls {
 	t.Cleanup(srv.Close)
 
 	return urls{
-		npm: srv.URL + "/npm", proxy: srv.URL + "/proxy", htmx: srv.URL + "/htmx/%s/htmx.min.js",
-		hub: srv.URL + "/hub", registry: srv.URL + "/registry", auth: srv.URL + "/auth", github: srv.URL + "/gh",
+		npm:      srv.URL + "/npm",
+		proxy:    srv.URL + "/proxy",
+		htmx:     srv.URL + "/htmx/%s/htmx.min.js",
+		hub:      srv.URL + "/hub",
+		registry: srv.URL + "/registry",
+		auth:     srv.URL + "/auth",
+		github:   srv.URL + "/gh",
+		bun:      srv.URL + "/bun",
 	}
 }
 
@@ -281,6 +287,7 @@ func fixture(t *testing.T) string {
 		"site/content/versions/y.mdx":                          "htmx 4.0.0 stays as released.\n",
 		"CHANGELOG.md":                                         "htmx 4.0.0 stays as released.\n",
 		"go.mod":                                               "module x\n\ngo 1.27.4\n",
+		".config/docker/vukem.Dockerfile":                      "ARG GO_IMAGE=golang:1.27.4@sha256:" + oldDigest + "\nARG BUN_VERSION=1.4.4\nARG BUN_SHA256_AMD64=aaa\nARG BUN_SHA256_ARM64=bbb\n",
 		"internal/cli/rpc.go":                                  "const (\n\tprotobufVersion = \"v1.36.12\"\n\tconnectVersion  = \"v1.21.1\"\n\tbufVersion      = \"v1.74.0\"\n)\n",
 		"internal/cli/starter/resources/public/js/htmx.min.js": oldHTMX,
 	}
@@ -348,6 +355,9 @@ func fixtureRoutes(t *testing.T) map[string]string {
 			"1.28.0-alpine3.25",
 			"1.27.6-rc1-alpine3.25",
 			"1.27.5-bookworm",
+			"1.27.5",
+			"1.28.1",
+			"1.27.6-rc1",
 		),
 		"/hub/v2/repositories/library/alpine/tags": hubTags(
 			"3.24.2",
@@ -359,6 +369,8 @@ func fixtureRoutes(t *testing.T) map[string]string {
 		"/auth": `{"token":"t"}`,
 		"/registry/v2/oven/bun/manifests/1.5.0-alpine":            "digest:" + newDigest,
 		"/registry/v2/library/golang/manifests/1.27.5-alpine3.25": "digest:" + newDigest,
+		"/registry/v2/library/golang/manifests/1.27.5":            "digest:" + newDigest,
+		"/bun/bun-v1.5.0/SHASUMS256.txt":                          "x64sum  bun-linux-x64.zip\narm64sum  bun-linux-aarch64.zip\nother  bun-darwin-x64.zip\n",
 		"/registry/v2/library/alpine/manifests/3.25.0":            "digest:" + newDigest,
 		"/gh/repos/actions/checkout/releases":                     `[{"tag_name":"v7.1.0-rc.1","prerelease":true},{"tag_name":"v7.0.1"},{"tag_name":"v8.0.0","draft":true},{"tag_name":"v7.2.0"},{"tag_name":"v7"}]`,
 		"/gh/repos/actions/checkout/git/ref/tags/v7.2.0":          `{"object":{"type":"commit","sha":"` + newSHA + `"}}`,
@@ -458,6 +470,15 @@ func TestCheckAndWrite(t *testing.T) {
 	assertFile(t, root, "site/content/docs/x.mdx", "oven/bun:1.5.0-alpine", "checkout v7.2.0")
 	assertFile(t, root, "site/content/versions/y.mdx", "htmx 4.0.0")
 	assertFile(t, root, "CHANGELOG.md", "htmx 4.0.0")
+	assertFile(
+		t,
+		root,
+		".config/docker/vukem.Dockerfile",
+		"golang:1.27.5@"+newDigest,
+		"ARG BUN_VERSION=1.5.0",
+		"ARG BUN_SHA256_AMD64=x64sum",
+		"ARG BUN_SHA256_ARM64=arm64sum",
+	)
 
 	sum := sha256.Sum256([]byte(htmxBody))
 	assertFile(t, root, "internal/cli/new.go", hex.EncodeToString(sum[:]))

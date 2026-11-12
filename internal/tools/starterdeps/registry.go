@@ -17,7 +17,7 @@ const maxBody = 128 << 20
 type urls struct {
 	npm, proxy, htmx    string // htmx has one %s: the version
 	hub, registry, auth string // Docker Hub tags, registry and token endpoints
-	github              string
+	github, bun         string // bun: release download base, checksums in SHASUMS256.txt
 }
 
 var defaultURLs = urls{
@@ -25,7 +25,7 @@ var defaultURLs = urls{
 	proxy: "https://proxy.golang.org",
 	htmx:  "https://cdn.jsdelivr.net/npm/htmx.org@%s/dist/htmx.min.js",
 	hub:   "https://hub.docker.com", registry: "https://registry-1.docker.io", auth: "https://auth.docker.io/token",
-	github: "https://api.github.com",
+	github: "https://api.github.com", bun: "https://github.com/oven-sh/bun/releases/download",
 }
 
 // info is what a registry knows about one package: the version the registry
