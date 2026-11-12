@@ -13,6 +13,7 @@ function escapeXml(value: string): string {
 
 export const GET: APIRoute = () => {
   const urls = [
+    { loc: `${site.url}/`, lastmod: undefined, priority: "1.0" },
     ...getEveryDoc().map((doc) => ({
       loc: `${site.url}${doc.href}/`,
       lastmod: doc.updated,

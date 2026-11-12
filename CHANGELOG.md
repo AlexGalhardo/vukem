@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Viewport landing page with a Three.js scene, the Vukem launch film and a Read Docs action.
+
 ### Fixed
 
 - **cli:** Preserve every month's finance chart totals by allocating the complete history before indexing it (ST-3).
@@ -14,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **cli:** Keep workspace settings props separate from the shared workspace switcher (ST-2).
 
 - **cli:** Keep empty finance-dashboard chart collections as JSON arrays so a new workspace renders before its first transaction (ST-1).
+
 
 ## [0.43.0] - 2026-11-12
 

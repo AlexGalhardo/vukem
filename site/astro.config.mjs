@@ -23,7 +23,6 @@ export default defineConfig({
     },
   },
   redirects: {
-    "/": "/docs/introduction/",
     "/docs": "/docs/introduction/",
     "/docs/0.20": "/docs/0.20/introduction/",
   },

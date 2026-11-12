@@ -78,3 +78,15 @@ Fenced code blocks accept a file name: ` ```go title="main.go" `.
 | `content/` | MDX pages, `navigation.ts`, `last-updated.json` |
 | `scripts/` | `last-updated.ts` (run by Node directly, no build step) |
 | `public/` | Logo |
+
+## Landing page and launch media
+
+The root page is a standalone viewport composition; documentation keeps its
+existing routes. `src/scripts/landing.js` owns the decorative Three.js scene,
+including reduced-motion and WebGL-unavailable fallback behavior. The only
+marketing action is **Read Docs**. Native video controls provide playback.
+
+Media in `public/media/` comes from the local production workflow in the sibling
+`vukem-video` repository (`films/vukem-launch/README.md`). Retain the poster,
+caption file and final horizontal film together when updating the media.
+The workspace-root `../ROADMAP.md` coordinates the cross-repository delivery.
