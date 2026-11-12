@@ -10,8 +10,8 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 ## Commands
 
 - `task ci`: lint, vet and test (run before finishing any task)
-- `task fmt` / `task lint` / `task test` (`-short`) / `task test:e2e` / `task test:integration`
-- `task api:check`: apidiff gate on exported API (renames keep a deprecated `//go:fix inline` alias) — see [API compatibility](docs/tooling.md#api-compatibility)
+- `task fmt` / `task lint` / `task test` (`-short`) / `task test:e2e` / `task test:integration`; `task lint:go` keeps one golangci-lint cache per worktree ([tooling](docs/tooling.md#repository-layout))
+- `task api:check`: apidiff gate on exported API (renames keep a deprecated `//go:fix inline` alias); each module comparison is capped at 1 minute: in `-report` mode (all modules until a v1 tag) a timeout is a `::warning` and the job stays green, in the `-major v1` gate it fails closed — see [API compatibility](docs/tooling.md#api-compatibility)
 - `task mod:check`: every nested module resolves from its own `go.mod` with `GOWORK=off` (part of `task ci`)
 - `go test ./path/...` for a single package
 
@@ -25,12 +25,12 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 - Core never imports `drivers/*` or `contrib/*`; each is its own module.
 - Tests: stdlib + go-cmp, table-driven, no network in unit tests ([docs/testing.md](docs/testing.md)).
 - Formatting: gofumpt + gci + golines via `golangci-lint fmt`; tabs in Go ([docs/tooling.md](docs/tooling.md)).
-- Commits: Conventional Commits, English, scope = package ([docs/tooling.md](docs/tooling.md#conventional-commits)).
+- Commits: Conventional Commits, English, scope = package; a security fix on feat/fix/perf/refactor adds a `Security:` footer ([docs/tooling.md](docs/tooling.md#conventional-commits)).
 - Changes land through a PR with green required checks; after each PLAN.md task group, release (`task release -- vX.Y.Z`, or the PR flow once the ruleset requires it) — see [maintenance](docs/maintenance.md) and [release process](docs/tooling.md#release-process).
 - Never edit released `CHANGELOG.md` sections by hand; never move a pushed tag; push version tags one at a time ([tag pushes](docs/tooling.md#tag-pushes)).
 - GitHub Actions is the CI gate (Linux/macOS/Windows, race, govulncheck, snippetcheck, Postgres): push, then check `gh run list` and fix failures; a `ci-failure` issue blocks the next release. Windows 11 stays first-class.
 - Everything (code, comments, docs) in English. Docs site: Any PR that adds, changes or removes a page under `site/content/docs/` must refresh `site/content/last-updated.json` (`npm run last-updated` in `site/`, from a clone with full history) in the same PR. The "Last updated" date is part of the page contract; never edit it by hand. CI checks every docs page (`Site / Last updated`, and `Docs last updated / Last updated` on every pull request and push to `main`).
-- Downstream apps (vukem-email, hexascore, vukem-trading, vukem-video, vukem-music, vukem-tools) log framework findings in the single `vukem-feedback.md` at the workspace root, never in a copy inside an app; fix them on one PR, one commit per entry ([feedback queue](docs/maintenance.md#downstream-feedback-queue)).
+- Downstream apps (folders `vukem-email`, `vukem-hexascore`, `vukem-trading`, `vukem-studio` = vukem-video, `vukem-music`, `vukem-tools`) log framework findings in the single `vukem-feedback.md` at the workspace root, never in a copy inside an app; fix them on one PR, one commit per entry ([feedback queue](docs/maintenance.md#downstream-feedback-queue)).
 
 ## Where things live
 

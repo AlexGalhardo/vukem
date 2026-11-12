@@ -1,6 +1,6 @@
 ---
 name: vukem-release
-description: End-to-end release cycle for the Vukem framework and its reference apps. Use when cutting a vukem release, tagging drivers/contrib modules, merging a batch of fix branches before a release, or bumping the reference apps (vukem-email, hexascore, vukem-trading, vukem-video, vukem-music, vukem-tools) to a new vukem version.
+description: End-to-end release cycle for the Vukem framework and its reference apps. Use when cutting a vukem release, tagging drivers/contrib modules, merging a batch of fix branches before a release, or bumping the reference apps (vukem-email, vukem-hexascore, vukem-trading, vukem-video, vukem-music, vukem-tools) to a new vukem version.
 ---
 
 # Vukem release cycle
@@ -20,6 +20,8 @@ For each fix branch (one worktree per branch as a sibling checkout `../vukem-wt-
 ## 2. CI gate
 
 - `gh run list --branch main --workflow CI --limit 1` until the run for the merge commit finishes; every job must pass.
+- Each apicheck module comparison is capped at 1 minute (`apidiff did not finish comparing the exports`). In `-report` mode (the informative v0 step, and today every module, since none has a v1 tag) a timeout becomes a `::warning` "changes since <tag> not compared" and the job stays green; in the `-major v1` gate (no `-report`) it is an error and fails closed. Today the core times out on a deterministic upstream apidiff loop on the generic types of package orm, so re-running does not help.
+- A Windows job that dies with `fatal error: unknown caller pc`, `found pointer to free object` or a nil dereference in a stdlib function on an AMX Xeon runner is the known Go 1.27.3 crash ([docs/maintenance.md](../../../docs/maintenance.md)): re-run the job once; any other failure is a real bug.
 - A red integration job is often test hygiene, not product code: for example a `t.Cleanup` using `t.Context()` (already cancelled) leaves tables behind on the shared Postgres. Fix the root cause, push, wait again.
 
 ## 3. Release the core
@@ -76,7 +78,7 @@ curl -s -o /dev/null -w '%{http_code}' https://proxy.golang.org/github.com/!alex
 
 ## 8. Bump the reference apps
 
-Ask each app agent to bump before any feature work, with the upgrade notes from `docs/upgrade/` and the list of adoptable features. Each reports CI green and a healthy production probe (`/up?checks=1` or `/ready`).
+App folders in the workspace: `vukem-email`, `vukem-hexascore`, `vukem-trading`, `vukem-studio` (the vukem-video app), `vukem-music`, `vukem-tools`. Ask each app agent to bump before any feature work, with the upgrade notes from `docs/upgrade/` and the list of adoptable features. Each reports CI green and a healthy production probe (`/up?checks=1` or `/ready`).
 
 - Platform settings that only the new version understands (example: `MAIL_MAILER=mailtrap` in v0.26.0) are set **after** the bumped app is live; an unknown value fails the boot.
 - Agents never change Railway variables or other production config without the owner's approval relayed by the main session. An approval for one app does not extend to the others.
