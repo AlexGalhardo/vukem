@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -129,6 +130,15 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		}
 
 		changes, err := compare(ctx, root, filepath.Join(tmp, strconv.Itoa(i)), m, base, apidiff, *report == "")
+		if errors.Is(err, errDiffTimeout) && *report != "" {
+			// The report is informative: say what was not compared instead of
+			// hanging. The gate below still fails closed on the same error.
+			fmt.Fprintf(out, "::warning title=apidiff::%s: %v; changes since %s not compared\n", m.Path, err, base)
+			results = append(results, result{Module: m, Skipped: "apidiff did not finish"})
+
+			continue
+		}
+
 		if err != nil {
 			return fmt.Errorf("%s: %w", m.Path, err)
 		}
@@ -283,7 +293,7 @@ func compare(
 		args = append(args, "-incompatible")
 	}
 
-	report, err := runTool(ctx, work, nil, apidiff, append(args, oldExport, newExport)...)
+	report, err := diffExports(ctx, work, apidiff, append(args, oldExport, newExport), diffTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -291,8 +301,30 @@ func compare(
 	return parseReport(report), nil
 }
 
+// diffTimeout bounds the comparison of two exports: apidiff can loop forever
+// on some generic types (orm after v0.41.0, with x/exp up to 20261109), and an
+// unbounded step only ends when the CI kills the job, with no output.
+var diffTimeout = 3 * time.Minute
+
+// errDiffTimeout reports that apidiff did not finish comparing a module.
+var errDiffTimeout = errors.New("apidiff did not finish comparing the exports")
+
+// diffExports runs the apidiff comparison under timeout.
+func diffExports(ctx context.Context, work, apidiff string, args []string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	report, err := runTool(ctx, work, nil, apidiff, args...)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", fmt.Errorf("%w in %s", errDiffTimeout, timeout)
+	}
+
+	return report, err
+}
+
 // runTool runs name with GOWORK=off in dir and returns its stdout.
 func runTool(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
+	//nolint:gosec // G702: maintainer tool; name is the resolved apidiff (or the test binary in tests)
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), "GOWORK=off"), env...)
