@@ -1,5 +1,5 @@
-github.com/AlexGalhardo/vukem v0.41.0 h1:xrGalKcsGJy2bxRydDmkM1tKjYHlWH57yiNDUE3Qqgw=
-github.com/AlexGalhardo/vukem v0.41.0/go.mod h1:xKTGNySrxhZrCb4jWdfsT1QlWgVhsgU3riOgLYjj0vY=
+github.com/AlexGalhardo/vukem v0.42.0 h1:mqNuWryInj6IvKjo60Pk4Y9W3hB9D24nPRd+/s24iuA=
+github.com/AlexGalhardo/vukem v0.42.0/go.mod h1:xKTGNySrxhZrCb4jWdfsT1QlWgVhsgU3riOgLYjj0vY=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
