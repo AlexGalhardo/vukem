@@ -1,0 +1,8 @@
+// go returns a Go html/template action. `email export` keeps it verbatim and
+// Go escapes the value for its HTML context when the mail is sent. Use only
+// Go field names and template functions here, never user data.
+export const go = (expr: string): string => `{{${expr}}}`;
+
+// t is a message from the app's i18n catalogs in the send's locale. The key
+// is a raw string literal because React escapes double quotes in text.
+export const t = (key: string): string => go(`t \`${key}\``);

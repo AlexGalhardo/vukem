@@ -1,0 +1,195 @@
+package tests
+
+import (
+	"bytes"
+	"mime/multipart"
+	"net/http"
+	"net/url"
+	"strconv"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/finance"
+	"{{.Module}}/app/models"
+)
+
+const statement = "Date,Description,Amount,Category\n" +
+	"2026-03-01,Salary,2500.00,Salary\n" +
+	"2026-03-02,Rent,-900.00,Housing\n" +
+	"2026-03-03,Supermarket,-82.40,Groceries\n" +
+	"not a date,Broken row,-5.00,\n" +
+	"2026-03-04,Coffee,-3.50,Unknown\n"
+
+func upload(t *testing.T, w who, account int64, content string) *vukemtest.Response {
+	t.Helper()
+
+	var body bytes.Buffer
+
+	mw := multipart.NewWriter(&body)
+
+	if err := mw.WriteField("accountId", strconv.FormatInt(account, 10)); err != nil {
+		t.Fatal(err)
+	}
+
+	part, err := mw.CreateFormFile("file", "march.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := part.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	return w.Client.Do(http.MethodPost, "/import", &body, mw.FormDataContentType())
+}
+
+func TestCSVImportMapsColumnsAndRunsAsAJob(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	makePro(t, app, ana)
+
+	acc := firstAccount(t, app, ana)
+
+	// Step one: the upload answers with the header and a preview to map.
+	up := upload(t, ana, acc, statement)
+	up.AssertOK().AssertInertia("Import").HasProp("preview.headers", 4).HasProp("preview.rows", 5)
+
+	imp := firstOf[models.Import](t, app, ana, "")
+	if imp.Status != models.ImportUploaded {
+		t.Fatalf("status = %q, want uploaded", imp.Status)
+	}
+
+	// A mapping to a column the file does not have is refused, and nothing runs.
+	ana.Client.PostForm("/import/"+strconv.FormatInt(imp.ID, 10), url.Values{
+		"date": {"Date"}, "description": {"Description"}, "amount": {"Nope"},
+	}).AssertStatus(http.StatusSeeOther)
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 0)
+
+	// Step two: the mapping queues the job (inline in tests), which creates the rows.
+	ana.Client.PostForm("/import/"+strconv.FormatInt(imp.ID, 10), url.Values{
+		"date": {"Date"}, "description": {"Description"}, "amount": {"Amount"}, "category": {"Category"},
+		"dateFormat": {"2006-01-02"},
+	}).AssertRedirect("/import")
+
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 4)
+	vukemtest.AssertDatabaseHas(t, app, "transactions", map[string]any{
+		"workspace_id": ana.Workspace.ID, "kind": "income", "amount_cents": 250000,
+		"description": "Salary", "occurred_on": "2026-03-01",
+	})
+	vukemtest.AssertDatabaseHas(t, app, "transactions", map[string]any{
+		"kind": "expense", "amount_cents": 90000, "description": "Rent",
+	})
+	vukemtest.AssertDatabaseHas(
+		t,
+		app,
+		"transactions",
+		map[string]any{"kind": "expense", "amount_cents": 350, "description": "Coffee"},
+	)
+
+	done := firstOf[models.Import](t, app, ana, "")
+	if done.Status != models.ImportDone || done.Imported != 4 || done.Failed != 1 || done.Error == "" {
+		t.Errorf("import = %+v, want done with 4 imported, 1 skipped and a note", done)
+	}
+
+	// The statement is not kept once it was processed, and a second run is a no-op.
+	vukemtest.AssertDatabaseHas(t, app, "imports", map[string]any{"id": imp.ID, "content": ""})
+	ana.Client.PostForm("/import/"+strconv.FormatInt(imp.ID, 10), url.Values{
+		"date": {"Date"}, "description": {"Description"}, "amount": {"Amount"},
+	}).AssertStatus(http.StatusSeeOther)
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 4)
+
+	// Known categories matched by name and kind; the unknown one stays empty.
+	housing := categoryID(t, app, ana, "Housing")
+	vukemtest.AssertDatabaseHas(t, app, "transactions", map[string]any{"description": "Rent", "category_id": housing})
+}
+
+func TestCSVImportIsProOnlyAndBounded(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	acc := firstAccount(t, app, ana)
+
+	upload(t, ana, acc, statement).AssertRedirect("/billing")
+	vukemtest.AssertDatabaseCount(t, app, "imports", 0)
+
+	makePro(t, app, ana)
+
+	// Not a CSV, and too big.
+	upload(t, ana, acc, "just one line").AssertStatus(http.StatusSeeOther)
+	upload(
+		t,
+		ana,
+		acc,
+		"a,b\n"+string(bytes.Repeat([]byte("x,y\n"), finance.MaxImportBytes/4+1)),
+	).AssertStatus(http.StatusSeeOther)
+	vukemtest.AssertDatabaseCount(t, app, "imports", 0)
+
+	// Another workspace's account is not a target.
+	bob := signUp(t, app, "Bob", "bob@example.com")
+	makePro(t, app, bob)
+	upload(t, bob, acc, statement).AssertStatus(http.StatusSeeOther)
+	vukemtest.AssertDatabaseCount(t, app, "imports", 0)
+}
+
+func TestCSVImportDelimiterAndSigns(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	makePro(t, app, ana)
+
+	acc := firstAccount(t, app, ana)
+
+	// European statement: ; separators, 1.234,56 amounts, DD/MM/YYYY dates, expenses as positive numbers.
+	csv := "Data;Historico;Valor\n05/03/2026;Aluguel;1.234,56\n06/03/2026;Mercado;82,40\n"
+	upload(t, ana, acc, csv).AssertOK().AssertInertia("Import").HasProp("preview.headers", 3)
+
+	imp := firstOf[models.Import](t, app, ana, "")
+	ana.Client.PostForm("/import/"+strconv.FormatInt(imp.ID, 10), url.Values{
+		"date": {
+			"Data",
+		},
+		"description": {"Historico"},
+		"amount":      {"Valor"},
+		"dateFormat":  {"02/01/2006"},
+		"invert":      {"true"},
+	}).AssertRedirect("/import")
+
+	vukemtest.AssertDatabaseHas(t, app, "transactions", map[string]any{
+		"kind": "expense", "amount_cents": 123456, "description": "Aluguel", "occurred_on": "2026-03-05",
+	})
+	vukemtest.AssertDatabaseHas(
+		t,
+		app,
+		"transactions",
+		map[string]any{"kind": "expense", "amount_cents": 8240, "occurred_on": "2026-03-06"},
+	)
+}
+
+func TestImportsAreIsolatedPerWorkspace(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	bob := signUp(t, app, "Bob", "bob@example.com")
+	makePro(t, app, ana)
+	makePro(t, app, bob)
+
+	upload(t, ana, firstAccount(t, app, ana), statement).AssertOK()
+
+	imp := firstOf[models.Import](t, app, ana, "")
+
+	// Bob cannot confirm Ana's import.
+	bob.Client.PostForm("/import/"+strconv.FormatInt(imp.ID, 10), url.Values{
+		"date": {"Date"}, "description": {"Description"}, "amount": {"Amount"},
+	}).AssertNotFound()
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 0)
+}

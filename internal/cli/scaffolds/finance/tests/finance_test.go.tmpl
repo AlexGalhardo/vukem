@@ -1,0 +1,737 @@
+package tests
+
+import (
+	"maps"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/finance"
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/workspaces"
+	"{{.Module}}/bootstrap"
+)
+
+// who is a signed-in user of a workspace, as the browser would be.
+type who struct {
+	User      models.User
+	Workspace models.Workspace
+	Client    *vukemtest.Client
+}
+
+func newApp(t *testing.T, env ...map[string]string) *vukemtest.App {
+	t.Helper()
+
+	opts := vukemtest.Options{Env: map[string]string{"ADMIN_EMAILS": "boss@example.com"}}
+	for _, e := range env {
+		maps.Copy(opts.Env, e)
+	}
+
+	return vukemtest.New(t, bootstrap.New, opts)
+}
+
+func newVerifiedUser(t *testing.T, app *vukemtest.App, name, email string) models.User {
+	t.Helper()
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u := models.User{Name: name, Email: email, Password: "not used"}
+	u.EmailVerifiedAt.V, u.EmailVerifiedAt.Valid = time.Now().UTC(), true
+
+	if err := orm.Create(t.Context(), db, &u); err != nil {
+		t.Fatal(err)
+	}
+
+	return u
+}
+
+func service(t *testing.T, app *vukemtest.App) *workspaces.Service {
+	t.Helper()
+
+	ws, err := workspaces.New(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return ws
+}
+
+// signUp creates a verified user with a personal workspace and a browser
+// signed in to it.
+func signUp(t *testing.T, app *vukemtest.App, name, email string) who {
+	t.Helper()
+
+	u := newVerifiedUser(t, app, name, email)
+
+	ws, err := service(t, app).Create(t.Context(), u, name+" household", "USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return who{u, ws, browser(t, app, u, ws.ID)}
+}
+
+func browser(t *testing.T, app *vukemtest.App, u models.User, workspace int64) *vukemtest.Client {
+	t.Helper()
+
+	return app.Client(t).WithHeader("Sec-Fetch-Site", "same-origin").
+		ActingAs("web", u).WithSession(map[string]any{workspaces.SessionKey: strconv.FormatInt(workspace, 10)})
+}
+
+// join adds u to the workspace of w with role.
+func join(t *testing.T, app *vukemtest.App, w who, u models.User, role string) {
+	t.Helper()
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := models.Membership{WorkspaceID: w.Workspace.ID, UserID: u.ID, Role: role}
+	if err := orm.Create(t.Context(), db, &m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// makePro gives the workspace a valid subscription.
+func makePro(t *testing.T, app *vukemtest.App, w who) {
+	t.Helper()
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sub := models.WorkspaceSubscription{
+		WorkspaceID: w.Workspace.ID, StripeSubscriptionID: "sub_test_" + strconv.FormatInt(w.Workspace.ID, 10),
+		Status: "active", PriceID: "price_pro", UnitAmount: 900,
+	}
+	if err := orm.Create(t.Context(), db, &sub); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// firstAccount returns the id of the account the workspace was created with.
+func firstAccount(t *testing.T, app *vukemtest.App, w who) int64 {
+	t.Helper()
+
+	return firstOf[models.Account](t, app, w, "").ID
+}
+
+func categoryID(t *testing.T, app *vukemtest.App, w who, name string) int64 {
+	t.Helper()
+
+	return firstOf[models.Category](t, app, w, name).ID
+}
+
+func firstOf[T any](t *testing.T, app *vukemtest.App, w who, name string) T {
+	t.Helper()
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	q := workspaces.Scoped[T](workspaces.WithTenant(t.Context(), w.Workspace.ID), db)
+	if name != "" {
+		q = q.Where("name", name)
+	}
+
+	v, err := q.First(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return v
+}
+
+func addTransaction(t *testing.T, w who, account, category int64, kind, amount, date string) *vukemtest.Response {
+	t.Helper()
+
+	form := url.Values{
+		"accountId": {strconv.FormatInt(account, 10)}, "kind": {kind}, "amount": {amount},
+		"description": {"test"}, "date": {date},
+	}
+	if category > 0 {
+		form.Set("categoryId", strconv.FormatInt(category, 10))
+	}
+
+	return w.Client.PostForm("/transactions", form)
+}
+
+// inviteRe finds the invitation path in the HTML of the mail.
+var inviteRe = regexp.MustCompile(`/invites/[A-Za-z0-9]+`)
+
+func putForm(c *vukemtest.Client, target string, form url.Values) *vukemtest.Response {
+	return c.Do(http.MethodPut, target, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
+}
+
+func today() string { return time.Now().UTC().Format("2006-01-02") }
+
+func count[T any](t *testing.T, app *vukemtest.App, w who) int64 {
+	t.Helper()
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := workspaces.Scoped[T](workspaces.WithTenant(t.Context(), w.Workspace.ID), db).Count(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return n
+}
+
+// ---- the first slice: sign up, a workspace, a transaction, the dashboard ----
+
+func TestFirstVisitCreatesAWorkspaceAndWelcomes(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	u := newVerifiedUser(t, app, "Ana Silva", "ana@example.com")
+	c := app.Client(t).WithHeader("Sec-Fetch-Site", "same-origin").ActingAs("web", u)
+
+	c.Get("/dashboard").AssertOK().AssertInertia("Dashboard").
+		HasProp("workspace").HasProp("dashboard")
+
+	sent := app.Mails().SentTo("ana@example.com")
+	if len(sent) != 1 || !strings.Contains(sent[0].Subject, "Welcome") {
+		t.Fatalf("mails = %+v, want one welcome", sent)
+	}
+
+	// A second visit keeps the workspace and sends nothing more.
+	c.Get("/dashboard").AssertOK()
+
+	if n := len(app.Mails().SentTo("ana@example.com")); n != 1 {
+		t.Errorf("mails after the second visit = %d, want 1", n)
+	}
+
+	vukemtest.AssertDatabaseCount(t, app, "workspaces", 1)
+	vukemtest.AssertDatabaseHas(t, app, "memberships", map[string]any{"user_id": u.ID, "role": "owner"})
+}
+
+func TestRecordATransactionAndSeeItOnTheDashboard(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	acc := firstAccount(t, app, ana)
+
+	salary := categoryID(t, app, ana, "Salary")
+	addTransaction(t, ana, acc, salary, "income", "2500.00", today()).AssertRedirect("/transactions")
+	addTransaction(
+		t,
+		ana,
+		acc,
+		categoryID(t, app, ana, "Groceries"),
+		"expense",
+		"80.50",
+		today(),
+	).AssertRedirect("/transactions")
+
+	vukemtest.AssertDatabaseHas(t, app, "transactions", map[string]any{
+		"workspace_id": ana.Workspace.ID, "kind": "expense", "amount_cents": 8050,
+	})
+
+	page := ana.Client.Inertia("").Get("/dashboard").AssertOK().AssertInertia("Dashboard")
+	page.PropEquals("dashboard.balanceCents", float64(241950))
+	page.PropEquals("dashboard.currency", "USD")
+
+	// Validation: amounts are positive decimals, dates are ISO.
+	// A refused form goes back to the page with the message; nothing is saved.
+	addTransaction(t, ana, acc, 0, "expense", "abc", today()).AssertRedirect("/transactions")
+	addTransaction(t, ana, acc, 0, "expense", "-5", today()).AssertRedirect("/transactions")
+	addTransaction(t, ana, acc, 0, "expense", "5", "yesterday").AssertStatus(http.StatusSeeOther)
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 2)
+}
+
+func TestTransactionFiltersByPeriodAndCategory(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	acc := firstAccount(t, app, ana)
+	food := categoryID(t, app, ana, "Groceries")
+
+	addTransaction(t, ana, acc, food, "expense", "10.00", "2026-01-10")
+	addTransaction(t, ana, acc, 0, "expense", "20.00", "2026-02-10")
+	addTransaction(t, ana, acc, food, "expense", "30.00", "2026-02-20")
+
+	ana.Client.Inertia("").Get("/transactions").AssertInertia("Transactions").HasProp("transactions", 3)
+
+	ana.Client.Inertia("").Get("/transactions?from=2026-02-01&to=2026-02-28").
+		AssertInertia("Transactions").HasProp("transactions", 2)
+
+	ana.Client.Inertia("").Get("/transactions?from=2026-02-01&categoryId="+strconv.FormatInt(food, 10)).
+		AssertInertia("Transactions").HasProp("transactions", 1)
+}
+
+// ---- tenancy: a workspace never sees another one's rows ----
+
+func TestTenancyIsolatesWorkspaces(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	bob := signUp(t, app, "Bob", "bob@example.com")
+
+	accAna, accBob := firstAccount(t, app, ana), firstAccount(t, app, bob)
+	addTransaction(t, ana, accAna, 0, "expense", "11.00", today()).AssertRedirect("/transactions")
+
+	var anaTx models.Transaction
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if anaTx, err = workspaces.Scoped[models.Transaction](
+		workspaces.WithTenant(t.Context(), ana.Workspace.ID),
+		db,
+	).First(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bob sees none of it, and cannot delete it.
+	bob.Client.Inertia("").Get("/transactions").AssertInertia("Transactions").HasProp("transactions", 0)
+	bob.Client.Delete("/transactions/" + strconv.FormatInt(anaTx.ID, 10)).AssertNotFound()
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 1)
+
+	// Bob cannot write into Ana's account or category either.
+	addTransaction(t, bob, accAna, 0, "expense", "1.00", today()).AssertRedirect("/transactions")
+	addTransaction(
+		t,
+		bob,
+		accBob,
+		categoryID(t, app, ana, "Groceries"),
+		"expense",
+		"1.00",
+		today(),
+	).AssertRedirect("/transactions")
+	bob.Client.Delete("/accounts/" + strconv.FormatInt(accAna, 10)).AssertNotFound()
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 1)
+
+	// A forged workspace id in the session falls back to Bob's own workspace.
+	forged := browser(t, app, bob.User, ana.Workspace.ID)
+	forged.Inertia("").Get("/transactions").AssertInertia("Transactions").HasProp("transactions", 0)
+	forged.Inertia("").
+		Get("/dashboard").
+		AssertInertia("Dashboard").
+		PropEquals("workspace.current.id", float64(bob.Workspace.ID))
+
+	// The switcher is no way in either: the next request checks the membership.
+	bob.Client.PostForm("/workspaces/"+strconv.FormatInt(ana.Workspace.ID, 10)+"/switch", nil).
+		AssertRedirect("/dashboard")
+	bob.Client.Inertia("").
+		Get("/dashboard").
+		AssertInertia("Dashboard").
+		PropEquals("workspace.current.id", float64(bob.Workspace.ID))
+
+	// Without a workspace in the context a scoped query matches nothing.
+	n, err := workspaces.Scoped[models.Transaction](t.Context(), db).Count(t.Context())
+	if err != nil || n != 0 {
+		t.Errorf("scoped count without a tenant = %d, %v; want 0", n, err)
+	}
+
+	// Inserts need a tenant, and take it from the context, never from the model.
+	err = orm.Create(
+		t.Context(),
+		db,
+		&models.Transaction{AccountID: accAna, Kind: "expense", AmountCents: 1, OccurredOn: today()},
+	)
+	if err == nil {
+		t.Error("an insert without a tenant succeeded")
+	}
+
+	forgedTx := models.Transaction{
+		WorkspaceID: ana.Workspace.ID,
+		AccountID:   accBob,
+		Kind:        "expense",
+		AmountCents: 5,
+		OccurredOn:  today(),
+	}
+	if err := orm.Create(workspaces.WithTenant(t.Context(), bob.Workspace.ID), db, &forgedTx); err != nil {
+		t.Fatal(err)
+	}
+
+	if forgedTx.WorkspaceID != bob.Workspace.ID {
+		t.Errorf("workspace_id = %d, want the context tenant %d", forgedTx.WorkspaceID, bob.Workspace.ID)
+	}
+}
+
+func TestAnonymousAndUnverifiedUsersAreSentAway(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+
+	app.Client(t).Get("/dashboard").AssertRedirect("/login")
+	app.Client(t).Get("/transactions").AssertRedirect("/login")
+	app.Client(t).Get("/billing").AssertRedirect("/login")
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u := models.User{Name: "New", Email: "new@example.com", Password: "x"}
+	if err := orm.Create(t.Context(), db, &u); err != nil {
+		t.Fatal(err)
+	}
+
+	app.Client(t).ActingAs("web", u).Get("/dashboard").AssertRedirect("/email/verify")
+}
+
+// ---- roles ----
+
+func TestRolesDecideWhoMayDoWhat(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	owner := signUp(t, app, "Olga", "olga@example.com")
+	adminUser := newVerifiedUser(t, app, "Adam", "adam@example.com")
+	memberUser := newVerifiedUser(t, app, "Mia", "mia@example.com")
+	join(t, app, owner, adminUser, models.RoleAdmin)
+	join(t, app, owner, memberUser, models.RoleMember)
+
+	admin := who{adminUser, owner.Workspace, browser(t, app, adminUser, owner.Workspace.ID)}
+	member := who{memberUser, owner.Workspace, browser(t, app, memberUser, owner.Workspace.ID)}
+	acc := firstAccount(t, app, owner)
+
+	// Everyone records transactions.
+	addTransaction(t, member, acc, 0, "expense", "3.00", today()).AssertRedirect("/transactions")
+
+	// Members cannot manage data, people or billing.
+	member.Client.PostForm("/categories", url.Values{"name": {"Pets"}, "kind": {"expense"}}).AssertForbidden()
+	member.Client.PostForm("/workspace/invites", url.Values{"email": {"x@example.com"}, "role": {"member"}}).
+		AssertForbidden()
+	member.Client.PostForm("/billing/portal", nil).AssertForbidden()
+
+	// Admins manage data and people but not billing.
+	admin.Client.PostForm("/categories", url.Values{"name": {"Pets"}, "kind": {"expense"}}).
+		AssertRedirect("/categories")
+	admin.Client.PostForm("/billing/checkout/pro", nil).AssertForbidden()
+	admin.Client.Delete("/workspace/members/" + strconv.FormatInt(memberUser.ID, 10)).AssertRedirect("/workspace")
+
+	// Nobody removes the owner.
+	admin.Client.Delete("/workspace/members/" + strconv.FormatInt(owner.User.ID, 10)).AssertRedirect("/workspace")
+
+	if n := count[models.Membership](t, app, owner); n != 2 {
+		t.Errorf("memberships = %d, want the owner and the admin", n)
+	}
+}
+
+func TestWorkspaceSettingsRejectABadCurrency(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+
+	putForm(ana.Client, "/workspace", url.Values{"name": {"Home"}, "currency": {"EUR"}}).AssertRedirect("/workspace")
+	vukemtest.AssertDatabaseHas(
+		t,
+		app,
+		"workspaces",
+		map[string]any{"id": ana.Workspace.ID, "currency": "EUR", "name": "Home"},
+	)
+
+	putForm(
+		ana.Client,
+		"/workspace",
+		url.Values{"name": {"Other"}, "currency": {"EURO"}},
+	).AssertStatus(http.StatusSeeOther)
+	putForm(
+		ana.Client,
+		"/workspace",
+		url.Values{"name": {"Other"}, "currency": {"E1R"}},
+	).AssertStatus(http.StatusSeeOther)
+	vukemtest.AssertDatabaseHas(
+		t,
+		app,
+		"workspaces",
+		map[string]any{"id": ana.Workspace.ID, "currency": "EUR", "name": "Home"},
+	)
+}
+
+// ---- plan limits ----
+
+func TestFreePlanLimits(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	acc := firstAccount(t, app, ana)
+
+	// One account on Free; the answer sends the user to /billing.
+	ana.Client.PostForm("/accounts", url.Values{"name": {"Savings"}, "kind": {"savings"}}).AssertRedirect("/billing")
+	vukemtest.AssertDatabaseCount(t, app, "accounts", 1)
+
+	// Budgets and CSV import are Pro features.
+	groceries := categoryID(t, app, ana, "Groceries")
+	ana.Client.PostForm("/budgets", url.Values{"categoryId": {strconv.FormatInt(groceries, 10)}, "limit": {"300"}}).
+		AssertRedirect("/billing")
+	ana.Client.Inertia("").Get("/import").AssertInertia("Import").PropEquals("enabled", false)
+
+	// One member: an invitation is refused.
+	ana.Client.PostForm("/workspace/invites", url.Values{"email": {"bob@example.com"}, "role": {"member"}}).
+		AssertRedirect("/billing")
+	vukemtest.AssertDatabaseCount(t, app, "invites", 0)
+
+	// 100 transactions a month, then the 101st is refused.
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	month := time.Now().UTC().Format("2006-01")
+	rows := make([]models.Transaction, 100)
+
+	for i := range rows {
+		rows[i] = models.Transaction{
+			AccountID:   acc,
+			Kind:        "expense",
+			AmountCents: 100,
+			Description: "bulk",
+			OccurredOn:  month + "-15",
+		}
+	}
+
+	if err := orm.CreateMany(workspaces.WithTenant(t.Context(), ana.Workspace.ID), db, rows); err != nil {
+		t.Fatal(err)
+	}
+
+	addTransaction(t, ana, acc, 0, "expense", "1.00", month+"-16").AssertRedirect("/billing")
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 100)
+
+	// The limit is per month: another month still has room.
+	addTransaction(t, ana, acc, 0, "expense", "1.00", "2020-01-16").AssertRedirect("/transactions")
+
+	// Pro lifts every limit.
+	makePro(t, app, ana)
+
+	addTransaction(t, ana, acc, 0, "expense", "1.00", month+"-16").AssertRedirect("/transactions")
+	ana.Client.PostForm("/accounts", url.Values{"name": {"Savings"}, "kind": {"savings"}}).AssertRedirect("/accounts")
+	ana.Client.PostForm("/budgets", url.Values{"categoryId": {strconv.FormatInt(groceries, 10)}, "limit": {"300"}}).
+		AssertRedirect("/budgets")
+	ana.Client.PostForm("/workspace/invites", url.Values{"email": {"bob@example.com"}, "role": {"member"}}).
+		AssertRedirect("/workspace")
+
+	ana.Client.Inertia("").Get("/dashboard").AssertInertia("Dashboard").PropEquals("workspace.plan", "pro")
+}
+
+func TestAnExpiredSubscriptionFallsBackToFree(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	makePro(t, app, ana)
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := orm.QueryOf[models.WorkspaceSubscription](db).Where("workspace_id", ana.Workspace.ID).
+		Update(t.Context(), orm.Set{"status": "past_due"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ana.Client.Inertia("").Get("/dashboard").AssertInertia("Dashboard").PropEquals("workspace.plan", "free")
+}
+
+// ---- budgets ----
+
+func TestBudgetAlertsAt80And100Percent(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	makePro(t, app, ana)
+
+	acc := firstAccount(t, app, ana)
+	food := categoryID(t, app, ana, "Groceries")
+
+	ana.Client.PostForm("/budgets", url.Values{"categoryId": {strconv.FormatInt(food, 10)}, "limit": {"100.00"}}).
+		AssertRedirect("/budgets")
+
+	addTransaction(t, ana, acc, food, "expense", "50.00", today())
+	addTransaction(t, ana, acc, food, "expense", "10.00", today())
+
+	if n := len(app.Mails().SentTo("ana@example.com")); n != 0 {
+		t.Fatalf("mails at 60%% = %d, want none", n)
+	}
+
+	addTransaction(t, ana, acc, food, "expense", "20.00", today()) // 80%
+
+	sent := app.Mails().SentTo("ana@example.com")
+	if len(sent) != 1 || !strings.Contains(sent[0].Subject, "Groceries budget at 80%") {
+		t.Fatalf("mails at 80%% = %+v", sent)
+	}
+
+	addTransaction(t, ana, acc, food, "expense", "5.00", today()) // 85%: no second alert
+
+	if n := len(app.Mails().SentTo("ana@example.com")); n != 1 {
+		t.Fatalf("mails at 85%% = %d, want still 1", n)
+	}
+
+	addTransaction(t, ana, acc, food, "expense", "30.00", today()) // 115%
+
+	sent = app.Mails().SentTo("ana@example.com")
+	if len(sent) != 2 || !strings.Contains(sent[1].Subject, "at 100%") {
+		t.Fatalf("mails at 100%% = %+v", sent)
+	}
+
+	if !strings.Contains(sent[1].HTML, "$115.00") {
+		t.Errorf("the alert does not show the spent amount:\n%s", sent[1].HTML)
+	}
+
+	ana.Client.Inertia("").Get("/budgets").AssertInertia("Budgets").PropEquals("budgets.0.percent", float64(115))
+}
+
+// ---- invitations ----
+
+func TestInviteAcceptFlow(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	makePro(t, app, ana)
+
+	bob := newVerifiedUser(t, app, "Bob", "bob@example.com")
+	eve := newVerifiedUser(t, app, "Eve", "eve@example.com")
+
+	ana.Client.PostForm("/workspace/invites", url.Values{"email": {"Bob@Example.com"}, "role": {"member"}}).
+		AssertRedirect("/workspace")
+
+	sent := app.Mails().SentTo("bob@example.com")
+	if len(sent) != 1 || !strings.Contains(sent[0].Subject, "invited you") {
+		t.Fatalf("invite mails = %+v", sent)
+	}
+
+	link := inviteRe.FindString(sent[0].HTML)
+	if link == "" {
+		t.Fatalf("no invite link in %s", sent[0].HTML)
+	}
+
+	path := link
+
+	// Another user with the link gets a 404, and the invite stays usable.
+	browser(t, app, eve, 0).PostForm(path, nil).AssertNotFound()
+
+	// The invited address joins; the link works once.
+	b := app.Client(t).WithHeader("Sec-Fetch-Site", "same-origin").ActingAs("web", bob)
+	b.Get(path).AssertOK().AssertInertia("InviteAccept")
+	b.PostForm(path, nil).AssertRedirect("/dashboard")
+	b.PostForm(path, nil).AssertNotFound()
+
+	vukemtest.AssertDatabaseHas(t, app, "memberships", map[string]any{
+		"workspace_id": ana.Workspace.ID, "user_id": bob.ID, "role": "member",
+	})
+	b.Inertia("").
+		Get("/dashboard").
+		AssertInertia("Dashboard").
+		PropEquals("workspace.current.id", float64(ana.Workspace.ID))
+}
+
+func TestExpiredInviteIsRefused(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	makePro(t, app, ana)
+
+	bob := newVerifiedUser(t, app, "Bob", "bob@example.com")
+	ana.Client.PostForm("/workspace/invites", url.Values{"email": {"bob@example.com"}, "role": {"admin"}}).
+		AssertRedirect("/workspace")
+
+	link := inviteRe.FindString(app.Mails().SentTo("bob@example.com")[0].HTML)
+	path := link
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := orm.QueryOf[models.Invite](db).Where("email", "bob@example.com").
+		Update(t.Context(), orm.Set{"expires_at": time.Now().Add(-time.Hour).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+
+	app.Client(t).WithHeader("Sec-Fetch-Site", "same-origin").ActingAs("web", bob).PostForm(path, nil).AssertNotFound()
+}
+
+// ---- monthly summary ----
+
+func TestMonthlySummaryMailsTheOwners(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	signUp(t, app, "Quiet", "quiet@example.com") // no transactions: no mail
+
+	acc := firstAccount(t, app, ana)
+	addTransaction(t, ana, acc, categoryID(t, app, ana, "Salary"), "income", "1000.00", "2026-03-05")
+	addTransaction(t, ana, acc, categoryID(t, app, ana, "Housing"), "expense", "400.00", "2026-03-06")
+	addTransaction(t, ana, acc, categoryID(t, app, ana, "Groceries"), "expense", "100.00", "2026-03-07")
+
+	ws := service(t, app)
+
+	fin, err := finance.New(app.App, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fin.SendAllMonthlySummaries(t.Context(), "2026-03"); err != nil {
+		t.Fatal(err)
+	}
+
+	sent := app.Mails().SentTo("ana@example.com")
+	if len(sent) != 1 || sent[0].Subject != "Your 2026-03 summary" {
+		t.Fatalf("summary mails = %+v", sent)
+	}
+
+	for _, want := range []string{"$1,000.00", "$500.00", "$500.00", "Housing", "Groceries"} {
+		if !strings.Contains(sent[0].HTML, want) {
+			t.Errorf("the summary does not contain %q:\n%s", want, sent[0].HTML)
+		}
+	}
+
+	if n := len(app.Mails().SentTo("quiet@example.com")); n != 0 {
+		t.Errorf("a workspace without transactions got %d summaries", n)
+	}
+}
+
+// ---- admin ----
+
+func TestAdminRevenueSumsTheActiveSubscriptions(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	bob := signUp(t, app, "Bob", "bob@example.com")
+	makePro(t, app, ana)
+	makePro(t, app, bob)
+
+	boss := newVerifiedUser(t, app, "Boss", "boss@example.com")
+	c := app.Client(t).WithHeader("Sec-Fetch-Site", "same-origin").ActingAs("web", boss).Inertia("")
+
+	page := c.Get("/admin/revenue").AssertOK().AssertInertia("Admin/Revenue")
+	page.PropEquals("mrrCents", 1800)
+	page.PropEquals("active", 2)
+	page.PropEquals("workspaces", 2)
+
+	// Customers are not admins: the page does not exist for them.
+	ana.Client.Get("/admin/revenue").AssertNotFound()
+	app.Client(t).Get("/admin/revenue").AssertRedirect("/login")
+}

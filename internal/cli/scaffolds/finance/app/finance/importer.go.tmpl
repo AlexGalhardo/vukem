@@ -1,0 +1,368 @@
+package finance
+
+import (
+	"context"
+	"database/sql"
+	"encoding/csv"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/orm"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/workspaces"
+)
+
+// MaxImportBytes bounds an uploaded statement; the content is kept in the
+// imports table until the job has run, then dropped.
+const MaxImportBytes = 2 << 20
+
+// maxImportRows bounds what one import creates.
+const maxImportRows = 20000
+
+var (
+	errImportTooBig = errs.New(http.StatusRequestEntityTooLarge, "The file is too big: the limit is 2 MiB.")
+	errImportCSV    = errs.New(http.StatusUnprocessableEntity, "The file is not a CSV with a header row and a line.")
+	errImportState  = errs.New(http.StatusConflict, "This import was already started.")
+	errMapping      = errs.New(http.StatusUnprocessableEntity, "Choose the date, description and amount columns.")
+)
+
+// DateFormats are the formats a statement's dates may use (Go layouts).
+var DateFormats = []string{"2006-01-02", "02/01/2006", "01/02/2006", "02.01.2006"}
+
+// Mapping says which CSV column holds what. Columns are header names. A
+// negative amount is an expense, a positive one income, unless Invert.
+type Mapping struct {
+	Date        string `json:"date"`
+	Description string `json:"description"`
+	Amount      string `json:"amount"`
+	Category    string `json:"category"`
+	DateFormat  string `json:"dateFormat"`
+	Invert      bool   `json:"invert"`
+}
+
+// Preview is what the mapping step shows: the header and a few rows.
+type Preview struct {
+	ImportID int64      `json:"importId"`
+	Filename string     `json:"filename"`
+	Headers  []string   `json:"headers"`
+	Rows     [][]string `json:"rows"`
+}
+
+func readCSV(content string) ([]string, [][]string, error) {
+	// Statements from European banks use ";": pick it when the header has more of it.
+	head, _, _ := strings.Cut(content, "\n")
+	r := csv.NewReader(strings.NewReader(content))
+	r.Comma = ','
+
+	if strings.Count(head, ";") > strings.Count(head, ",") {
+		r.Comma = ';'
+	}
+
+	r.FieldsPerRecord = -1
+	r.LazyQuotes = true
+
+	var rows [][]string
+
+	for {
+		rec, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			return nil, nil, errImportCSV
+		}
+
+		if len(rows) >= maxImportRows+1 {
+			break
+		}
+
+		rows = append(rows, rec)
+	}
+
+	if len(rows) < 2 {
+		return nil, nil, errImportCSV
+	}
+
+	headers := rows[0]
+	for i := range headers {
+		headers[i] = strings.TrimSpace(strings.TrimPrefix(headers[i], string(rune(0xFEFF))))
+	}
+
+	return headers, rows[1:], nil
+}
+
+// StartImport stores an uploaded statement for account (Pro) and returns the
+// preview the user maps columns from.
+func (s *Service) StartImport(ctx context.Context, accountID int64, filename string, content []byte) (Preview, error) {
+	lim, err := s.WS.Limits(ctx)
+	if err != nil {
+		return Preview{}, err
+	}
+
+	if err := lim.CheckImport(); err != nil {
+		return Preview{}, err
+	}
+
+	if len(content) > MaxImportBytes {
+		return Preview{}, errImportTooBig
+	}
+
+	if ok, err := workspaces.Scoped[models.Account](ctx, s.DB).Where("id", accountID).Exists(ctx); err != nil || !ok {
+		return Preview{}, firstErr(err, errAccount)
+	}
+
+	headers, rows, err := readCSV(string(content))
+	if err != nil {
+		return Preview{}, err
+	}
+
+	imp := models.Import{
+		AccountID: accountID, Filename: strings.TrimSpace(filename), Content: string(content),
+		Status: models.ImportUploaded,
+	}
+	if err := orm.Create(ctx, s.DB, &imp); err != nil {
+		return Preview{}, err
+	}
+
+	return Preview{ImportID: imp.ID, Filename: imp.Filename, Headers: headers, Rows: rows[:min(5, len(rows))]}, nil
+}
+
+// ConfirmImport saves the column mapping and queues the job that creates
+// the transactions.
+func (s *Service) ConfirmImport(
+	ctx context.Context,
+	id int64,
+	m Mapping,
+	dispatch func(context.Context, int64, int64) error,
+) error {
+	imp, err := workspaces.Scoped[models.Import](ctx, s.DB).Find(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if imp.Status != models.ImportUploaded {
+		return errImportState
+	}
+
+	headers, _, err := readCSV(imp.Content)
+	if err != nil {
+		return err
+	}
+
+	for _, col := range []string{m.Date, m.Description, m.Amount} {
+		if indexOf(headers, col) < 0 {
+			return errMapping
+		}
+	}
+
+	if m.Category != "" && indexOf(headers, m.Category) < 0 {
+		return errMapping
+	}
+
+	if m.DateFormat == "" {
+		m.DateFormat = DateFormats[0]
+	}
+
+	if !contains(DateFormats, m.DateFormat) {
+		return errMapping
+	}
+
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+
+	_, err = workspaces.Scoped[models.Import](ctx, s.DB).Where("id", id).
+		Update(ctx, orm.Set{"mapping": string(raw), "status": models.ImportQueued})
+	if err != nil {
+		return err
+	}
+
+	ws, _ := workspaces.TenantID(ctx)
+
+	return dispatch(ctx, ws, id)
+}
+
+func indexOf(list []string, s string) int {
+	for i, v := range list {
+		if v == s {
+			return i
+		}
+	}
+
+	return -1
+}
+
+func contains(list []string, s string) bool { return indexOf(list, s) >= 0 }
+
+// Imports lists the latest imports of the workspace.
+func (s *Service) Imports(ctx context.Context) ([]models.Import, error) {
+	return workspaces.Scoped[models.Import](ctx, s.DB).OrderBy("id", orm.Desc).Limit(20).Get(ctx)
+}
+
+// RunImport turns the rows of an import into transactions. It runs in the
+// queued job, under the tenant context of the workspace that started it.
+// Rows that do not parse are counted and skipped, not fatal; a statement
+// that cannot be read at all marks the import failed. Budget alerts are
+// checked once per category and month at the end.
+func (s *Service) RunImport(ctx context.Context, id int64) error {
+	imp, err := workspaces.Scoped[models.Import](ctx, s.DB).Find(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if imp.Status != models.ImportQueued {
+		return nil // a retry of a job that already finished
+	}
+
+	made, bad, notes, err := s.importRows(ctx, imp)
+	if err != nil {
+		_, uerr := workspaces.Scoped[models.Import](ctx, s.DB).Where("id", id).
+			Update(ctx, orm.Set{"status": models.ImportFailed, "error": err.Error(), "content": ""})
+
+		return uerr // the failure is recorded on the import; retrying the job would not help
+	}
+
+	type key struct {
+		cat   int64
+		month string
+	}
+
+	added := map[key]int64{}
+
+	for i := range made {
+		if t := &made[i]; t.Kind == models.KindExpense && t.CategoryID.Valid {
+			added[key{t.CategoryID.V, MonthOf(t.OccurredOn)}] += t.AmountCents
+		}
+	}
+
+	for k, delta := range added {
+		if err := s.alertBudget(ctx, k.cat, k.month, delta); err != nil {
+			return err
+		}
+	}
+
+	_, err = workspaces.Scoped[models.Import](ctx, s.DB).Where("id", id).Update(ctx, orm.Set{
+		"status": models.ImportDone, "imported": len(made), "failed": bad, "error": strings.Join(notes, "\n"),
+		"content": "",
+	})
+
+	return err
+}
+
+func (s *Service) importRows(
+	ctx context.Context,
+	imp models.Import,
+) (made []models.Transaction, bad int, notes []string, err error) {
+	var m Mapping
+	if err := json.Unmarshal([]byte(imp.Mapping), &m); err != nil {
+		return nil, 0, nil, errMapping
+	}
+
+	headers, rows, err := readCSV(imp.Content)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	di, ni, ai, ci := indexOf(
+		headers,
+		m.Date,
+	), indexOf(
+		headers,
+		m.Description,
+	), indexOf(
+		headers,
+		m.Amount,
+	), indexOf(
+		headers,
+		m.Category,
+	)
+	if di < 0 || ni < 0 || ai < 0 {
+		return nil, 0, nil, errMapping
+	}
+
+	cats, err := s.Categories(ctx)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	byName := map[string]models.Category{}
+	for _, c := range cats {
+		byName[strings.ToLower(c.Name)+"/"+c.Kind] = c
+	}
+
+	for i, row := range rows {
+		t, err := rowToTransaction(row, di, ni, ai, ci, m, imp, byName)
+		if err != nil {
+			bad++
+
+			if len(notes) < 5 {
+				notes = append(notes, fmt.Sprintf("line %d: %v", i+2, err))
+			}
+
+			continue
+		}
+
+		made = append(made, t)
+	}
+
+	err = s.DB.Tx(ctx, func(tx *database.Tx) error {
+		for i := range made {
+			if err := orm.Create(ctx, tx, &made[i]); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	return made, bad, notes, err
+}
+
+func rowToTransaction(
+	row []string, di, ni, ai, ci int, m Mapping, imp models.Import, cats map[string]models.Category,
+) (models.Transaction, error) {
+	if len(row) <= max(di, ni, ai) {
+		return models.Transaction{}, errors.New("too few columns")
+	}
+
+	date, err := time.Parse(m.DateFormat, strings.TrimSpace(row[di]))
+	if err != nil {
+		return models.Transaction{}, errors.New("bad date")
+	}
+
+	cents, err := ParseAmount(row[ai])
+	if err != nil || cents == 0 {
+		return models.Transaction{}, errors.New("bad amount")
+	}
+
+	if m.Invert {
+		cents = -cents
+	}
+
+	t := models.Transaction{
+		AccountID: imp.AccountID, Description: strings.TrimSpace(row[ni]), OccurredOn: date.Format(isoDate),
+		ImportID: sql.Null[int64]{V: imp.ID, Valid: true}, Kind: models.KindIncome, AmountCents: cents,
+	}
+
+	if cents < 0 {
+		t.Kind, t.AmountCents = models.KindExpense, -cents
+	}
+
+	if ci >= 0 && ci < len(row) {
+		if c, ok := cats[strings.ToLower(strings.TrimSpace(row[ci]))+"/"+t.Kind]; ok {
+			t.CategoryID = sql.Null[int64]{V: c.ID, Valid: true}
+		}
+	}
+
+	return t, nil
+}

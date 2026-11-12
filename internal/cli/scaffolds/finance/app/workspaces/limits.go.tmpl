@@ -1,0 +1,107 @@
+package workspaces
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/errs"
+
+	"{{.Module}}/app/models"
+)
+
+// Unlimited marks a limit the plan does not have.
+const Unlimited = -1
+
+// Limits is what a plan allows.
+type Limits struct {
+	Plan         string `json:"plan"`
+	Accounts     int    `json:"accounts"`
+	Transactions int    `json:"transactionsPerMonth"`
+	Members      int    `json:"members"`
+	CSVImport    bool   `json:"csvImport"`
+	Budgets      bool   `json:"budgets"`
+}
+
+// The two plans. Pro is what an active or trialing subscription buys.
+var (
+	Free = Limits{Plan: "free", Accounts: 1, Transactions: 100, Members: 1}
+	Pro  = Limits{
+		Plan: "pro", Accounts: Unlimited, Transactions: Unlimited,
+		Members: Unlimited, CSVImport: true, Budgets: true,
+	}
+)
+
+// IsUpgrade reports whether err is a plan limit: controllers send the user
+// to /billing instead of showing an error page.
+func IsUpgrade(err error) bool {
+	e, ok := errors.AsType[*errs.HTTPError](err)
+	return ok && e.Status == http.StatusPaymentRequired
+}
+
+func upgrade(format string, args ...any) error {
+	return errs.New(http.StatusPaymentRequired, fmt.Sprintf(format, args...)+" Upgrade to Pro to remove this limit.")
+}
+
+// CheckAccounts fails when having n accounts is over the plan.
+func (l Limits) CheckAccounts(n int) error {
+	if l.Accounts != Unlimited && n > l.Accounts {
+		return upgrade("The %s plan allows %d account.", l.Plan, l.Accounts)
+	}
+
+	return nil
+}
+
+// CheckTransactions fails when n transactions in a month is over the plan.
+func (l Limits) CheckTransactions(n int) error {
+	if l.Transactions != Unlimited && n > l.Transactions {
+		return upgrade("The %s plan allows %d transactions per month.", l.Plan, l.Transactions)
+	}
+
+	return nil
+}
+
+// CheckMembers fails when n members and invites already fill the plan.
+func (l Limits) CheckMembers(n int) error {
+	if l.Members != Unlimited && n >= l.Members {
+		return upgrade("The %s plan allows %d member.", l.Plan, l.Members)
+	}
+
+	return nil
+}
+
+// CheckImport fails on a plan without CSV import.
+func (l Limits) CheckImport() error {
+	if !l.CSVImport {
+		return upgrade("CSV import is a Pro feature.")
+	}
+
+	return nil
+}
+
+// CheckBudgets fails on a plan without budgets.
+func (l Limits) CheckBudgets() error {
+	if !l.Budgets {
+		return upgrade("Budgets are a Pro feature.")
+	}
+
+	return nil
+}
+
+// Limits returns the limits of the workspace of ctx: Pro with a valid
+// subscription (active or trialing), else Free.
+func (s *Service) Limits(ctx context.Context) (Limits, error) {
+	subs, err := Scoped[models.WorkspaceSubscription](ctx, s.DB).Get(ctx)
+	if err != nil {
+		return Limits{}, err
+	}
+
+	for i := range subs {
+		if subs[i].Valid() {
+			return Pro, nil
+		}
+	}
+
+	return Free, nil
+}

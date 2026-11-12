@@ -1,0 +1,475 @@
+package finance
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/queue"
+
+	appmail "{{.Module}}/app/mail"
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/workspaces"
+)
+
+const isoDate = "2006-01-02"
+
+var (
+	errAccount  = errs.New(http.StatusUnprocessableEntity, "Choose one of your accounts.")
+	errCategory = errs.New(http.StatusUnprocessableEntity, "Choose one of your categories.")
+	errKind     = errs.New(http.StatusUnprocessableEntity, "The kind must be income or expense.")
+	errDate     = errs.New(http.StatusUnprocessableEntity, "The date must look like 2026-11-30.")
+	errAmountIn = errs.New(http.StatusUnprocessableEntity, "The amount must be a positive number like 12.50.")
+	errExpense  = errs.New(http.StatusUnprocessableEntity, "A budget needs an expense category.")
+	errName     = errs.New(http.StatusConflict, "That name is already taken.")
+)
+
+// Service holds the finance rules of the workspace in the context.
+type Service struct {
+	DB     *database.DB
+	WS     *workspaces.Service
+	Mailer *mail.Mailer
+	Queue  *queue.Queue
+	URL    string
+
+	now func() time.Time
+}
+
+// New builds the service from the app and the workspace service.
+func New(app *vukem.App, ws *workspaces.Service) (*Service, error) {
+	q, err := app.Queue()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Service{DB: ws.DB, WS: ws, Mailer: ws.Mailer, Queue: q, URL: ws.URL, now: app.Now}, nil
+}
+
+// Month is the current "YYYY-MM"; Today the current ISO date.
+func (s *Service) Month() string { return s.now().UTC().Format("2006-01") }
+
+// Today is the current ISO date (UTC).
+func (s *Service) Today() string { return s.now().UTC().Format(isoDate) }
+
+// MonthOf returns the "YYYY-MM" of an ISO date.
+func MonthOf(date string) string { return date[:7] }
+
+// monthBounds returns the first and last possible ISO date of a "YYYY-MM"
+// month; ISO dates compare as text, so 31 bounds every month.
+func monthBounds(month string) (from, to string) { return month + "-01", month + "-31" }
+
+// ---- accounts and categories ----
+
+// Accounts lists the accounts of the workspace of ctx.
+func (s *Service) Accounts(ctx context.Context) ([]models.Account, error) {
+	return workspaces.Scoped[models.Account](ctx, s.DB).OrderBy("id", orm.Asc).Get(ctx)
+}
+
+// Categories lists the categories of the workspace of ctx.
+func (s *Service) Categories(ctx context.Context) ([]models.Category, error) {
+	return workspaces.Scoped[models.Category](ctx, s.DB).OrderBy("kind", orm.Asc).OrderBy("name", orm.Asc).Get(ctx)
+}
+
+// CreateAccount adds an account; the Free plan allows one.
+func (s *Service) CreateAccount(ctx context.Context, name, kind, opening string) (models.Account, error) {
+	lim, err := s.WS.Limits(ctx)
+	if err != nil {
+		return models.Account{}, err
+	}
+
+	n, err := workspaces.Scoped[models.Account](ctx, s.DB).Count(ctx)
+	if err != nil {
+		return models.Account{}, err
+	}
+
+	if err := lim.CheckAccounts(int(n) + 1); err != nil {
+		return models.Account{}, err
+	}
+
+	var cents int64
+
+	if strings.TrimSpace(opening) != "" {
+		if cents, err = ParseAmount(opening); err != nil {
+			return models.Account{}, errAmountIn
+		}
+	}
+
+	a := models.Account{Name: strings.TrimSpace(name), Kind: kind, OpeningCents: cents}
+	err = orm.Create(ctx, s.DB, &a)
+
+	return a, err
+}
+
+// DeleteAccount removes an account of the workspace and its transactions.
+func (s *Service) DeleteAccount(ctx context.Context, id int64) error {
+	n, err := workspaces.Scoped[models.Account](ctx, s.DB).Where("id", id).Delete(ctx)
+	if err == nil && n == 0 {
+		return errs.ErrNotFound
+	}
+
+	return err
+}
+
+// CreateCategory adds a category; names are unique per workspace.
+func (s *Service) CreateCategory(ctx context.Context, name, kind string) (models.Category, error) {
+	if kind != models.KindIncome && kind != models.KindExpense {
+		return models.Category{}, errKind
+	}
+
+	name = strings.TrimSpace(name)
+
+	taken, err := workspaces.Scoped[models.Category](ctx, s.DB).Where("name", name).Exists(ctx)
+	if err != nil {
+		return models.Category{}, err
+	}
+
+	if taken {
+		return models.Category{}, errName
+	}
+
+	c := models.Category{Name: name, Kind: kind}
+	err = orm.Create(ctx, s.DB, &c)
+
+	return c, err
+}
+
+// ---- transactions ----
+
+// TxInput is a new transaction as the form sends it.
+type TxInput struct {
+	AccountID   int64
+	CategoryID  int64
+	Kind        string
+	Amount      string
+	Description string
+	Date        string
+}
+
+// TxFilter narrows the transaction list; zero values mean "any".
+type TxFilter struct {
+	From, To   string
+	CategoryID int64
+	AccountID  int64
+	Kind       string
+}
+
+// TxRow is a transaction with the names the list shows.
+type TxRow struct {
+	models.Transaction
+
+	AccountName  string `json:"accountName"`
+	CategoryName string `json:"categoryName"`
+}
+
+func validDate(s string) bool {
+	_, err := time.Parse(isoDate, s)
+	return err == nil
+}
+
+// Transactions lists the filtered transactions, newest first (at most 500).
+func (s *Service) Transactions(ctx context.Context, f TxFilter) ([]TxRow, error) {
+	q := workspaces.Scoped[models.Transaction](ctx, s.DB)
+
+	if f.From != "" && validDate(f.From) {
+		q = q.Where("occurred_on", ">=", f.From)
+	}
+
+	if f.To != "" && validDate(f.To) {
+		q = q.Where("occurred_on", "<=", f.To)
+	}
+
+	if f.CategoryID > 0 {
+		q = q.Where("category_id", f.CategoryID)
+	}
+
+	if f.AccountID > 0 {
+		q = q.Where("account_id", f.AccountID)
+	}
+
+	if f.Kind == models.KindIncome || f.Kind == models.KindExpense {
+		q = q.Where("kind", f.Kind)
+	}
+
+	txs, err := q.OrderBy("occurred_on", orm.Desc).OrderBy("id", orm.Desc).Limit(500).Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	accounts, err := s.Accounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	cats, err := s.Categories(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	an := map[int64]string{}
+	for _, a := range accounts {
+		an[a.ID] = a.Name
+	}
+
+	cn := map[int64]string{}
+	for _, c := range cats {
+		cn[c.ID] = c.Name
+	}
+
+	rows := make([]TxRow, len(txs))
+	for i := range txs {
+		t := &txs[i]
+		rows[i] = TxRow{Transaction: *t, AccountName: an[t.AccountID], CategoryName: cn[t.CategoryID.V]}
+	}
+
+	return rows, nil
+}
+
+// CreateTransaction records a transaction. The account and the category
+// must belong to the workspace, the amount is positive, and the Free plan
+// stops at its transactions per month. An expense may raise a budget alert.
+func (s *Service) CreateTransaction(ctx context.Context, in TxInput) (models.Transaction, error) {
+	if in.Kind != models.KindIncome && in.Kind != models.KindExpense {
+		return models.Transaction{}, errKind
+	}
+
+	if !validDate(in.Date) {
+		return models.Transaction{}, errDate
+	}
+
+	cents, err := ParseAmount(in.Amount)
+	if err != nil || cents <= 0 {
+		return models.Transaction{}, errAmountIn
+	}
+
+	accounts := workspaces.Scoped[models.Account](ctx, s.DB)
+	if ok, err := accounts.Where("id", in.AccountID).Exists(ctx); err != nil || !ok {
+		return models.Transaction{}, firstErr(err, errAccount)
+	}
+
+	t := models.Transaction{
+		AccountID: in.AccountID, Kind: in.Kind, AmountCents: cents,
+		Description: strings.TrimSpace(in.Description), OccurredOn: in.Date,
+	}
+
+	if in.CategoryID > 0 {
+		cats := workspaces.Scoped[models.Category](ctx, s.DB)
+		ok, err := cats.Where("id", in.CategoryID).Where("kind", in.Kind).Exists(ctx)
+		if err != nil || !ok {
+			return models.Transaction{}, firstErr(err, errCategory)
+		}
+
+		t.CategoryID = sql.Null[int64]{V: in.CategoryID, Valid: true}
+	}
+
+	lim, err := s.WS.Limits(ctx)
+	if err != nil {
+		return models.Transaction{}, err
+	}
+
+	from, to := monthBounds(MonthOf(in.Date))
+
+	n, err := workspaces.Scoped[models.Transaction](ctx, s.DB).WhereBetween("occurred_on", from, to).Count(ctx)
+	if err != nil {
+		return models.Transaction{}, err
+	}
+
+	if err := lim.CheckTransactions(int(n) + 1); err != nil {
+		return models.Transaction{}, err
+	}
+
+	if err := orm.Create(ctx, s.DB, &t); err != nil {
+		return t, err
+	}
+
+	if t.Kind == models.KindExpense && t.CategoryID.Valid {
+		if err := s.alertBudget(ctx, t.CategoryID.V, MonthOf(t.OccurredOn), t.AmountCents); err != nil {
+			return t, err
+		}
+	}
+
+	return t, nil
+}
+
+func firstErr(err, fallback error) error {
+	if err != nil {
+		return err
+	}
+
+	return fallback
+}
+
+// DeleteTransaction removes a transaction of the workspace.
+func (s *Service) DeleteTransaction(ctx context.Context, id int64) error {
+	n, err := workspaces.Scoped[models.Transaction](ctx, s.DB).Where("id", id).Delete(ctx)
+	if err == nil && n == 0 {
+		return errs.ErrNotFound
+	}
+
+	return err
+}
+
+// ---- budgets ----
+
+// BudgetStatus is a budget with what the month has spent against it.
+type BudgetStatus struct {
+	ID         int64  `json:"id"`
+	CategoryID int64  `json:"categoryId"`
+	Category   string `json:"category"`
+	LimitCents int64  `json:"limitCents"`
+	SpentCents int64  `json:"spentCents"`
+	Percent    int    `json:"percent"`
+}
+
+// SetBudget sets the monthly limit of an expense category (Pro).
+func (s *Service) SetBudget(ctx context.Context, categoryID int64, limit string) error {
+	lim, err := s.WS.Limits(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := lim.CheckBudgets(); err != nil {
+		return err
+	}
+
+	cents, err := ParseAmount(limit)
+	if err != nil || cents <= 0 {
+		return errAmountIn
+	}
+
+	ok, err := workspaces.Scoped[models.Category](
+		ctx,
+		s.DB,
+	).Where("id", categoryID).
+		Where("kind", models.KindExpense).
+		Exists(ctx)
+	if err != nil || !ok {
+		return firstErr(err, errExpense)
+	}
+
+	n, err := workspaces.Scoped[models.Budget](ctx, s.DB).Where("category_id", categoryID).
+		Update(ctx, orm.Set{"limit_cents": cents})
+	if err != nil || n > 0 {
+		return err
+	}
+
+	return orm.Create(ctx, s.DB, &models.Budget{CategoryID: categoryID, LimitCents: cents})
+}
+
+// DeleteBudget removes the budget of a category.
+func (s *Service) DeleteBudget(ctx context.Context, id int64) error {
+	n, err := workspaces.Scoped[models.Budget](ctx, s.DB).Where("id", id).Delete(ctx)
+	if err == nil && n == 0 {
+		return errs.ErrNotFound
+	}
+
+	return err
+}
+
+func (s *Service) spent(ctx context.Context, categoryID int64, month string) (int64, error) {
+	from, to := monthBounds(month)
+
+	return workspaces.Scoped[models.Transaction](ctx, s.DB).Where("category_id", categoryID).
+		Where("kind", models.KindExpense).WhereBetween("occurred_on", from, to).Sum[int64](ctx, "amount_cents")
+}
+
+// Budgets lists the budgets with what month has spent against each.
+func (s *Service) Budgets(ctx context.Context, month string) ([]BudgetStatus, error) {
+	budgets, err := workspaces.Scoped[models.Budget](ctx, s.DB).OrderBy("id", orm.Asc).Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	cats, err := s.Categories(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	names := map[int64]string{}
+	for _, c := range cats {
+		names[c.ID] = c.Name
+	}
+
+	out := make([]BudgetStatus, 0, len(budgets))
+
+	for _, b := range budgets {
+		spent, err := s.spent(ctx, b.CategoryID, month)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, BudgetStatus{
+			ID: b.ID, CategoryID: b.CategoryID, Category: names[b.CategoryID], LimitCents: b.LimitCents,
+			SpentCents: spent, Percent: int(spent * 100 / b.LimitCents),
+		})
+	}
+
+	return out, nil
+}
+
+// alertBudget emails the owners when delta (cents just added to the month's
+// spending of the category) made it cross 80% or 100% of the budget. It
+// compares the spending before and after, so no alert is ever sent twice.
+func (s *Service) alertBudget(ctx context.Context, categoryID int64, month string, delta int64) error {
+	b, err := workspaces.Scoped[models.Budget](ctx, s.DB).Where("category_id", categoryID).First(ctx)
+	if errors.Is(err, orm.ErrNotFound) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	spent, err := s.spent(ctx, categoryID, month)
+	if err != nil {
+		return err
+	}
+
+	before := spent - delta
+	percent := 0
+
+	for _, p := range []int64{80, 100} {
+		if before*100 < p*b.LimitCents && spent*100 >= p*b.LimitCents {
+			percent = int(p)
+		}
+	}
+
+	if percent == 0 {
+		return nil
+	}
+
+	ws, err := s.WS.Current(ctx)
+	if err != nil {
+		return err
+	}
+
+	cat, err := workspaces.Scoped[models.Category](ctx, s.DB).Find(ctx, categoryID)
+	if err != nil {
+		return err
+	}
+
+	owners, err := s.WS.OwnerEmails(ctx, ws.ID)
+	if err != nil {
+		return err
+	}
+
+	for _, to := range owners {
+		err := s.WS.Notify(ctx, appmail.BudgetAlert{
+			To: to, Workspace: ws.Name, Category: cat.Name, Percent: percent,
+			Spent: FormatAmount(spent, ws.Currency), Limit: FormatAmount(b.LimitCents, ws.Currency),
+			URL: s.URL + "/budgets",
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

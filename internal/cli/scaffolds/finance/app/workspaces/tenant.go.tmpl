@@ -1,0 +1,121 @@
+package workspaces
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/tenancy"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/models"
+)
+
+// This file and app/models/tenant.go are the only places that call the
+// tenancy package; adapt them if its API changes.
+
+// SessionKey is the session value that holds the current workspace id.
+const SessionKey = "workspace"
+
+// Scoped starts a query on T limited to the workspace of ctx. With no
+// workspace in ctx it matches nothing. Use it for every read, update and
+// delete of a domain table; inserts take the workspace from ctx in the
+// model's BeforeCreate.
+func Scoped[T any](ctx context.Context, ex database.Executor) orm.Query[T] {
+	return orm.QueryOf[T](ex).Scope(tenancy.Scope[T](ctx, "workspace_id"))
+}
+
+// WithTenant returns ctx acting for workspace id: jobs, commands and tests.
+func WithTenant(ctx context.Context, id int64) context.Context {
+	return tenancy.With(ctx, tenancy.ID(strconv.FormatInt(id, 10)))
+}
+
+// TenantID is the workspace id of ctx.
+func TenantID(ctx context.Context) (int64, bool) {
+	id, ok := tenancy.From(ctx)
+	if !ok {
+		return 0, false
+	}
+
+	n, err := strconv.ParseInt(string(id), 10, 64)
+
+	return n, err == nil
+}
+
+// Middleware resolves the workspace of each request from the session,
+// after auth.Required: a signed-in user with no valid current workspace
+// gets their first one (a personal workspace is created on the first
+// visit), then tenancy checks the membership (404 otherwise, so ids cannot
+// be probed) and the role of the user is added to the context for Can.
+func (s *Service) Middleware() func(http.Handler) http.Handler {
+	check := tenancy.Middleware(tenancy.Config{
+		Resolve: tenancy.Session(SessionKey),
+		Member: func(ctx context.Context, userID string, tenant tenancy.ID) (bool, error) {
+			_, ok, err := s.roleOf(ctx, userID, string(tenant))
+			return ok, err
+		},
+	})
+
+	return func(next http.Handler) http.Handler {
+		withRole := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			ws, _ := TenantID(ctx)
+
+			u, err := auth.UserFrom[models.User](ctx, "web")
+			if err != nil {
+				web.Fail(w, r, err)
+				return
+			}
+
+			role, _, err := s.roleOf(ctx, u.AuthID(), strconv.FormatInt(ws, 10))
+			if err != nil {
+				web.Fail(w, r, err)
+				return
+			}
+
+			next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, roleKey{}, role)))
+		})
+		guarded := check(withRole)
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := s.selectCurrent(r); err != nil {
+				web.Fail(w, r, err)
+				return
+			}
+
+			guarded.ServeHTTP(w, r)
+		})
+	}
+}
+
+// selectCurrent makes the session point at a workspace of the user.
+func (s *Service) selectCurrent(r *http.Request) error {
+	ctx := r.Context()
+
+	u, err := auth.UserFrom[models.User](ctx, "web")
+	if err != nil {
+		return err
+	}
+
+	if id, _ := tenancy.Session(SessionKey)(r); id != "" {
+		if _, member, err := s.roleOf(ctx, u.AuthID(), string(id)); err != nil || member {
+			return err
+		}
+	}
+
+	ws, err := s.Ensure(ctx, u)
+	if err != nil {
+		return err
+	}
+
+	return tenancy.Switch(r, SessionKey, tenancy.ID(strconv.FormatInt(ws.ID, 10)))
+}
+
+// Switch makes ws the current workspace of the request's session; the next
+// request still goes through the membership check.
+func Switch(r *http.Request, id int64) error {
+	return tenancy.Switch(r, SessionKey, tenancy.ID(strconv.FormatInt(id, 10)))
+}

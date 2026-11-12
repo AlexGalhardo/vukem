@@ -1,0 +1,94 @@
+package mail
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/webhook"
+
+	"{{.Module}}/app/models"
+)
+
+// ResendWebhookPath is where Resend sends email events: add the URL in the
+// Resend dashboard (Webhooks) with the email.bounced and email.complained
+// events, and set RESEND_WEBHOOK_SECRET to its signing secret (whsec_...).
+const ResendWebhookPath = "/webhooks/resend"
+
+// ResendWebhook serves the Resend event endpoint ahead of the router stack
+// (register it with r.UseServer): Resend is a server, so there is no session
+// or CSRF check, and the Svix signature is the authentication. A bounce,
+// a complaint or a suppression adds the recipients to email_suppressions,
+// which the mailer reads before every send. An empty secret refuses every
+// request (fail closed).
+func ResendWebhook(secret string, db *database.DB, log *slog.Logger) (func(http.Handler) http.Handler, error) {
+	if secret == "" {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != ResendWebhookPath {
+					next.ServeHTTP(w, r)
+					return
+				}
+
+				http.Error(w, "webhooks are not configured", http.StatusServiceUnavailable)
+			})
+		}, nil
+	}
+
+	verify, err := webhook.Standard(secret, webhook.StandardOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	handle := verify(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "unreadable body", http.StatusBadRequest)
+			return
+		}
+
+		ev, err := mail.ParseResendEvent(body)
+		if err != nil {
+			http.Error(w, "unknown event", http.StatusBadRequest)
+			return
+		}
+
+		if ev.Suppress() {
+			for _, addr := range ev.To {
+				if err := suppress(r, db, strings.ToLower(strings.TrimSpace(addr)), string(ev.Type)); err != nil {
+					log.ErrorContext(r.Context(), "resend webhook: suppress", "err", err)
+					http.Error(w, "try again", http.StatusInternalServerError) // Resend retries
+					return
+				}
+			}
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == ResendWebhookPath && r.Method == http.MethodPost {
+				handle.ServeHTTP(w, r)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}, nil
+}
+
+func suppress(r *http.Request, db *database.DB, addr, reason string) error {
+	ctx := r.Context()
+
+	known, err := orm.QueryOf[models.EmailSuppression](db).Where("address", addr).Exists(ctx)
+	if err != nil || known {
+		return err
+	}
+
+	return orm.Create(ctx, db, &models.EmailSuppression{Address: addr, Reason: reason})
+}

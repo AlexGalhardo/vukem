@@ -1,0 +1,59 @@
+package tests
+
+import (
+	"testing"
+
+	"{{.Module}}/app/finance"
+)
+
+func TestParseAmount(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in   string
+		want int64
+		ok   bool
+	}{
+		{"12.34", 1234, true},
+		{"12,34", 1234, true},
+		{"12", 1200, true},
+		{"0.5", 50, true},
+		{".5", 50, true},
+		{"1,234.56", 123456, true},
+		{"1.234,56", 123456, true},
+		{"1,234,567", 123456700, true},
+		{"-5", -500, true},
+		{"-$5.25", -525, true},
+		{"(5.00)", -500, true},
+		{" R$ 10,00 ", 1000, true},
+		{"1.005", 0, false},
+		{"", 0, false},
+		{"abc", 0, false},
+		{"99999999999999999999", 0, false},
+	} {
+		got, err := finance.ParseAmount(tc.in)
+		if (err == nil) != tc.ok || (tc.ok && got != tc.want) {
+			t.Errorf("ParseAmount(%q) = %d, %v; want %d, ok=%v", tc.in, got, err, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestFormatAmount(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		cents    int64
+		currency string
+		want     string
+	}{
+		{123456, "USD", "$1,234.56"},
+		{5, "USD", "$0.05"},
+		{-500, "BRL", "-R$5.00"},
+		{100000000, "EUR", "€1,000,000.00"},
+		{1000, "CHF", "CHF 10.00"},
+	} {
+		if got := finance.FormatAmount(tc.cents, tc.currency); got != tc.want {
+			t.Errorf("FormatAmount(%d, %s) = %q, want %q", tc.cents, tc.currency, got, tc.want)
+		}
+	}
+}

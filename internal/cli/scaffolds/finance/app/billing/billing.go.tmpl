@@ -1,0 +1,483 @@
+// Package billing sells the Pro plan of a workspace with Stripe Checkout,
+// lets the owner manage it in the Billing Portal and keeps the
+// workspace_subscriptions table in sync from Stripe webhooks. The Stripe
+// customer belongs to the workspace, not to a user.
+//
+// Access is granted from webhooks only, never from the Checkout success
+// page: develop against a Stripe sandbox (`stripe sandbox create`) and
+// forward its events with
+//
+//	stripe listen --forward-to localhost:3000/stripe/webhook
+package billing
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/contrib/stripe"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/orm"
+
+	"{{.Module}}/app/finance"
+	appmail "{{.Module}}/app/mail"
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/workspaces"
+	"{{.Module}}/config"
+)
+
+// WebhookPath is where Stripe sends events; register it in the Dashboard
+// (Developers → Webhooks) or with stripe listen.
+const WebhookPath = "/stripe/webhook"
+
+// TrialDays is the free trial of the first Pro subscription of a workspace.
+const TrialDays = 14
+
+var (
+	// ErrNotConfigured answers billing requests while STRIPE_KEY is unset
+	// (development only: production does not boot without it).
+	ErrNotConfigured = errs.New(http.StatusServiceUnavailable, "Billing is not configured.")
+
+	errUnsupportedCurrency = errs.New(http.StatusUnprocessableEntity, "This currency is not available.")
+	errAlreadySubscribed   = errs.New(
+		http.StatusConflict, "This workspace is already on Pro: manage it in the billing portal.",
+	)
+	errNoCustomer = errs.New(
+		http.StatusConflict, "This workspace has no billing account yet: choose a plan first.",
+	)
+)
+
+// Billing holds the Stripe client and the billing rules.
+type Billing struct {
+	DB *database.DB
+	WS *workspaces.Service
+	// Stripe is nil while STRIPE_KEY is unset (development only).
+	Stripe *stripe.Client
+	Config config.Billing
+	// URL is the public base URL Stripe sends customers back to (APP_URL).
+	URL string
+	Log *slog.Logger
+
+	webhook http.Handler
+}
+
+// New builds Billing from the app. Missing settings stop production at
+// boot; elsewhere billing answers 503 until they are set.
+func New(app *vukem.App, ws *workspaces.Service) (*Billing, error) {
+	cfg := config.LoadBilling(app.Source)
+	if err := cfg.Validate(); err != nil {
+		if app.Config.IsProduction() {
+			return nil, fmt.Errorf("billing: %w", err)
+		}
+
+		if app.Kind == vukem.KindWeb {
+			app.Log.Warn("billing is not configured", "err", err)
+		}
+	}
+
+	b := &Billing{DB: ws.DB, WS: ws, Config: cfg, Log: app.Log, URL: ws.URL}
+
+	var err error
+
+	if !cfg.Key.IsZero() {
+		var opts []stripe.Option
+		// STRIPE_API_BASE points the client at the fake API of the tests;
+		// it is ignored outside them, so the key only ever goes to Stripe.
+		if base := app.Source.Get("STRIPE_API_BASE"); base != "" && app.Kind == vukem.KindTest {
+			opts = append(opts, stripe.WithBaseURL(base))
+		}
+
+		if b.Stripe, err = stripe.New(cfg.Key.Reveal(), opts...); err != nil {
+			return nil, err
+		}
+
+		if strings.HasPrefix(cfg.Key.Reveal(), "sk_") {
+			app.Log.Warn("STRIPE_KEY is a secret key: use a restricted key (rk_) with only the billing permissions")
+		}
+	}
+
+	if !cfg.WebhookSecret.IsZero() {
+		c, err := app.Cache()
+		if err != nil {
+			return nil, err
+		}
+
+		// The cache remembers processed event ids: use a shared store
+		// (CACHE_STORE=database or Redis) when several instances run.
+		b.webhook, err = stripe.WebhookHandler(stripe.WebhookConfig{
+			Secret: cfg.WebhookSecret.Reveal(), Store: c.Store(), Bus: app.Events, Log: app.Log,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return b, nil
+}
+
+// Webhook serves Stripe webhooks at WebhookPath ahead of the router
+// stack: Stripe is a server, not a browser, so the endpoint has no session
+// or CSRF check. A valid Stripe-Signature is its authentication, and each
+// event id is processed once. Register it with r.UseServer.
+func (b *Billing) Webhook() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != WebhookPath {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if b.webhook == nil { // no STRIPE_WEBHOOK_SECRET: refuse (fail closed)
+				http.Error(w, "webhooks are not configured", http.StatusServiceUnavailable)
+				return
+			}
+
+			b.webhook.ServeHTTP(w, r)
+		})
+	}
+}
+
+// Subscription returns the subscription of workspace id that grants Pro,
+// else its latest one; ok is false when it never subscribed.
+func (b *Billing) Subscription(ctx context.Context, id int64) (sub models.WorkspaceSubscription, ok bool, err error) {
+	subs, err := orm.QueryOf[models.WorkspaceSubscription](b.DB).Where("workspace_id", id).Latest().Get(ctx)
+	if err != nil || len(subs) == 0 {
+		return models.WorkspaceSubscription{}, false, err
+	}
+
+	for i := range subs {
+		if subs[i].Valid() {
+			return subs[i], true, nil
+		}
+	}
+
+	return subs[0], true, nil
+}
+
+// customer returns the Stripe customer of ws, creating it on first use.
+func (b *Billing) customer(ctx context.Context, ws models.Workspace, email string) (string, error) {
+	if ws.StripeCustomerID.Valid {
+		return ws.StripeCustomerID.V, nil
+	}
+
+	cus, err := b.Stripe.CreateCustomer(ctx, stripe.Params{
+		"email": email, "name": ws.Name, "metadata": map[string]string{"workspace_id": strconv.FormatInt(ws.ID, 10)},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	n, err := orm.QueryOf[models.Workspace](b.DB).Where("id", ws.ID).WhereNull("stripe_customer_id").
+		Update(ctx, orm.Set{"stripe_customer_id": cus.ID})
+	if err != nil || n > 0 {
+		return cus.ID, err
+	}
+
+	// A concurrent request linked a customer first: use that one.
+	again, err := orm.QueryOf[models.Workspace](b.DB).Find(ctx, ws.ID)
+
+	return again.StripeCustomerID.V, err
+}
+
+// Checkout starts a Stripe Checkout Session for the Pro plan of the
+// workspace of ctx and returns its URL. The first subscription of a
+// workspace gets the TrialDays trial. currency (lower case) is optional.
+func (b *Billing) Checkout(ctx context.Context, ws models.Workspace, email, plan, currency string) (string, error) {
+	p, ok := b.Config.Plan(plan)
+	if !ok || p.Price == "" {
+		return "", errs.ErrNotFound
+	}
+
+	if currency != "" && !b.Config.Accepts(currency) {
+		return "", errUnsupportedCurrency
+	}
+
+	if b.Stripe == nil {
+		return "", ErrNotConfigured
+	}
+
+	sub, had, err := b.Subscription(ctx, ws.ID)
+	if err != nil {
+		return "", err
+	}
+
+	if had && sub.Valid() {
+		return "", errAlreadySubscribed // plan changes happen in the portal
+	}
+
+	customer, err := b.customer(ctx, ws, email)
+	if err != nil {
+		return "", err
+	}
+
+	id := strconv.FormatInt(ws.ID, 10)
+	data := stripe.Params{"metadata": map[string]string{"workspace_id": id}}
+
+	if !had {
+		data["trial_period_days"] = TrialDays
+	}
+
+	// A variable: two braces in a row would open a template action in this file.
+	item := stripe.Params{"price": p.Price, "quantity": 1}
+	params := stripe.Params{
+		"mode":                "subscription",
+		"customer":            customer,
+		"client_reference_id": id,
+		"line_items":          []stripe.Params{item},
+		"subscription_data":   data,
+		"success_url":         b.URL + "/billing?checkout=success",
+		"cancel_url":          b.URL + "/billing",
+	}
+	if currency != "" {
+		params["currency"] = currency
+	}
+
+	cs, err := b.Stripe.CreateCheckoutSession(ctx, params)
+	if err != nil {
+		return "", err
+	}
+
+	return cs.URL, nil
+}
+
+// Portal returns a Stripe Billing Portal URL where the owner changes plan,
+// updates payment details, sees invoices or cancels.
+func (b *Billing) Portal(ctx context.Context, ws models.Workspace) (string, error) {
+	if b.Stripe == nil {
+		return "", ErrNotConfigured
+	}
+
+	if !ws.StripeCustomerID.Valid {
+		return "", errNoCustomer
+	}
+
+	ps, err := b.Stripe.CreatePortalSession(ctx, ws.StripeCustomerID.V, b.URL+"/billing")
+	if err != nil {
+		return "", err
+	}
+
+	return ps.URL, nil
+}
+
+// invoice is the part of a Stripe invoice the app reads.
+type invoice struct {
+	Customer         string `json:"customer"`
+	AmountPaid       int64  `json:"amount_paid"`
+	Currency         string `json:"currency"`
+	HostedInvoiceURL string `json:"hosted_invoice_url"`
+	// Subscription is set by API versions before 2025-03-31.
+	Subscription string `json:"subscription"`
+	Parent       struct {
+		SubscriptionDetails struct {
+			Subscription string `json:"subscription"`
+		} `json:"subscription_details"`
+	} `json:"parent"`
+}
+
+func (i invoice) subscription() string {
+	if id := i.Parent.SubscriptionDetails.Subscription; id != "" {
+		return id
+	}
+
+	return i.Subscription
+}
+
+// HandleWebhook syncs subscriptions from Stripe events and sends the
+// billing emails (register it with events.Listen). A sync error answers
+// 500, so Stripe delivers the event again; a failed email is logged only.
+func (b *Billing) HandleWebhook(ctx context.Context, r stripe.Received) error {
+	ev := r.Event
+
+	switch ev.Type {
+	case "checkout.session.completed", "checkout.session.async_payment_succeeded":
+		cs, err := stripe.Decode[stripe.CheckoutSession](ev)
+		if err != nil {
+			return err
+		}
+
+		if cs.Mode != "subscription" {
+			return nil
+		}
+
+		if err := b.linkCustomer(ctx, cs); err != nil {
+			return err
+		}
+
+		// Delayed payment methods complete as "unpaid": access starts with
+		// checkout.session.async_payment_succeeded.
+		if cs.PaymentStatus != "paid" && cs.PaymentStatus != "no_payment_required" {
+			return nil
+		}
+
+		return b.SyncSubscription(ctx, cs.Subscription)
+
+	case "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted",
+		"customer.subscription.paused", "customer.subscription.resumed":
+		sub, err := stripe.Decode[stripe.Subscription](ev)
+		if err != nil {
+			return err
+		}
+
+		return b.SyncSubscription(ctx, sub.ID)
+
+	case "customer.subscription.trial_will_end":
+		sub, err := stripe.Decode[stripe.Subscription](ev)
+		if err != nil {
+			return err
+		}
+
+		return b.notify(ctx, sub.Customer, func(ws models.Workspace, to string) mail.Mailable {
+			return appmail.TrialEnding{To: to, Workspace: ws.Name, URL: b.URL + "/billing"}
+		})
+
+	case "invoice.paid", "invoice.payment_failed":
+		inv, err := stripe.Decode[invoice](ev)
+		if err != nil {
+			return err
+		}
+
+		if err := b.SyncSubscription(ctx, inv.subscription()); err != nil {
+			return err
+		}
+
+		if ev.Type == "invoice.payment_failed" {
+			return b.notify(ctx, inv.Customer, func(ws models.Workspace, to string) mail.Mailable {
+				return appmail.PaymentFailed{To: to, Workspace: ws.Name, URL: b.URL + "/billing"}
+			})
+		}
+
+		if inv.AmountPaid == 0 { // the zero invoice of a trial is no receipt
+			return nil
+		}
+
+		return b.notify(ctx, inv.Customer, func(ws models.Workspace, to string) mail.Mailable {
+			return appmail.Receipt{
+				To: to, Workspace: ws.Name, URL: inv.HostedInvoiceURL,
+				Amount: finance.FormatAmount(inv.AmountPaid, strings.ToUpper(inv.Currency)),
+			}
+		})
+	}
+
+	return nil
+}
+
+// notify emails the owners of the workspace behind a Stripe customer.
+func (b *Billing) notify(
+	ctx context.Context, customer string, build func(models.Workspace, string) mail.Mailable,
+) error {
+	ws, err := orm.QueryOf[models.Workspace](b.DB).Where("stripe_customer_id", customer).First(ctx)
+	if errors.Is(err, orm.ErrNotFound) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	owners, err := b.WS.OwnerEmails(ctx, ws.ID)
+	if err != nil {
+		return err
+	}
+
+	for _, to := range owners {
+		if err := b.WS.Notify(ctx, build(ws, to)); err != nil {
+			b.Log.WarnContext(ctx, "billing: email not sent", "workspace", ws.ID, "err", err)
+		}
+	}
+
+	return nil
+}
+
+// linkCustomer records the Checkout customer on the workspace named by
+// client_reference_id when it has none yet: a session can never move
+// another workspace's customer.
+func (b *Billing) linkCustomer(ctx context.Context, cs stripe.CheckoutSession) error {
+	id, err := strconv.ParseInt(cs.ClientRefID, 10, 64)
+	if err != nil || cs.Customer == "" {
+		return nil //nolint:nilerr // sessions created elsewhere have no workspace id
+	}
+
+	taken, err := orm.QueryOf[models.Workspace](b.DB).Where("stripe_customer_id", cs.Customer).Exists(ctx)
+	if err != nil || taken {
+		return err
+	}
+
+	_, err = orm.QueryOf[models.Workspace](b.DB).Where("id", id).WhereNull("stripe_customer_id").
+		Update(ctx, orm.Set{"stripe_customer_id": cs.Customer})
+
+	return err
+}
+
+// SyncSubscription stores the current state of subscription id. It is
+// fetched from Stripe rather than read from the event, because events can
+// arrive out of order and the latest state is what counts. A webhook has
+// no tenant: every query here names the workspace.
+func (b *Billing) SyncSubscription(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+
+	if b.Stripe == nil {
+		return ErrNotConfigured
+	}
+
+	sub, err := b.Stripe.GetSubscription(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	ws, err := orm.QueryOf[models.Workspace](b.DB).Where("stripe_customer_id", sub.Customer).First(ctx)
+	if errors.Is(err, orm.ErrNotFound) {
+		b.Log.WarnContext(ctx, "stripe subscription of an unknown customer", "subscription", sub.ID)
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	row := models.WorkspaceSubscription{
+		WorkspaceID: ws.ID, StripeSubscriptionID: sub.ID, Status: sub.Status, CancelAtPeriodEnd: sub.CancelAtPeriodEnd,
+	}
+
+	var periodEnd any
+
+	if len(sub.Items.Data) > 0 {
+		item := sub.Items.Data[0]
+		row.PriceID, row.UnitAmount = item.Price.ID, item.Price.UnitAmount*max(item.Quantity, 1)
+
+		if item.CurrentPeriodEnd > 0 {
+			end := time.Unix(item.CurrentPeriodEnd, 0).UTC()
+			row.CurrentPeriodEnd = orm.NullTime{Null: sql.Null[time.Time]{V: end, Valid: true}}
+			periodEnd = end
+		}
+	}
+
+	return b.DB.Tx(ctx, func(tx *database.Tx) error {
+		n, err := orm.QueryOf[models.WorkspaceSubscription](
+			tx,
+		).Where("stripe_subscription_id", sub.ID).
+			Update(ctx, orm.Set{
+				"workspace_id":         row.WorkspaceID,
+				"status":               row.Status,
+				"price_id":             row.PriceID,
+				"unit_amount":          row.UnitAmount,
+				"current_period_end":   periodEnd,
+				"cancel_at_period_end": row.CancelAtPeriodEnd,
+			})
+		if err != nil || n > 0 {
+			return err
+		}
+
+		return orm.Create(ctx, tx, &row)
+	})
+}

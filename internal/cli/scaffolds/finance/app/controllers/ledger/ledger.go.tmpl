@@ -1,0 +1,544 @@
+// Package ledger holds the finance pages: dashboard, transactions, accounts,
+// categories, budgets, CSV import, workspace settings and billing. Every
+// handler runs inside the workspace the tenant middleware resolved, so the
+// services only ever see that workspace's rows.
+package ledger
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/finance"
+	"{{.Module}}/app/jobs"
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/pages"
+	"{{.Module}}/app/requests"
+	"{{.Module}}/app/workspaces"
+)
+
+// Handlers serves the finance pages.
+type Handlers struct {
+	WS  *workspaces.Service
+	Fin *finance.Service
+}
+
+// New returns the handlers.
+func New(ws *workspaces.Service, fin *finance.Service) *Handlers { return &Handlers{WS: ws, Fin: fin} }
+
+func id(s string) int64 {
+	n, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	return n
+}
+
+// back answers a failed form: a plan limit sends the user to /billing, the
+// other rule violations (422, 409, 413) show their message on the page the
+// form is on. Everything else goes to the error handler.
+func back(c *web.Ctx, path string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	e, ok := errors.AsType[*errs.HTTPError](err)
+	if !ok || c.WantsJSON() {
+		return err
+	}
+
+	switch e.Status {
+	case http.StatusPaymentRequired:
+		inertia.Flash(c, "error", e.Message)
+		return c.Redirect("/billing")
+	case http.StatusUnprocessableEntity, http.StatusConflict, http.StatusRequestEntityTooLarge:
+		inertia.Flash(c, "error", e.Message)
+		return c.Redirect(path)
+	}
+
+	return err
+}
+
+func done(c *web.Ctx, path, message string) error {
+	inertia.Flash(c, "success", message)
+	return c.Redirect(path)
+}
+
+// can fails with a 403 unless the role of the user holds ability.
+func (h *Handlers) can(c *web.Ctx, ability string) error { return h.WS.Can(c.Context(), ability) }
+
+// ---- dashboard ----
+
+// Dashboard renders the charts of the month in ?month=YYYY-MM (default: this month).
+func (h *Handlers) Dashboard(c *web.Ctx) error {
+	month := c.Query("month")
+	if len(month) != 7 {
+		month = h.Fin.Month()
+	}
+
+	d, err := h.Fin.Dashboard(c.Context(), month)
+	if err != nil {
+		return err
+	}
+
+	return pages.Dashboard.Render(c, pages.DashboardProps{Dashboard: d})
+}
+
+// ---- transactions ----
+
+// Transactions lists the transactions with the filters of the query string.
+func (h *Handlers) Transactions(c *web.Ctx) error {
+	f := pages.TxFilters{
+		From: c.Query("from"), To: c.Query("to"), CategoryID: c.Query("categoryId"),
+		AccountID: c.Query("accountId"), Kind: c.Query("kind"),
+	}
+
+	rows, err := h.Fin.Transactions(c.Context(), finance.TxFilter{
+		From: f.From, To: f.To, CategoryID: id(f.CategoryID), AccountID: id(f.AccountID), Kind: f.Kind,
+	})
+	if err != nil {
+		return err
+	}
+
+	accounts, err := h.Fin.Accounts(c.Context())
+	if err != nil {
+		return err
+	}
+
+	cats, err := h.Fin.Categories(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return pages.Transactions.Render(c, pages.TransactionsProps{
+		Transactions: rows, Accounts: accounts, Categories: cats, Filters: f, Today: h.Fin.Today(),
+	})
+}
+
+// StoreTransaction records a transaction.
+func (h *Handlers) StoreTransaction(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityRecord); err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.TransactionSchema)
+	if err != nil {
+		return err
+	}
+
+	t, err := h.Fin.CreateTransaction(c.Context(), finance.TxInput{
+		AccountID: id(in.AccountID), CategoryID: id(in.CategoryID), Kind: in.Kind, Amount: in.Amount,
+		Description: in.Description, Date: in.Date,
+	})
+	if err != nil {
+		return back(c, "/transactions", err)
+	}
+
+	if c.WantsJSON() {
+		return c.Created("/transactions", t)
+	}
+
+	return done(c, "/transactions", "Transaction added.")
+}
+
+// DestroyTransaction deletes a transaction.
+func (h *Handlers) DestroyTransaction(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityRecord); err != nil {
+		return err
+	}
+
+	tid, err := c.ParamInt("transaction")
+	if err != nil {
+		return err
+	}
+
+	if err := h.Fin.DeleteTransaction(c.Context(), tid); err != nil {
+		return err
+	}
+
+	return done(c, "/transactions", "Transaction deleted.")
+}
+
+// ---- accounts, categories, budgets ----
+
+// Accounts lists the accounts.
+func (h *Handlers) Accounts(c *web.Ctx) error {
+	accounts, err := h.Fin.Accounts(c.Context())
+	if err != nil {
+		return err
+	}
+
+	lim, err := h.WS.Limits(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return pages.Accounts.Render(c, pages.AccountsProps{Accounts: accounts, Limits: lim})
+}
+
+// StoreAccount adds an account.
+func (h *Handlers) StoreAccount(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageData); err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.AccountSchema)
+	if err != nil {
+		return err
+	}
+
+	if _, err := h.Fin.CreateAccount(c.Context(), in.Name, in.Kind, in.Opening); err != nil {
+		return back(c, "/accounts", err)
+	}
+
+	return done(c, "/accounts", "Account added.")
+}
+
+// DestroyAccount deletes an account and its transactions.
+func (h *Handlers) DestroyAccount(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageData); err != nil {
+		return err
+	}
+
+	aid, err := c.ParamInt("account")
+	if err != nil {
+		return err
+	}
+
+	if err := h.Fin.DeleteAccount(c.Context(), aid); err != nil {
+		return err
+	}
+
+	return done(c, "/accounts", "Account deleted.")
+}
+
+// Categories lists the categories.
+func (h *Handlers) Categories(c *web.Ctx) error {
+	cats, err := h.Fin.Categories(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return pages.Categories.Render(c, pages.CategoriesProps{Categories: cats})
+}
+
+// StoreCategory adds a category.
+func (h *Handlers) StoreCategory(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageData); err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.CategorySchema)
+	if err != nil {
+		return err
+	}
+
+	if _, err := h.Fin.CreateCategory(c.Context(), in.Name, in.Kind); err != nil {
+		return back(c, "/categories", err)
+	}
+
+	return done(c, "/categories", "Category added.")
+}
+
+// Budgets lists the budgets of this month against what was spent.
+func (h *Handlers) Budgets(c *web.Ctx) error {
+	month := h.Fin.Month()
+
+	budgets, err := h.Fin.Budgets(c.Context(), month)
+	if err != nil {
+		return err
+	}
+
+	cats, err := h.Fin.Categories(c.Context())
+	if err != nil {
+		return err
+	}
+
+	lim, err := h.WS.Limits(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return pages.Budgets.Render(c, pages.BudgetsProps{
+		Budgets: budgets, Categories: cats, Month: month, Enabled: lim.Budgets,
+	})
+}
+
+// StoreBudget sets the monthly limit of a category.
+func (h *Handlers) StoreBudget(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageData); err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.BudgetSchema)
+	if err != nil {
+		return err
+	}
+
+	if err := h.Fin.SetBudget(c.Context(), id(in.CategoryID), in.Limit); err != nil {
+		return back(c, "/budgets", err)
+	}
+
+	return done(c, "/budgets", "Budget saved.")
+}
+
+// DestroyBudget removes a budget.
+func (h *Handlers) DestroyBudget(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageData); err != nil {
+		return err
+	}
+
+	bid, err := c.ParamInt("budget")
+	if err != nil {
+		return err
+	}
+
+	if err := h.Fin.DeleteBudget(c.Context(), bid); err != nil {
+		return err
+	}
+
+	return done(c, "/budgets", "Budget removed.")
+}
+
+// ---- CSV import ----
+
+func (h *Handlers) importPage(c *web.Ctx, preview *finance.Preview) error {
+	accounts, err := h.Fin.Accounts(c.Context())
+	if err != nil {
+		return err
+	}
+
+	imports, err := h.Fin.Imports(c.Context())
+	if err != nil {
+		return err
+	}
+
+	lim, err := h.WS.Limits(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return pages.Import.Render(c, pages.ImportProps{
+		Accounts: accounts, Imports: imports, Preview: preview,
+		DateFormats: finance.DateFormats, Enabled: lim.CSVImport,
+	})
+}
+
+// Import shows the upload form and the latest imports.
+func (h *Handlers) Import(c *web.Ctx) error { return h.importPage(c, nil) }
+
+// UploadImport reads the statement and shows its columns to map.
+func (h *Handlers) UploadImport(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageData); err != nil {
+		return err
+	}
+
+	file, header, err := c.FormFile("file")
+	if err != nil {
+		return errs.New(http.StatusUnprocessableEntity, "Choose a CSV file.")
+	}
+
+	defer file.Close()
+
+	content, err := io.ReadAll(io.LimitReader(file, finance.MaxImportBytes+1))
+	if err != nil {
+		return err
+	}
+
+	preview, err := h.Fin.StartImport(c.Context(), id(c.FormValue("accountId")), header.Filename, content)
+	if err != nil {
+		return back(c, "/import", err)
+	}
+
+	return h.importPage(c, &preview)
+}
+
+// ConfirmImport queues the job that creates the transactions.
+func (h *Handlers) ConfirmImport(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageData); err != nil {
+		return err
+	}
+
+	iid, err := c.ParamInt("import")
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.ImportMappingSchema)
+	if err != nil {
+		return err
+	}
+
+	err = h.Fin.ConfirmImport(c.Context(), iid, finance.Mapping{
+		Date: in.Date, Description: in.Description, Amount: in.Amount, Category: in.Category,
+		DateFormat: in.DateFormat, Invert: in.Invert == "true",
+	}, func(ctx context.Context, ws, imp int64) error {
+		return h.Fin.Queue.Dispatch(ctx, jobs.ImportCSV{WorkspaceID: ws, ImportID: imp})
+	})
+	if err != nil {
+		return back(c, "/import", err)
+	}
+
+	return done(c, "/import", "Import queued: it appears below when it finishes.")
+}
+
+// ---- workspace ----
+
+func view(w models.Workspace) pages.WorkspaceView {
+	return pages.WorkspaceView{ID: w.ID, Name: w.Name, Currency: w.Currency}
+}
+
+// Workspace shows the settings, the members and the invites.
+func (h *Handlers) Workspace(c *web.Ctx) error {
+	ws, err := h.WS.Current(c.Context())
+	if err != nil {
+		return err
+	}
+
+	members, err := h.WS.Members(c.Context())
+	if err != nil {
+		return err
+	}
+
+	invites, err := h.WS.Invites(c.Context())
+	if err != nil {
+		return err
+	}
+
+	lim, err := h.WS.Limits(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return pages.Workspace.Render(c, pages.WorkspaceProps{
+		Workspace: view(ws), Members: members, Invites: invites, Limits: lim,
+		CanManage: h.can(c, workspaces.AbilityManageMembers) == nil,
+	})
+}
+
+// UpdateWorkspace renames the workspace and sets its currency.
+func (h *Handlers) UpdateWorkspace(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageMembers); err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.WorkspaceSchema)
+	if err != nil {
+		return err
+	}
+
+	if err := h.WS.Rename(c.Context(), in.Name, in.Currency); err != nil {
+		return back(c, "/workspace", err)
+	}
+
+	return done(c, "/workspace", "Workspace saved.")
+}
+
+// CreateWorkspace makes another workspace owned by the user and switches to it.
+func (h *Handlers) CreateWorkspace(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.WorkspaceSchema)
+	if err != nil {
+		return err
+	}
+
+	ws, err := h.WS.Create(c.Context(), u, in.Name, in.Currency)
+	if err != nil {
+		return back(c, "/workspace", err)
+	}
+
+	if err := workspaces.Switch(c.Request(), ws.ID); err != nil {
+		return err
+	}
+
+	return done(c, "/dashboard", "Workspace created.")
+}
+
+// SwitchWorkspace makes another workspace of the user the current one. The
+// next request checks the membership, so a workspace that is not theirs is a 404.
+func (h *Handlers) SwitchWorkspace(c *web.Ctx) error {
+	wid, err := c.ParamInt("workspace")
+	if err != nil {
+		return err
+	}
+
+	if err := workspaces.Switch(c.Request(), wid); err != nil {
+		return err
+	}
+
+	return c.Redirect("/dashboard")
+}
+
+// Invite emails an invitation.
+func (h *Handlers) Invite(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageMembers); err != nil {
+		return err
+	}
+
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.InviteSchema)
+	if err != nil {
+		return err
+	}
+
+	if err := h.WS.Invite(c.Context(), u, in.Email, in.Role); err != nil {
+		return back(c, "/workspace", err)
+	}
+
+	return done(c, "/workspace", "Invitation sent.")
+}
+
+// RemoveMember takes a member out of the workspace.
+func (h *Handlers) RemoveMember(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityManageMembers); err != nil {
+		return err
+	}
+
+	uid, err := c.ParamInt("user")
+	if err != nil {
+		return err
+	}
+
+	if err := h.WS.RemoveMember(c.Context(), uid); err != nil {
+		return back(c, "/workspace", err)
+	}
+
+	return done(c, "/workspace", "Member removed.")
+}
+
+// ShowInvite asks the signed-in user to confirm the invitation.
+func (*Handlers) ShowInvite(c *web.Ctx) error {
+	return pages.InviteAccept.Render(c, pages.InviteAcceptProps{Token: c.Param("token")})
+}
+
+// AcceptInvite joins the workspace of the invitation and switches to it.
+func (h *Handlers) AcceptInvite(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	ws, err := h.WS.Accept(c.Context(), u, c.Param("token"))
+	if err != nil {
+		return err
+	}
+
+	if err := workspaces.Switch(c.Request(), ws.ID); err != nil {
+		return err
+	}
+
+	return done(c, "/dashboard", "Welcome to "+ws.Name+".")
+}

@@ -1,0 +1,51 @@
+package workspaces
+
+import (
+	"context"
+	"slices"
+
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/authz"
+
+	"{{.Module}}/app/models"
+)
+
+// Abilities, checked with Service.Can in the controllers.
+const (
+	// AbilityRecord: add, edit and delete transactions.
+	AbilityRecord = "transactions.record"
+	// AbilityManageData: accounts, categories, budgets and imports.
+	AbilityManageData = "data.manage"
+	// AbilityManageMembers: invite and remove people, rename the workspace.
+	AbilityManageMembers = "members.manage"
+	// AbilityManageBilling: choose a plan, open the billing portal.
+	AbilityManageBilling = "billing.manage"
+)
+
+// grants says which roles hold each ability.
+var grants = map[string][]string{
+	AbilityRecord:        {models.RoleOwner, models.RoleAdmin, models.RoleMember},
+	AbilityManageData:    {models.RoleOwner, models.RoleAdmin},
+	AbilityManageMembers: {models.RoleOwner, models.RoleAdmin},
+	AbilityManageBilling: {models.RoleOwner},
+}
+
+func newGate() *authz.Gate[models.User] {
+	gate := authz.New(func(ctx context.Context) (models.User, error) {
+		return auth.UserFrom[models.User](ctx, "web")
+	})
+
+	for ability, roles := range grants {
+		gate.Define(ability, func(ctx context.Context, _ models.User) bool {
+			return slices.Contains(roles, Role(ctx))
+		})
+	}
+
+	return gate
+}
+
+// Can returns nil when the signed-in user may perform ability in the
+// workspace of ctx, else a 403.
+func (s *Service) Can(ctx context.Context, ability string) error {
+	return s.Gate.Authorize(ctx, ability, nil)
+}
