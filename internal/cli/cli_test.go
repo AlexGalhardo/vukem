@@ -974,6 +974,11 @@ func main() {
 }
 `
 
+// serveBuildBudget is how long a build and a restart may take: each of the two
+// waits of the serve test includes a go build, which on a loaded Windows
+// machine alone takes tens of seconds.
+const serveBuildBudget = 3 * time.Minute
+
 func TestServeRestartsOnChange(t *testing.T) { //nolint:paralleltest // t.Setenv passes PORT to the app
 	requireGo(t)
 
@@ -994,18 +999,26 @@ func TestServeRestartsOnChange(t *testing.T) { //nolint:paralleltest // t.Setenv
 
 	var out bytes.Buffer
 
+	sw := &syncWriter{w: &out}
+
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("serve output:\n%s", sw.String())
+		}
+	})
+
 	go func() {
-		done <- Run(ctx, []string{"serve", "-poll", "100ms"}, Env{Dir: dir, Stdout: &syncWriter{w: &out}, Stderr: &syncWriter{w: &out}})
+		done <- Run(ctx, []string{"serve", "-poll", "100ms"}, Env{Dir: dir, Stdout: sw, Stderr: sw})
 	}()
 
-	waitFor(t, port, "v1", 60*time.Second)
+	waitFor(t, port, "v1", serveBuildBudget)
 
 	main := strings.Replace(httpApp, `"v1"`, `"v2"`, 1)
 	if err := os.WriteFile(filepath.Join(dir, "cmd", "app", "main.go"), []byte(main), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	waitFor(t, port, "v2", 60*time.Second)
+	waitFor(t, port, "v2", serveBuildBudget)
 
 	cancel()
 
