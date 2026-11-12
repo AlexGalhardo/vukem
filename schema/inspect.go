@@ -262,16 +262,19 @@ func inspectSQLite(ctx context.Context, ex database.Executor, t *TableInfo) erro
 		t.PrimaryKey = append(t.PrimaryKey, p.name)
 	}
 
-	var autoinc bool
+	var (
+		autoinc   bool
+		createSQL sql.NullString
+	)
 
 	t.SQLite = &SQLiteInfo{}
 
 	if err := ex.QueryRowContext(
 		ctx,
-		`SELECT COALESCE(INSTR(LOWER(sql), 'autoincrement'), 0) > 0, COALESCE(INSTR(LOWER(sql), 'check'), 0) > 0
+		`SELECT COALESCE(INSTR(LOWER(sql), 'autoincrement'), 0) > 0, COALESCE(INSTR(LOWER(sql), 'check'), 0) > 0, sql
 		FROM sqlite_master WHERE type = 'table' AND name = ?`,
 		t.Name,
-	).Scan(&autoinc, &t.SQLite.HasCheck); err != nil {
+	).Scan(&autoinc, &t.SQLite.HasCheck, &createSQL); err != nil {
 		return err
 	}
 
@@ -297,6 +300,15 @@ func inspectSQLite(ctx context.Context, ex database.Executor, t *TableInfo) erro
 
 	for i := range t.Columns {
 		c := &t.Columns[i]
+
+		// Some engines (Turso) report the declared type without its size:
+		// the CREATE TABLE text still has it.
+		if !strings.Contains(c.Type, "(") {
+			if full := declaredType(createSQL.String, c.Name); strings.HasPrefix(full, c.Type+"(") {
+				c.Type = full
+			}
+		}
+
 		c.Kind, c.Length, c.Precision, c.Scale = kindOf(
 			"sqlite",
 			c.Type,
@@ -309,6 +321,137 @@ func inspectSQLite(ctx context.Context, ex database.Executor, t *TableInfo) erro
 	}
 
 	return sqliteForeignKeys(ctx, ex, t)
+}
+
+// declaredType reads the type of column from a CREATE TABLE statement,
+// lower-cased and without spaces inside its parentheses ("varchar(40)",
+// "numeric(10,2)"). It returns "" when it cannot find the column, so the
+// caller keeps what the pragma said.
+func declaredType(createSQL, column string) string {
+	_, list, ok := strings.Cut(createSQL, "(")
+	if !ok {
+		return ""
+	}
+
+	for _, def := range splitTopLevel(list) {
+		name, rest := readIdent(strings.TrimSpace(def))
+		if strings.EqualFold(name, column) {
+			return typeOf(rest)
+		}
+	}
+
+	return ""
+}
+
+// splitTopLevel splits the column list at the commas that sit outside
+// parentheses and quotes, and stops at the parenthesis that closes the list.
+func splitTopLevel(body string) []string {
+	var (
+		out   []string
+		depth int
+		start int
+		until byte // the byte that ends the quoted identifier or string being read
+	)
+
+	for i := range len(body) {
+		c := body[i]
+
+		switch {
+		case until != 0:
+			if c == until {
+				until = 0
+			}
+		case c == '\'' || c == '"' || c == '`':
+			until = c
+		case c == '[':
+			until = ']'
+		case c == '(':
+			depth++
+		case c == ')' && depth == 0:
+			return append(out, body[start:i])
+		case c == ')':
+			depth--
+		case c == ',' && depth == 0:
+			out = append(out, body[start:i])
+			start = i + 1
+		}
+	}
+
+	return out
+}
+
+const sqlSpace = " \t\r\n"
+
+// readIdent reads one identifier (bare, "quoted", `quoted` or [bracketed])
+// from the start of s and returns it with the rest.
+func readIdent(s string) (name, rest string) {
+	if s == "" {
+		return "", ""
+	}
+
+	if closing := map[byte]byte{'"': '"', '`': '`', '[': ']'}[s[0]]; closing != 0 {
+		if end := strings.IndexByte(s[1:], closing); end >= 0 {
+			return s[1 : end+1], s[end+2:]
+		}
+
+		return "", ""
+	}
+
+	end := strings.IndexAny(s, sqlSpace+"(")
+	if end < 0 {
+		return s, ""
+	}
+
+	return s[:end], s[end:]
+}
+
+// columnConstraintWords end the type name in a column definition.
+var columnConstraintWords = []string{
+	"primary", "not", "null", "default", "check", "unique", "references", "constraint", "collate", "generated", "as",
+}
+
+// typeOf reads "name" or "name (args)" from the text after a column name.
+func typeOf(rest string) string {
+	var words []string
+
+	for {
+		rest = strings.TrimLeft(rest, sqlSpace)
+		if rest == "" || rest[0] == '(' {
+			break
+		}
+
+		end := strings.IndexAny(rest, sqlSpace+"(")
+		if end < 0 {
+			end = len(rest)
+		}
+
+		word := strings.ToLower(rest[:end])
+		if slices.Contains(columnConstraintWords, word) {
+			return strings.Join(words, " ")
+		}
+
+		words = append(words, word)
+		rest = rest[end:]
+	}
+
+	typ := strings.Join(words, " ")
+
+	rest = strings.TrimLeft(rest, sqlSpace)
+	if typ == "" || rest == "" || rest[0] != '(' {
+		return typ
+	}
+
+	if end := strings.IndexByte(rest, ')'); end > 0 {
+		typ += strings.Map(func(r rune) rune {
+			if strings.ContainsRune(sqlSpace, r) {
+				return -1
+			}
+
+			return r
+		}, strings.ToLower(rest[:end+1]))
+	}
+
+	return typ
 }
 
 func sqliteIndexes(ctx context.Context, ex database.Executor, t *TableInfo) error {
@@ -362,7 +505,9 @@ func sqliteIndexes(ctx context.Context, ex database.Executor, t *TableInfo) erro
 					return err
 				}
 
-				if !c.Valid {
+				// SQLite answers NULL for an expression; Turso answers its text.
+				if !c.Valid ||
+					!slices.ContainsFunc(t.Columns, func(col ColumnInfo) bool { return col.Name == c.String }) {
 					info.Expression = true
 					return nil
 				}
