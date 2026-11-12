@@ -762,3 +762,20 @@ func TestWorkspaceSettingsPreserveTheSharedSwitcher(t *testing.T) {
 		PropEquals("workspaceDetails.name", ana.Workspace.Name).
 		PropEquals("workspace.role", "owner")
 }
+
+func TestDashboardKeepsEveryMonthlyTotal(t *testing.T) {
+	t.Parallel()
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	acc := firstAccount(t, app, ana)
+	for i := 1; i <= 6; i++ {
+		date := "2026-0" + strconv.Itoa(i) + "-10"
+		addTransaction(t, ana, acc, 0, "income", "10.00", date).AssertRedirect("/transactions")
+		addTransaction(t, ana, acc, 0, "expense", "1.00", date).AssertRedirect("/transactions")
+	}
+	page := ana.Client.Inertia("").Get("/dashboard?month=2026-06").AssertOK().AssertInertia("Dashboard")
+	for i := range 6 {
+		prefix := "dashboard.months." + strconv.Itoa(i)
+		page.PropEquals(prefix+".incomeCents", float64(1000)).PropEquals(prefix+".expenseCents", float64(100))
+	}
+}
