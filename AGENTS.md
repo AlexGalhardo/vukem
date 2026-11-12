@@ -39,7 +39,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 | `docs/` | design docs, one per area, and the roadmap `PLAN.md` |
 | `.config/` | git-cliff, GoReleaser, Compose and the `protect-main` ruleset ([layout](docs/tooling.md#repository-layout)) |
 | `.github/` | workflows, templates, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT |
-| `internal/tools/` | repo tooling (apicheck, commitlint, configref, covergate, fixinline, labelsync, modcheck, release, snippetcheck) |
+| `internal/tools/` | repo tooling (apicheck, commitlint, configref, covergate, fixinline, labelsync, modcheck, release, snippetcheck, starterdeps) |
 | `drivers/*` | optional driver modules, one Go module each (list: `go.work`) |
 | `contrib/*` | optional feature modules, one Go module each (list: `go.work`) |
 | `.claude/rules/` | path-scoped rules for agents (Go, tests, security, workflows, release…) |
