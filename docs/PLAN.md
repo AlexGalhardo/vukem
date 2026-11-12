@@ -157,7 +157,7 @@ Applies to **every** task:
   → verify: tests each; path traversal attempt on `Static` → 404.
 - [x] **P.4.5** `/up` health route.
   → verify: test returns 200 after boot.
-- [x] **P.4.6** JSON response helpers (`JSON`, `Created` + `Location`, `Accepted`, `NoContent`, `Problem`), 405 with `Allow`, automatic `HEAD`, `api.JSONOnly()` (415, body limit).
+- [x] **P.4.6** JSON response helpers (`JSON`, `Created` + `Location`, `Accepted`, `NoContent`, `Problem`), 405 with `Allow`, automatic `HEAD`, `middleware.JSONOnly()` (415, body limit).
   → verify: the status table in [docs/api.md](api.md#errors) is covered by tests.
 - [x] **P.4.7** `ETag`/`If-None-Match` (304) and `If-Match` (412) helpers, gzip middleware.
   → verify: conditional request tests.
@@ -583,7 +583,7 @@ Applies to **every** task:
 - [x] **B.5.5** Supply chain: cosign keyless signing of release artifacts, SBOM published, actions pinned by SHA, OpenSSF Scorecard ≥ 7.
   → verify: `cosign verify-blob` in release workflow; Scorecard badge.
 - [x] **B.5.3** Performance baseline (router, ORM, render, full request) vs net/http, chi, echo.
-  → verify: `docs/benchmarks.md` committed.
+  → verify: baseline committed in [performance.md](performance.md).
 - [x] **B.5.4** Docs completeness: every package has overview + examples; guides for each starter.
   → verify: checklist.
 
