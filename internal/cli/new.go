@@ -51,6 +51,8 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	templ := set.Bool("templ", false, "HTMX starter with templ components instead of html/template views")
 	minimal := set.Bool("minimal", false, "HTMX starter without a database: no posts, uploads or migrations, no SQLite")
 	noInstall := set.Bool("no-install", false, "skip installing frontend dependencies")
+	example := set.String("example", "", "example app: todo (the default without a terminal), finance or none")
+	noExample := set.Bool("no-example", false, "same as --example none")
 	pmFlag := set.String(
 		"pm", "",
 		"JavaScript package manager: npm, bun, pnpm or yarn (default: the first of bun, npm, pnpm, yarn on PATH)",
@@ -79,6 +81,8 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			templ:       *templ,
 			minimal:     *minimal,
 			noInstall:   *noInstall,
+			example:     *example,
+			noExample:   *noExample,
 			std: standardsOpts{
 				standards: *standards,
 				license:   strings.ToLower(strings.TrimSpace(*license)),
@@ -93,6 +97,8 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 type newOpts struct {
 	module, framework, inertiaFW, pmFlag, assetsImage string
 	apiOnly, templ, minimal, noInstall                bool
+	noExample                                         bool
+	example                                           string
 	std                                               standardsOpts
 }
 
@@ -116,13 +122,26 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 		return fmt.Errorf("%s already exists", name)
 	}
 
+	kind, err := chooseExample(env, o.example, o.noExample, o.minimal)
+	if err != nil {
+		return err
+	}
+
 	st := stack{kind: "minimal"}
-	if o.minimal {
+
+	switch {
+	case o.minimal:
 		if o.apiOnly || o.templ || o.inertiaFW != "" {
 			return usagef("--minimal is an HTMX starter: drop --api, --templ and --inertia")
 		}
-	} else if st, err = chooseStack(env, o.apiOnly, o.templ, o.inertiaFW); err != nil {
-		return err
+	case kind == exampleFinance:
+		if st, err = financeStack(o); err != nil {
+			return err
+		}
+	default:
+		if st, err = chooseStack(env, o.apiOnly, o.templ, o.inertiaFW); err != nil {
+			return err
+		}
 	}
 
 	askStandards(env, &std)
@@ -149,6 +168,17 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 		return err
 	}
 
+	switch kind {
+	case exampleTodo:
+		if err := applyExample(&project, st); err != nil {
+			return err
+		}
+	case exampleFinance:
+		if err := scaffoldFinance(ctx, &project, dir, data); err != nil {
+			return err
+		}
+	}
+
 	if err := writeDocker(dir, st.kind, pm, o.assetsImage); err != nil {
 		return err
 	}
@@ -172,6 +202,11 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 
 	if err := writeAppKey(&project, config.GenerateKey(), false); err != nil {
 		return err
+	}
+
+	// After writeAppKey: the app needs its key to boot and type the pages.
+	if kind == exampleTodo && st.kind == "inertia" {
+		refreshPageProps(ctx, &project)
 	}
 
 	gitInit(ctx, env, &project)

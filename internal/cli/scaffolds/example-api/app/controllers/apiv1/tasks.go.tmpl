@@ -1,0 +1,110 @@
+package apiv1
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/AlexGalhardo/vukem/api"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/requests"
+	"{{.Module}}/app/resources"
+)
+
+// Tasks is the to-do example JSON resource controller.
+type Tasks struct {
+	db *database.DB
+}
+
+// NewTasks returns the tasks controller.
+func NewTasks(db *database.DB) *Tasks { return &Tasks{db: db} }
+
+// Index lists tasks with ?filter[title]=, ?filter[done]=, ?sort=, ?page= and ?per_page=.
+func (t *Tasks) Index(c *web.Ctx) error {
+	req, err := api.Query(c, orm.QueryOf[models.Task](t.db),
+		api.Filters("title", "done"),
+		api.Sorts("title", "created_at", "-id"),
+		api.PerPage(20, 100),
+	)
+	if err != nil {
+		return err
+	}
+
+	page, err := req.Paginate(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return api.Page(c, page, resources.Task)
+}
+
+// Show returns one task.
+func (t *Tasks) Show(c *web.Ctx) error {
+	task, err := t.find(c)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, resources.Task(task))
+}
+
+// Store creates a task.
+func (t *Tasks) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.TaskSchema)
+	if err != nil {
+		return err
+	}
+
+	task := models.Task{Title: in.Title, Done: in.Done}
+	if err := orm.Create(c.Context(), t.db, &task); err != nil {
+		return err
+	}
+
+	return c.Created("/api/v1/tasks/"+strconv.FormatInt(task.ID, 10), resources.Task(task))
+}
+
+// Update changes a task.
+func (t *Tasks) Update(c *web.Ctx) error {
+	task, err := t.find(c)
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.TaskSchema)
+	if err != nil {
+		return err
+	}
+
+	task.Title, task.Done = in.Title, in.Done
+	if err := orm.Update(c.Context(), t.db, &task); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, resources.Task(task))
+}
+
+// Destroy deletes a task.
+func (t *Tasks) Destroy(c *web.Ctx) error {
+	task, err := t.find(c)
+	if err != nil {
+		return err
+	}
+
+	if err := orm.Delete(c.Context(), t.db, &task); err != nil {
+		return err
+	}
+
+	return c.NoContent()
+}
+
+func (t *Tasks) find(c *web.Ctx) (models.Task, error) {
+	id, err := c.ParamInt("task")
+	if err != nil {
+		return models.Task{}, err
+	}
+
+	return orm.QueryOf[models.Task](t.db).Find(c.Context(), id)
+}

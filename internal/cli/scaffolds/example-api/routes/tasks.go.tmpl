@@ -1,0 +1,43 @@
+package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/controllers/apiv1"
+)
+
+// Tasks is the to-do example JSON resource: anyone can read, token holders write.
+func Tasks(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	tasks := apiv1.NewTasks(db)
+
+	r.Group("/api/v1", func(g *router.Group) {
+		g.Use(middleware.JSONOnly())
+		g.Get("/tasks", tasks.Index).Name("tasks.index")
+		g.Get("/tasks/{task}", tasks.Show).Name("tasks.show")
+
+		g.Group("", func(w *router.Group) {
+			// A token writes only when it was issued with AbilityWrite
+			// (app/controllers/apiv1/abilities.go).
+			w.Use(auth.Required(acc.API), auth.Ability(acc.API, apiv1.AbilityWrite))
+			w.Post("/tasks", tasks.Store).Name("tasks.store")
+			w.Patch("/tasks/{task}", tasks.Update).Name("tasks.update")
+			w.Delete("/tasks/{task}", tasks.Destroy).Name("tasks.destroy")
+		})
+	}).Name("api.v1.")
+
+	return nil
+}

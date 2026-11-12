@@ -104,6 +104,14 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				t.Fatalf("key:generate --if-missing = %d\n%s%s", code, out, errOut)
 			}
 
+			// The to-do example is the default: its pages, and its types in page-props.ts.
+			requireFile(t, project, "resources/js/pages/Tasks/Index."+st.page)
+			requireFile(t, project, "resources/js/pages/Tasks/Edit."+st.page)
+
+			if props := read(t, project, "resources/js/page-props.ts"); !strings.Contains(props, `"Tasks/Index"`) {
+				t.Errorf("page-props.ts lacks the to-do pages:\n%s", props)
+			}
+
 			run("go", "test", "./...")
 
 			if code, out, errOut := vukem(t, project, "install:auth", "--2fa"); code != 0 ||

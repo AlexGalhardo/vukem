@@ -1,0 +1,17 @@
+{{define "title"}}Edit task{{end}}
+{{define "content"}}
+<h1>Edit task</h1>
+<form method="post" action="{{route "tasks.update" "task" .ID}}">
+	{{csrfField}}
+	<input type="hidden" name="_method" value="PUT">
+	<label>Title
+		<input name="title" value="{{or (old "title") .Title}}" required>
+	</label>
+	{{with error "title"}}<p class="error">{{.}}</p>{{end}}
+	<label>
+		<input type="checkbox" name="done" {{if .Done}}checked{{end}}>
+		Done
+	</label>
+	<button type="submit">Save</button>
+</form>
+{{end}}

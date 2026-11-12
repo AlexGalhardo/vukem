@@ -1,0 +1,23 @@
+package pages
+
+import (
+	"github.com/AlexGalhardo/vukem/inertia"
+
+	"{{.Module}}/app/models"
+)
+
+// The typed pages of the to-do example (resources/js/pages/Tasks).
+var (
+	TasksIndex = inertia.Define[TasksIndexProps]("Tasks/Index")
+	TasksEdit  = inertia.Define[TaskProps]("Tasks/Edit")
+)
+
+// TasksIndexProps are the props of Tasks/Index.
+type TasksIndexProps struct {
+	Tasks []models.Task `json:"tasks"`
+}
+
+// TaskProps are the props of Tasks/Edit.
+type TaskProps struct {
+	Task models.Task `json:"task"`
+}

@@ -253,6 +253,10 @@ func TestNewProjectEndToEnd(t *testing.T) {
 
 	requireGovulncheckTool(t, project)
 
+	// The to-do example is the default; its tests run with go test ./... below.
+	requireFile(t, project, "app/controllers/task_controller.go")
+	requireFile(t, project, "resources/views/tasks/index.html")
+
 	// An unset APP_ENV, or APP_ENV=production in .env (not the process),
 	// must keep the embedded views even with a resources/ folder on disk.
 	envTest := filepath.Join(project, "resources", "env_test.go")
@@ -625,6 +629,7 @@ func TestNewAPIProjectEndToEnd(t *testing.T) {
 		"route:list",
 	); code != 0 ||
 		!strings.Contains(out, "api.v1.posts.index") ||
+		!strings.Contains(out, "api.v1.tasks.index") ||
 		!strings.Contains(out, "api.v1.tokens.store") {
 		t.Fatalf("route:list = %d\n%s%s", code, out, errOut)
 	}

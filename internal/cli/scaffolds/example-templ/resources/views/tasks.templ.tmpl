@@ -1,0 +1,81 @@
+package views
+
+import "{{.Module}}/app/models"
+
+// TasksIndex lists the tasks and holds the new-task form.
+templ TasksIndex(tasks []models.Task) {
+	@Layout("Tasks") {
+		<h1>Tasks</h1>
+		<form method="post" action={ route(ctx, "tasks.store") }>
+			@csrfField()
+			<label>
+				New task
+				<input
+					name="title"
+					value={ old(ctx, "title", "") }
+					required
+					if fieldError(ctx, "title") != "" {
+						aria-invalid="true"
+					}
+				/>
+			</label>
+			if msg := fieldError(ctx, "title"); msg != "" {
+				<p class="error">{ msg }</p>
+			}
+			<button type="submit">Add</button>
+		</form>
+		<ul class="list">
+			for _, task := range tasks {
+				<li>
+					if task.Done {
+						<s>{ task.Title }</s>
+					} else {
+						{ task.Title }
+					}
+					<a href={ route(ctx, "tasks.edit", "task", task.ID) }>Edit</a>
+					<button
+						type="button"
+						class="link danger"
+						hx-delete={ route(ctx, "tasks.destroy", "task", task.ID) }
+						hx-target="closest li"
+						hx-swap="outerHTML"
+						hx-confirm="Delete this task?"
+					>Delete</button>
+				</li>
+			}
+			if len(tasks) == 0 {
+				<li class="empty">Nothing to do.</li>
+			}
+		</ul>
+	}
+}
+
+// TasksEdit is the edit form, re-filled with the old input after a failed
+// submission.
+templ TasksEdit(task models.Task) {
+	@Layout("Edit task") {
+		<h1>Edit task</h1>
+		<form method="post" action={ route(ctx, "tasks.update", "task", task.ID) }>
+			@csrfField()
+			<input type="hidden" name="_method" value="PUT"/>
+			<label>
+				Title
+				<input name="title" value={ old(ctx, "title", task.Title) } required/>
+			</label>
+			if msg := fieldError(ctx, "title"); msg != "" {
+				<p class="error">{ msg }</p>
+			}
+			<label>
+				<input
+					type="checkbox"
+					name="done"
+					if task.Done {
+						checked
+					}
+				/>
+				Done
+			</label>
+			<button type="submit">Save</button>
+		</form>
+	}
+}
