@@ -14,7 +14,7 @@ You will learn:
 
 ## Versions
 
-Vukem uses [Semantic Versioning](https://semver.org/): `vMAJOR.MINOR.PATCH`. Until `v1.0.0`, a minor release (`v0.40.0`) may still change APIs; each such change is listed in the changelog with an upgrade guide. From `v1.0.0` on, the promise below applies.
+Vukem uses [Semantic Versioning](https://semver.org/): `vMAJOR.MINOR.PATCH`. Until `v1.0.0`, a minor release (`v0.42.0`) may still change APIs; each such change is listed in the changelog with an upgrade guide. From `v1.0.0` on, the promise below applies.
 
 Every release:
 
@@ -22,12 +22,12 @@ Every release:
 - passes the full CI gate first: lint, tests on Linux, macOS and Windows, the race detector, `govulncheck`, the documentation snippet check and the Postgres integration tests;
 - is an annotated tag pushed on its own; tags never move.
 
-Optional modules (`drivers/*`, `contrib/*`) are released with their own tags (`contrib/stripe/v0.4.1`) and require the core version they were tested with. Upgrade the core first, then the modules.
+Optional modules (`drivers/*`, `contrib/*`) are released with their own tags (`contrib/stripe/v0.5.3`) and require the core version they were tested with. Upgrade the core first, then the modules.
 
 To upgrade an app:
 
 ```bash title="terminal"
-go get github.com/AlexGalhardo/vukem@v0.40.0
+go get github.com/AlexGalhardo/vukem@v0.42.0
 go mod tidy
 go test ./...
 ```
