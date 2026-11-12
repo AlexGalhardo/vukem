@@ -19,6 +19,9 @@ func TestToolEnvDoesNotWaitForGrandchildren(t *testing.T) {
 		child := exec.Command(os.Args[0], "-test.run=^TestToolEnvDoesNotWaitForGrandchildren$")
 		child.Env = append(os.Environ(), "VUKEM_CLI_TOOL_HELPER=grandchild")
 		child.Stdout = os.Stdout // inherits the pipe toolEnv reads
+		// Not the test's TempDir: Windows cannot delete a directory a live
+		// process stands in, and the grandchild outlives the test.
+		child.Dir = os.TempDir()
 
 		if err := child.Start(); err != nil {
 			os.Exit(3)
@@ -26,9 +29,6 @@ func TestToolEnvDoesNotWaitForGrandchildren(t *testing.T) {
 
 		os.Exit(0)
 	case "grandchild":
-		// The working directory it inherits is the test's TempDir, which Windows
-		// cannot delete while a process stands in it: leave it, then say so.
-		_ = os.Chdir(os.TempDir())
 		_ = os.WriteFile(os.Getenv("VUKEM_CLI_TOOL_MARKER"), nil, 0o600)
 
 		time.Sleep(grandchildLife)
