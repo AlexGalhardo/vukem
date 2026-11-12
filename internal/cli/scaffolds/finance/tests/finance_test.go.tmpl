@@ -222,6 +222,22 @@ func TestFirstVisitCreatesAWorkspaceAndWelcomes(t *testing.T) {
 	vukemtest.AssertDatabaseHas(t, app, "memberships", map[string]any{"user_id": u.ID, "role": "owner"})
 }
 
+// Empty collections must remain JSON arrays: chart components consume them directly.
+func TestEmptyDashboardCollectionsAreArrays(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	page := ana.Client.Inertia("").Get("/dashboard").AssertOK().AssertInertia("Dashboard")
+	for _, key := range []string{"dashboard.categories", "dashboard.budgets"} {
+		value, ok := page.Prop(key)
+		rows, array := value.([]any)
+		if !ok || !array || rows == nil || len(rows) != 0 {
+			t.Errorf("%s = %#v, want an empty JSON array", key, value)
+		}
+	}
+}
+
 func TestRecordATransactionAndSeeItOnTheDashboard(t *testing.T) {
 	t.Parallel()
 

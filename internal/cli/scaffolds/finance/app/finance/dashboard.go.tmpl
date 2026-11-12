@@ -55,7 +55,7 @@ func (s *Service) Dashboard(ctx context.Context, month string) (Dashboard, error
 		return Dashboard{}, err
 	}
 
-	d := Dashboard{Currency: ws.Currency, Month: month}
+	d := Dashboard{Currency: ws.Currency, Month: month, Categories: []CategorySpend{}}
 
 	opening, err := workspaces.Scoped[models.Account](ctx, s.DB).Sum[int64](ctx, "opening_cents")
 	if err != nil {
