@@ -129,6 +129,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			continue
 		}
 
+		// Printed before the work: a step the CI kills shows the module it died in.
+		fmt.Fprintf(out, "apicheck: %s against %s\n", m.Path, base)
+
 		changes, err := compare(ctx, root, filepath.Join(tmp, strconv.Itoa(i)), m, base, apidiff, *report == "")
 		if errors.Is(err, errDiffTimeout) && *report != "" {
 			// The report is informative: say what was not compared instead of
@@ -303,8 +306,10 @@ func compare(
 
 // diffTimeout bounds the comparison of two exports: apidiff can loop forever
 // on some generic types (orm after v0.41.0, with x/exp up to 20261109), and an
-// unbounded step only ends when the CI kills the job, with no output.
-var diffTimeout = 3 * time.Minute
+// unbounded step only ends when the CI kills the job, with no output. The
+// loop also grows memory until the runner kills it (about 2 minutes), while a
+// whole green v0 report of every module takes about 1 minute.
+var diffTimeout = time.Minute
 
 // errDiffTimeout reports that apidiff did not finish comparing a module.
 var errDiffTimeout = errors.New("apidiff did not finish comparing the exports")
