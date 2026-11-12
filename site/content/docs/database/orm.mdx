@@ -610,6 +610,83 @@ if n == 0 {
 `Incr` takes a number, never SQL text, so there is nothing to inject. For other expressions, use `db.ExecContext` with `database.Rebind`.
 
 
+## Joins, aggregates and subqueries
+
+Joins name the other model as a type parameter, so its table and columns are checked against its metadata. The result stays `[]T`: read other tables' columns with `SelectAs` and `Scan[R]`, which maps result columns to the fields of any struct by name (a column the struct has no field for is an error, so a misspelt alias shows up in a test).
+
+```go
+type AuthorTotal struct {
+	Name  string
+	Total int64
+}
+
+rows, err := orm.QueryOf[models.Post](db).
+	InnerJoin[models.User]("users.id", "=", "posts.user_id").
+	SelectAs("users.name", "name").
+	SelectExpr(orm.Sum("posts.views"), "total").
+	GroupBy("users.name").
+	Having(orm.Sum("posts.views"), ">", 100).
+	Scan[AuthorTotal](ctx)
+```
+
+| Group | Methods |
+| --- | --- |
+| Join | `InnerJoin[J](left, op, right)`, `LeftJoin[J](...)`, `JoinRelation(name)`, `LeftJoinRelation(name)` |
+| Aggregate | `Distinct()`, `GroupBy(cols...)`, `Having(orm.Sum("col"), ">", 100)`, `HavingRaw`; terminals `Sum[V]`, `Avg`, `Min[V]`, `Max[V]` |
+| Subquery | `WhereExists(sub)`, `WhereNotExists(sub)`, `WhereInQuery(col, sub)`, `WhereNotInQuery`, `WhereColumn(left, op, right)`, and `sub.WhereOuter[Outer](col, op, outerCol)` to correlate |
+| Relation filters | `WhereHas[R](relation, fn)`, `WhereDoesntHave[R](relation, fn)` (see [relations](/docs/database/relations)) |
+| Raw | `orm.Raw[R](ctx, ex, sql, args...)` and `orm.RawEach[R]` for typed `SELECT`s |
+
+- With a join, the model's own columns and its soft delete filter are qualified with the table. Joining a table twice (a self join) is an error: use `orm.Raw`. `Update` and `Delete` refuse joins; filter with `WhereHas` or `WhereInQuery`.
+- A join on a "many" relation repeats the rows of the model: use `Distinct()` or `WhereHas`, an `EXISTS` subquery that never repeats rows and pages correctly. `CursorPaginate` refuses joins and `GroupBy`.
+- `Get`, `First`, `Each` and `Count` refuse a query with `SelectAs`, `SelectExpr` or `GroupBy`: read it with `Scan`.
+- `Sum` of no rows is zero; `Min`, `Max` and `Avg` of no rows are `orm.ErrNotFound`. A `Sum` over a join on a "many" relation counts each parent once per child: aggregate over a `GroupBy` instead. Encrypted columns cannot be grouped or aggregated.
+- `WhereInQuery` needs a subquery that selects one column. `orm.Raw` rebinds `?` with `database.RebindChecked`, so an unterminated literal is an error, and it never puts the whole query text in an error.
+
+## Upsert
+
+```go
+err := orm.Upsert(ctx, db, &user, orm.OnConflict{Columns: []string{"email"}, Update: []string{"name"}})
+err = orm.UpsertMany(ctx, db, users, orm.OnConflict{Columns: []string{"email"}, DoNothing: true})
+```
+
+One statement: `INSERT ... ON CONFLICT (cols) DO UPDATE` on PostgreSQL and SQLite, `INSERT ... ON DUPLICATE KEY UPDATE` on MySQL and MariaDB. `Columns` is required; an empty `Update` means every writable column except the key, `created_at` and `Columns`, and `updated_at` is always refreshed.
+
+- **No hooks run.** The database, not the ORM, decides between insert and update.
+- MySQL has no conflict target: any unique index of the table triggers the update, so make `Columns` the columns of the index you mean.
+- **Soft deletes.** An upsert never revives a row in the trash: it returns `orm.ErrConflict` (`row is trashed; Restore it first`). Call `orm.Restore` first.
+- A clash on another unique index is `orm.ErrConflict`. `UpsertMany` writes no keys back and batches in one transaction.
+
+## Optimistic locking
+
+Mark one `int64` column `orm:"version"` and `Update` stops losing concurrent changes:
+
+```go
+type Article struct {
+	orm.Model
+	Title   string
+	Version int64 `orm:"version"`
+}
+```
+
+`Create` starts the version at 1. `Update` adds `version = version + 1` to the `SET` and `AND version = ?` (the version the struct holds) to the `WHERE`. When no row matches, one more query tells the cases apart: the row changed since it was read (`orm.ErrStale`, HTTP 409) or it is gone (`orm.ErrNotFound`, 404). The version has to travel with the payload: a form that does not send it back gets version 0 and fails with `ErrStale`. `Query.Update` and `Delete` do not compare the version.
+
+## Typed columns
+
+Optional codegen on top of the string API. `vukem codegen:models` writes one variable per table with a typed reference for every column, and `Filter`, `OrFilter`, `FilterJoined` and `Sort` turn them into the same `Where*` and `OrderBy` calls. The app lists its models, because core cannot discover them:
+
+```go title="bootstrap/app.go"
+vukem.WithModels(orm.ModelOf[models.User](), orm.ModelOf[models.Post]())
+```
+
+```go
+users, err := orm.QueryOf[models.User](db).
+	Filter(cols.Users.Active.Eq(true), cols.Users.Age.Gte(18)).
+	Sort(cols.Users.CreatedAt.Desc()).Get(ctx)
+```
+
+The compiler rejects `cols.Users.Email.Eq(42)`. The generated file is `app/models/cols/cols_gen.go`; `vukem codegen:models -check` fails in CI when it is out of date. A column of a generic type (`orm.JSON[T]`, `sql.Null[T]`) is generated as `any`. See the [command reference](/docs/cli/reference-runtime#vukem-codegenmodels).
+
 ## Soft deletes
 
 Embed `orm.SoftDeletes` and add `t.SoftDeletes()` to the migration. The model gains a `DeletedAt orm.NullTime` column, and:
