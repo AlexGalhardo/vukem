@@ -32,11 +32,17 @@ func TestDockerfileStaysPortable(t *testing.T) {
 	}
 }
 
+// The images are matched by shape, not by digest: starterdeps moves the pins
+// to the latest stable release every week.
+var (
+	pinnedBuildImage   = regexp.MustCompile(`(?m)^FROM golang:\S+@sha256:[0-9a-f]{64} AS build$`)
+	pinnedRuntimeImage = regexp.MustCompile(`(?m)^FROM alpine:\S+@sha256:[0-9a-f]{64}$`)
+)
+
 func TestWriteDocker(t *testing.T) {
 	t.Parallel()
 
 	common := []string{
-		"FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build",
 		"COPY go.mod go.sum ./",
 		// .buildtags is read at build time, so later edits reach the image.
 		`.buildtags`,
@@ -126,6 +132,10 @@ func TestWriteDocker(t *testing.T) {
 			}
 
 			got := read(t, dir, "Dockerfile")
+			if !pinnedBuildImage.MatchString(got) {
+				t.Errorf("Dockerfile lacks a digest-pinned golang build stage:\n%s", got)
+			}
+
 			for _, w := range append(common, tt.want...) {
 				if !strings.Contains(got, w) {
 					t.Errorf("Dockerfile lacks %q:\n%s", w, got)
@@ -245,14 +255,18 @@ func TestAssetsImageStaysOffTheRuntime(t *testing.T) {
 		"bun install --frozen-lockfile",
 		"COPY --from=assets /src/resources/public/build resources/public/build",
 		"ENV CGO_ENABLED=0",
-		"FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Dockerfile lacks %q:\n%s", want, got)
 		}
 	}
 
-	runtime := got[strings.LastIndex(got, "FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"):]
+	loc := pinnedRuntimeImage.FindStringIndex(got)
+	if loc == nil {
+		t.Fatalf("Dockerfile lacks a digest-pinned alpine runtime stage:\n%s", got)
+	}
+
+	runtime := got[loc[0]:]
 	for _, banned := range []string{"bun", "lilypond", "ffmpeg", "debian", "bookworm"} {
 		if strings.Contains(strings.ToLower(runtime), banned) {
 			t.Errorf("runtime stage contains %q:\n%s", banned, runtime)
