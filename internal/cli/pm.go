@@ -38,9 +38,9 @@ type jsPM struct {
 // --frozen-lockfile, which Yarn 2+ replaced with --immutable, and bun
 // matches bunImage so the image and the developer's machine agree.
 const (
-	npmVersion  = "12.2.0"
+	npmVersion  = "12.2.2"
 	bunVersion  = "1.4.4"
-	pnpmVersion = "12.14.0"
+	pnpmVersion = "12.20.0"
 	yarnVersion = "1.22.22"
 )
 
