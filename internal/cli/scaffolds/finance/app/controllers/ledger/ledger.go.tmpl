@@ -416,7 +416,7 @@ func (h *Handlers) Workspace(c *web.Ctx) error {
 	}
 
 	return pages.Workspace.Render(c, pages.WorkspaceProps{
-		Workspace: view(ws), Members: members, Invites: invites, Limits: lim,
+		WorkspaceDetails: view(ws), Members: members, Invites: invites, Limits: lim,
 		CanManage: h.can(c, workspaces.AbilityManageMembers) == nil,
 	})
 }

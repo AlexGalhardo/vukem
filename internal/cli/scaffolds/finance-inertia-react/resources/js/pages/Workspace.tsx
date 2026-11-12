@@ -5,8 +5,8 @@ import Field from "../components/Field";
 import { Card, Select, danger, primary } from "../components/ui";
 import type { Page } from "../page-props";
 
-export default function Workspace({ workspace, members, invites, limits, canManage }: Page<"Workspace">) {
-  const settings = useForm({ name: workspace.name, currency: workspace.currency });
+export default function Workspace({ workspaceDetails, members, invites, limits, canManage }: Page<"Workspace">) {
+  const settings = useForm({ name: workspaceDetails.name, currency: workspaceDetails.currency });
   const invite = useForm({ email: "", role: "member" });
   const create = useForm({ name: "", currency: "USD" });
 
@@ -28,7 +28,7 @@ export default function Workspace({ workspace, members, invites, limits, canMana
   return (
     <>
       <Head title="Workspace" />
-      <h1 className="text-2xl font-semibold">{workspace.name}</h1>
+      <h1 className="text-2xl font-semibold">{workspaceDetails.name}</h1>
       <Card title="Settings">
         <form onSubmit={save} className="grid gap-3 sm:grid-cols-3">
           <Field label="Name" required disabled={!canManage} value={settings.data.name} onChange={(e) => settings.setData("name", e.target.value)} error={settings.errors.name} />

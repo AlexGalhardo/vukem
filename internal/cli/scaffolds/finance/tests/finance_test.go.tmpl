@@ -751,3 +751,14 @@ func TestAdminRevenueSumsTheActiveSubscriptions(t *testing.T) {
 	ana.Client.Get("/admin/revenue").AssertNotFound()
 	app.Client(t).Get("/admin/revenue").AssertRedirect("/login")
 }
+
+func TestWorkspaceSettingsPreserveTheSharedSwitcher(t *testing.T) {
+	t.Parallel()
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	ana.Client.Inertia("").Get("/workspace").AssertOK().AssertInertia("Workspace").
+		PropEquals("workspace.current.id", float64(ana.Workspace.ID)).
+		PropEquals("workspaceDetails.id", float64(ana.Workspace.ID)).
+		PropEquals("workspaceDetails.name", ana.Workspace.Name).
+		PropEquals("workspace.role", "owner")
+}

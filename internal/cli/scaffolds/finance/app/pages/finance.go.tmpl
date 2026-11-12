@@ -92,11 +92,11 @@ type ImportProps struct {
 
 // WorkspaceProps are the props of Workspace.
 type WorkspaceProps struct {
-	Workspace WorkspaceView       `json:"workspace"`
-	Members   []workspaces.Member `json:"members"`
-	Invites   []models.Invite     `json:"invites"`
-	Limits    workspaces.Limits   `json:"limits"`
-	CanManage bool                `json:"canManage"`
+	WorkspaceDetails WorkspaceView       `json:"workspaceDetails"`
+	Members          []workspaces.Member `json:"members"`
+	Invites          []models.Invite     `json:"invites"`
+	Limits           workspaces.Limits   `json:"limits"`
+	CanManage        bool                `json:"canManage"`
 }
 
 // InviteAcceptProps are the props of InviteAccept.
