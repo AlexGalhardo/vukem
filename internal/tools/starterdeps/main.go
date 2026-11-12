@@ -6,15 +6,19 @@
 //	go run ./internal/tools/starterdeps -write   # update the pins in place
 //
 // Pins covered: every dependency of internal/cli/starter/package.json and
-// internal/cli/scaffolds/inertia-*/package.json, the markdownlint-cli2,
-// Biome and React Email versions, and the protobuf, connect and buf versions
-// make:proto suggests. Not covered (still bumped by hand or Dependabot): the
-// Dockerfile image digests, the pinned GitHub Actions of the generated
-// workflows, the package manager versions in pm.go and the framework's own
-// contrib tags (stripeVersion, studioVersion).
+// internal/cli/scaffolds/inertia-*/package.json; the Go constants for
+// markdownlint-cli2, Biome, React Email, htmx, protobuf, connect, buf, the
+// package managers (pm.go) and the contrib tags (stripeVersion,
+// studioVersion); every name:tag@sha256 image under internal/cli and
+// .config/docker; every "uses: owner/repo@sha # vX.Y.Z" action; and Bun in
+// the toolchain Dockerfile (version and both checksums). -write also syncs
+// the old versions mentioned in docs/*.md and site/content/docs.
 //
 // Latest stable is the registry's "latest" tag when it has no pre-release
-// suffix, otherwise the highest version without one. Rules on top of that:
+// suffix, otherwise the highest version without one; for actions it is the
+// newest non-draft, non-prerelease release; for images the newest tag of the
+// same shape and major line (golang also on its minor, which must match
+// go.mod). Rules on top of that:
 //
 //   - htmx follows the newest 4.x (decision F2 in docs/brainstorming.md; npm
 //     keeps the 4 line under the "next" tag) and never jumps major. Updating
@@ -23,6 +27,7 @@
 //   - TypeScript stays on 6.x in the Vue and Svelte starters until vue-tsc and
 //     svelte-check list 7 in their typescript peerDependencies. An open-ended
 //     ">=5" does not count: it says nothing about 7 being supported.
+//   - Bun follows the oven/bun image tag; yarn stays on Classic 1.x.
 //   - Within one package.json every chosen version must satisfy the
 //     peerDependencies of the others, so -write never produces a set that
 //     cannot install.
