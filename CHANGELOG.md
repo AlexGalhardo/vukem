@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-11-12
+
+### Added
+
+- **redis:** Add a shared presence store and run the conformance suites ([5980f29](https://github.com/AlexGalhardo/vukem/commit/5980f2980a0d7aaf3ad33fc2bee4a122a019e30e))
+- **turso:** Add the experimental Turso driver ([7d88df1](https://github.com/AlexGalhardo/vukem/commit/7d88df10b6a0a7b7a4994c75c65ce888d516034d))
+- **studio:** Add the vukem-studio module with loopback guard, session and binary ([cdc94a3](https://github.com/AlexGalhardo/vukem/commit/cdc94a3df6e91fa56cdaabca895f20597eadd8da))
+- **cli:** Add the studio command ([b8be220](https://github.com/AlexGalhardo/vukem/commit/b8be22023aeb2bd7834cddc3bd6eaa20cfe82e17))
+- **studio:** Add the MongoDB and Redis explorers with fixed filters and command lists ([a17e0ab](https://github.com/AlexGalhardo/vukem/commit/a17e0abc2331e769a8ed0c3854e90378d6e7b2be))
+- **studio:** Refresh pages live, gate editing behind --write and export ([9cf1d99](https://github.com/AlexGalhardo/vukem/commit/9cf1d99158b90cf3bef5c8fcf768c51703e04737))
+- **mysql:** Map duplicate entries to a unique violation by error number ([4ce03f7](https://github.com/AlexGalhardo/vukem/commit/4ce03f707092d7c98a04df712c8a9e384cf86522))
+- **studio:** Add the SQL table browser and the read-only console ([e079656](https://github.com/AlexGalhardo/vukem/commit/e0796563c7abbd04f035d15e55c1912a288a9751))
+- **examples:** Scale the api example rate limits with RATE_LIMIT_SCALE ([fe4c528](https://github.com/AlexGalhardo/vukem/commit/fe4c528975518a3352c0280e1a570323f3379000))
+- **examples:** Add a task_flow bench scenario to the api example ([15f241e](https://github.com/AlexGalhardo/vukem/commit/15f241eb50c615a90171bcabcd74070a90d5591f))
+- **studio:** Edit, insert and delete SQL rows with --write, plus export, row counts and incoming references ([9a0694b](https://github.com/AlexGalhardo/vukem/commit/9a0694b6dd35218add138f64ca9cd740876e805c))
+- **studio:** Read the SQL catalog through schema.Inspect ([bdbbc62](https://github.com/AlexGalhardo/vukem/commit/bdbbc62d510c8f178b96d2a23164a76e0c7fffdd))
+
+### Changed
+
+- **studio:** Isolate the schema catalog behind an Introspector interface ([1a86ceb](https://github.com/AlexGalhardo/vukem/commit/1a86ceb8b0a4c2e8a6514c0e1bed1b918d4289b3))
+- **websocket:** List presence members with Here and refuse on store errors ([9a9fcf1](https://github.com/AlexGalhardo/vukem/commit/9a9fcf124be866a9e3d7927faf9c4d574a9f82e2))
+
+### Fixed
+
+- **apicheck:** Bound the apidiff comparison so a module that loops never hangs CI ([6b5a857](https://github.com/AlexGalhardo/vukem/commit/6b5a857f64d70ca9a8e1ff95ca391b89bf7d2166))
+- **apicheck:** Stop a looping comparison before the runner kills the step ([257d218](https://github.com/AlexGalhardo/vukem/commit/257d2181e51acbf44c769853e92443df42331e1b))
+- **cli:** Pin contrib/stripe v0.5.3 in install:billing ([997bd2b](https://github.com/AlexGalhardo/vukem/commit/997bd2bff47542ca48a6f51d173c1f9c728b7df0))
+- **engine:** Treat a process that is already exiting as killed on Windows ([d081c5e](https://github.com/AlexGalhardo/vukem/commit/d081c5e44db21a31c7aa8ccf03389cec147083b4))
+- **studio:** Refuse anything but a read in the read-only SQL console ([907186c](https://github.com/AlexGalhardo/vukem/commit/907186cd824108e3df01dcc229c90b3f79405ea4))
+- **studio:** Refuse functions with side effects in the read-only console ([9eaf995](https://github.com/AlexGalhardo/vukem/commit/9eaf9959076bb3390453a5762e562abe3f2dc8ea))
+- **studio:** Treat a table name schema cannot inspect as not found ([1b90b8f](https://github.com/AlexGalhardo/vukem/commit/1b90b8f9601f7cf1cf58c3de94fc4e44c4ccfd3e))
+- **studio:** Refuse console statements from a non-loopback peer ([819a2cd](https://github.com/AlexGalhardo/vukem/commit/819a2cd8e904a64b620c7ecf4c5e6c988916ce12))
+- **studio:** Mark the session cookie Secure when it comes over TLS ([2da6546](https://github.com/AlexGalhardo/vukem/commit/2da654616e176cff73cba0a99afabf0075961dd2))
+- **studio:** Match Redis command names in ASCII only ([6efdb26](https://github.com/AlexGalhardo/vukem/commit/6efdb266c6195d1428071a311615edca646c570f))
+- **schema:** Read a SQLite column's declared size from its CREATE TABLE when the pragma drops it ([91d3ab0](https://github.com/AlexGalhardo/vukem/commit/91d3ab021da642e1e623e1548c8246d1cf3e1713))
+
 ## [0.41.0] - 2026-11-11
 
 ### Added
@@ -1503,7 +1539,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/AlexGalhardo/vukem/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/AlexGalhardo/vukem/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/AlexGalhardo/vukem/compare/v0.39.1...v0.40.0
 [0.39.1]: https://github.com/AlexGalhardo/vukem/compare/v0.39.0...v0.39.1
