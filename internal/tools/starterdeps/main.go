@@ -168,26 +168,57 @@ func plan(ctx context.Context, c *client, root string) ([]row, error) {
 		}
 	}
 
-	return followRows(pins, rows)
+	return followRows(ctx, c, pins, rows)
 }
 
-// followRows adds the pins that copy the tag version of a Docker pin.
-func followRows(pins []pin, rows []row) ([]row, error) {
-	for _, p := range pins {
+// followRows adds the pins that copy the tag version of a Docker pin. A
+// follow of "repo#asset" is the SHA-256 of that release asset of the version
+// the image carries (the Bun checksums in the toolchain Dockerfile).
+func followRows(ctx context.Context, c *client, pins []pin, rows []row) ([]row, error) {
+	for i := range pins {
+		p := &pins[i]
 		if p.follow == "" {
 			continue
 		}
 
-		i := slices.IndexFunc(rows, func(r row) bool { return r.kind == dockerImg && r.pkg == p.follow })
-		if i < 0 {
-			return nil, fmt.Errorf("%s follows %s, which is not pinned", p.pkg, p.follow)
+		repo, asset, hasAsset := strings.Cut(p.follow, "#")
+
+		j := slices.IndexFunc(rows, func(r row) bool { return r.kind == dockerImg && r.pkg == repo })
+		if j < 0 {
+			return nil, fmt.Errorf("%s follows %s, which is not pinned", p.pkg, repo)
 		}
 
-		tag, _, _ := strings.Cut(rows[i].latest, "@")
-		rows = append(rows, row{p, tagShape.FindStringSubmatch(tag)[2]})
+		tag, _, _ := strings.Cut(rows[j].latest, "@")
+		latest := tagShape.FindStringSubmatch(tag)[2]
+
+		if hasAsset {
+			var err error
+			if latest, err = c.bunChecksum(ctx, latest, asset); err != nil {
+				return nil, err
+			}
+		}
+
+		rows = append(rows, row{*p, latest})
 	}
 
 	return rows, nil
+}
+
+// bunChecksum reads the SHA-256 of a release asset from SHASUMS256.txt.
+func (c *client) bunChecksum(ctx context.Context, version, asset string) (string, error) {
+	b, err := c.get(ctx, c.urls.bun+"/bun-v"+version+"/SHASUMS256.txt", "")
+	if err != nil {
+		return "", err
+	}
+
+	for line := range strings.SplitSeq(string(b), "\n") {
+		sum, name, ok := strings.Cut(strings.TrimSpace(line), "  ")
+		if ok && strings.TrimPrefix(name, "*") == asset {
+			return sum, nil
+		}
+	}
+
+	return "", fmt.Errorf("bun %s: no checksum for %s", version, asset)
 }
 
 var starterManifests = []string{"internal/cli/starter/package.json"}
@@ -225,6 +256,25 @@ var constPins = []struct {
 		0,
 		bunImageRepo,
 		`(bun-v)([0-9][^"]*)(")`,
+	},
+	{"bun", "BUN_VERSION", ".config/docker/vukem.Dockerfile", npmPkg, 0, "oven/bun", `(ARG BUN_VERSION=)([^\s]+)()`},
+	{
+		"bun-linux-x64.zip",
+		"BUN_SHA256_AMD64",
+		".config/docker/vukem.Dockerfile",
+		npmPkg,
+		0,
+		"oven/bun#bun-linux-x64.zip",
+		`(ARG BUN_SHA256_AMD64=)([^\s]+)()`,
+	},
+	{
+		"bun-linux-aarch64.zip",
+		"BUN_SHA256_ARM64",
+		".config/docker/vukem.Dockerfile",
+		npmPkg,
+		0,
+		"oven/bun#bun-linux-aarch64.zip",
+		`(ARG BUN_SHA256_ARM64=)([^\s]+)()`,
 	},
 	{frameworkModule + "/contrib/stripe", "stripeVersion", "internal/cli/billing.go", goMod, 0, "", ""},
 	{frameworkModule + "/contrib/studio", "studioVersion", "internal/cli/studio.go", goMod, 0, "", ""},

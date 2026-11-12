@@ -10,7 +10,7 @@ import (
 )
 
 // scanDirs are searched for scaffold files that pin images and actions.
-var scanDirs = []string{"internal/cli"}
+var scanDirs = []string{"internal/cli", ".config/docker"}
 
 // scanFiles lists the non-test source and template files under scanDirs.
 func scanFiles(root string) ([]string, error) {
