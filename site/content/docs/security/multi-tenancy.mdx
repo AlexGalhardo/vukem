@@ -1,0 +1,147 @@
+---
+title: Multi-tenancy
+description: Keep each workspace's rows apart in one shared database with package tenancy, which resolves the tenant per request, checks membership, scopes ORM queries and stamps new rows, all failing closed.
+---
+
+Many apps serve several groups of users from one database: workspaces, teams, companies. Each group must see only its own rows. Package `tenancy` does that with a tenant column on every table, one middleware and one query scope.
+
+You will learn:
+
+- how the middleware finds the tenant and checks that the user belongs to it;
+- how to filter queries with `tenancy.Scope`;
+- how new rows get their tenant without trusting the request;
+- why every failure answers 404;
+- how to test the isolation.
+
+## The idea
+
+Think of an apartment building with one front door and one key per flat. The doorman (the middleware) looks at the flat number you ask for and checks your name on its list. If you are not on the list, he says "no such flat", the same answer as for a flat that does not exist.
+
+This is the <Term tip="Insecure Direct Object Reference: the app trusts an id from the URL or the form without checking that the user may use that record.">IDOR</Term> problem of [OWASP A01](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/) applied to a whole workspace. Answering 403 would confirm that the workspace exists, so the middleware answers 404 for every failure.
+
+## Quick start
+
+<Steps>
+<Step title="1. Give the model a tenant column">
+
+```go title="models/task.go"
+package models
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/tenancy"
+)
+
+type Task struct {
+	orm.Model
+	WorkspaceID string
+	Title       string
+}
+
+func (t *Task) SetTenant(id tenancy.ID) { t.WorkspaceID = string(id) }
+
+func (t *Task) BeforeCreate(ctx context.Context) error {
+	return tenancy.Assign(ctx, t)
+}
+```
+
+</Step>
+<Step title="2. Mount the middleware">
+
+```go title="routes/web.go"
+r.Group("/w/{workspace}", func(g *router.Group) {
+	g.Use(auth.Required(web), tenancy.Middleware(tenancy.Config{
+		Resolve: tenancy.PathValue("workspace"),
+		Member:  isMember,
+	}))
+})
+```
+
+</Step>
+<Step title="3. Scope every query">
+
+```go title="handlers/tasks.go"
+tasks, err := orm.QueryOf[models.Task](db).
+	Scope(tenancy.Scope[models.Task](ctx, "workspace_id")).
+	Get(ctx)
+```
+
+</Step>
+</Steps>
+
+## In depth
+
+### Resolving the tenant
+
+`Config.Resolve` returns the tenant id of the request. Three resolvers ship with the package:
+
+| Resolver | Reads |
+| --- | --- |
+| `tenancy.PathValue(name)` | a route wildcard, `r.PathValue(name)` |
+| `tenancy.Header(name)` | a request header |
+| `tenancy.Session(key)` | a session value; needs the session middleware |
+
+Write your own with `func(r *http.Request) (tenancy.ID, error)`. A resolver error or an empty id means "no tenant".
+
+`tenancy.ID` is a string, like `AuthID()`, so integer, UUID and ULID keys all fit.
+
+### Checking membership
+
+`Config.Member(ctx, userID, tenant)` returns whether the signed-in user belongs to the tenant. The user id is the one `auth.Principal` reports, so mount the middleware after `auth.Required`.
+
+A missing user, a missing tenant, a non-member and any error from `Resolve` or `Member` answer 404 and never reach your handler. `Middleware` panics at boot when `Resolve` or `Member` is nil.
+
+### Switching workspaces
+
+With the `Session` resolver, `tenancy.Switch(r, key, id)` stores the chosen workspace in the session. It does not check membership: the next request goes through the middleware, so a forged or stale value is a 404.
+
+### Reading and writing rows
+
+`tenancy.Scope[T](ctx, column)` adds `WHERE column = ?` with the context tenant. With no tenant in the context it matches nothing, never every row.
+
+`tenancy.Assign(ctx, model)` sets the tenant from the context in `BeforeCreate`. The request cannot override it, and without a tenant the insert fails with `tenancy.ErrNoTenant`.
+
+`orm.Upsert` runs no hooks, so call `tenancy.Assign` yourself before it.
+
+### Jobs, commands and tests
+
+Outside a request there is no middleware. Put the tenant in the context yourself with `tenancy.With(ctx, id)`.
+
+## Configuration
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `Resolve` | yes | finds the tenant of the request |
+| `Member` | yes | reports whether the user belongs to the tenant |
+
+## Security
+
+- Always scope reads, updates and deletes: an unscoped query sees every tenant.
+- The tenant id from the URL is only a claim; `Member` is what makes it true.
+- Cross-tenant admin screens should use an unscoped query on purpose, behind their own authorization.
+
+## Testing
+
+Use `tenancy.With` to act as a tenant, and check that another tenant sees nothing:
+
+```go title="models/task_test.go"
+ctx := tenancy.With(t.Context(), "acme")
+_ = orm.Create(ctx, db, &models.Task{Title: "send invoice"})
+
+other := tenancy.With(t.Context(), "globex")
+rows, _ := orm.QueryOf[models.Task](db).
+	Scope(tenancy.Scope[models.Task](other, "workspace_id")).Get(other)
+// len(rows) == 0
+```
+
+## Common mistakes
+
+- Forgetting `Scope` on one query. Wrong: `orm.QueryOf[Task](db).Get(ctx)` returns every tenant's rows. Right: add `.Scope(tenancy.Scope[Task](ctx, "workspace_id"))`.
+- Mounting `tenancy.Middleware` before `auth.Required`. The user is not known yet, so every request is a 404.
+
+## Next steps
+
+- [Authorization](/docs/security/authorization) for roles inside a tenant.
+- [Authentication](/docs/security/authentication) for the signed-in user.

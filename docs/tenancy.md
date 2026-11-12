@@ -63,8 +63,8 @@ func Assign(ctx context.Context, m Scoped) error // ErrNoTenant without a tenant
 ## Example
 
 ```go
-r.Group("/w/{workspace}", func(r router.Router) {
-	r.Use(auth.Required(web), tenancy.Middleware(tenancy.Config{
+r.Group("/w/{workspace}", func(g *router.Group) {
+	g.Use(auth.Required(web), tenancy.Middleware(tenancy.Config{
 		Resolve: tenancy.PathValue("workspace"),
 		Member:  isMember,
 	}))
