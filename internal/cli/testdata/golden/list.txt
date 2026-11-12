@@ -10,7 +10,8 @@ Usage:
   version                      Print the vukem version
   bench [url]                  Load test a URL or the project's scenarios (throughput, latency percentiles, thresholds)
   doctor                       Report the optional tools the project uses (Betterleaks) and project checks
-  upgrade                      Compare the project with this CLI: framework version and starter files (--check writes nothing)
+  update                       Update the project: framework, Go and JS dependencies, and the starter migration notes (--dry-run writes nothing)
+  upgrade                      Moved: update a project with vukem update
  install
   install:auth                 Add login, registration, password reset and email verification
   install:api                  Add API tokens, /api/v1 routes, CORS and rate limiting

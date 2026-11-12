@@ -36,6 +36,8 @@ type Env struct {
 	Now func() time.Time
 	// Version overrides the build-info version (tests).
 	Version string
+	// goProxy and npmRegistry override the module proxy and npm registry base URLs (tests).
+	goProxy, npmRegistry string
 	// toolWaitDelay overrides defaultToolWaitDelay (tests).
 	toolWaitDelay time.Duration
 	// in is the one buffered reader over Stdin that every prompt shares: two readers on the same stream would lose
@@ -79,11 +81,12 @@ func commands() []command {
 		},
 		{"doctor", "", "Report the optional tools the project uses (Betterleaks) and project checks", doctorCmd},
 		{
-			"upgrade",
+			"update",
 			"",
-			"Compare the project with this CLI: framework version and starter files (--check writes nothing)",
-			upgradeCmd,
+			"Update the project: framework, Go and JS dependencies, and the starter migration notes (--dry-run writes nothing)",
+			updateCmd,
 		},
+		{"upgrade", "", "Moved: update a project with vukem update", upgradeMovedCmd},
 		{"install:auth", "", "Add login, registration, password reset and email verification", installAuth},
 		{"install:api", "", "Add API tokens, /api/v1 routes, CORS and rate limiting", installAPI},
 		{"install:billing", "", "Add Stripe subscriptions: plans, Checkout, Billing Portal, webhooks", installBilling},

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,15 +17,15 @@ import (
 	"strings"
 )
 
-// errUpgradeBehind makes `upgrade --check` exit 1 without a usage message.
-var errUpgradeBehind = errors.New("the project is behind this CLI: run vukem upgrade")
+// errUpdateBehind makes `update --check` exit 1 without a usage message.
+var errUpdateBehind = errors.New("the project is behind: run vukem update")
 
 type moduleVersion struct {
 	Path    string `json:"path"`
 	Version string `json:"version"`
 }
 
-type upgradeReport struct {
+type updateReport struct {
 	Framework struct {
 		Required string `json:"required"`
 		CLI      string `json:"cli"`
@@ -34,22 +35,32 @@ type upgradeReport struct {
 	Scaffold struct {
 		Differ []string `json:"differ"`
 	} `json:"scaffold"`
+	Changes []depChange `json:"changes"`
 }
 
 // scaffoldIgnored are starter files that differ in every project or hold data.
 var scaffoldIgnored = []string{"go.mod", "go.sum", "README.md", ".env.example"}
 
-// upgradeCmd reports how the project differs from this CLI. It never rewrites
-// a project file: the current starter goes to .vukem/upgrade/starter/ for the
-// user to compare, and only a project that is behind gets its go.mod raised.
-func upgradeCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
-	check := set.Bool("check", false, "report only: write nothing, exit 1 when the project is behind")
+// updateCmd moves the project to this CLI: the framework requirement, the other Go dependencies and the JS
+// dependencies. It never rewrites a project file except go.mod, go.sum, package.json and the lockfile: the
+// current starter goes to .vukem/upgrade/starter/ for the user to compare.
+func updateCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	check := set.Bool("check", false, "report only: write nothing, exit 1 when something is behind")
+	dryRun := set.Bool("dry-run", false, "list every change (old -> new) and write nothing")
+	goOnly := set.Bool("go-only", false, "update Go dependencies only")
+	jsOnly := set.Bool("js-only", false, "update JS dependencies only")
 	asJSON := set.Bool("json", false, "print the report as JSON")
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		if len(args) > 0 {
-			return usagef("upgrade takes no arguments")
+			return usagef("update takes no arguments")
 		}
+
+		if *goOnly && *jsOnly {
+			return usagef("-go-only and -js-only exclude each other")
+		}
+
+		o := updateOpts{readOnly: *check || *dryRun, goDeps: !*jsOnly, jsDeps: !*goOnly}
 
 		mod, err := modulePath(env)
 		if err != nil {
@@ -68,44 +79,117 @@ func upgradeCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
-		starter, cleanup, err := renderReferenceStarter(env, mod, *check)
+		changes, err := planUpdates(ctx, env, gomod, state, cli, o)
 		if err != nil {
 			return err
 		}
 
-		defer cleanup()
-
-		differ, err := scaffoldDiff(env.path("."), starter)
-		if err != nil {
-			return err
-		}
-
-		report := upgradeReport{Modules: frameworkModules(gomod)}
+		report := updateReport{Modules: frameworkModules(gomod), Changes: changes}
 		report.Framework.Required, report.Framework.CLI, report.Framework.State = required, cli, state
-		report.Scaffold.Differ = differ
+		report.Scaffold.Differ = []string{}
 
-		if *asJSON {
-			enc := json.NewEncoder(env.Stdout)
-			enc.SetIndent("", "  ")
+		if !*dryRun {
+			differ, cleanup, err := scaffoldReport(env, mod, *check)
+			if err != nil {
+				return err
+			}
 
-			err = enc.Encode(report)
-		} else {
-			err = printUpgrade(env.Stdout, report, *check)
+			defer cleanup()
+
+			report.Scaffold.Differ = differ
 		}
 
-		if err != nil {
+		if err := writeUpdateReport(env.Stdout, report, o.readOnly, *dryRun, *asJSON); err != nil {
 			return err
 		}
 
-		if *check {
-			if state == "behind" {
-				return errUpgradeBehind
+		if o.readOnly {
+			if *check && (state == "behind" || len(changes) > 0) {
+				return errUpdateBehind
 			}
 
 			return nil
 		}
 
-		return runUpgradeSteps(ctx, env, state, cli, *asJSON)
+		return runUpdateSteps(ctx, env, report, o, *asJSON)
+	}
+}
+
+// scaffoldReport renders the reference starter and lists the files that differ; cleanup removes a temporary copy.
+func scaffoldReport(env *Env, mod string, check bool) ([]string, func(), error) {
+	starter, cleanup, err := renderReferenceStarter(env, mod, check)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	differ, err := scaffoldDiff(env.path("."), starter)
+	if err != nil {
+		cleanup()
+
+		return nil, nil, err
+	}
+
+	return differ, cleanup, nil
+}
+
+func writeUpdateReport(w io.Writer, report updateReport, readOnly, dryRun, asJSON bool) error {
+	if !asJSON {
+		return printUpdate(w, report, readOnly, dryRun)
+	}
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+
+	return enc.Encode(report)
+}
+
+type updateOpts struct{ readOnly, goDeps, jsDeps bool }
+
+// planUpdates lists every dependency move: the framework core (to the CLI's version), the Go modules and the JS
+// packages. It reads the module proxy and the npm registry, never the project's files beyond go.mod and package.json.
+func planUpdates(ctx context.Context, env *Env, gomod []byte, state, cli string, o updateOpts) ([]depChange, error) {
+	changes := []depChange{}
+
+	if o.goDeps {
+		if state == "behind" {
+			required, _, _ := frameworkState(gomod, cli)
+			changes = append(changes, depChange{"go", frameworkModule, required, releaseVersion(cli)})
+		}
+
+		more, err := planGoUpdates(ctx, cmp.Or(env.goProxy, defaultGoProxy), gomod)
+		if err != nil {
+			return nil, fmt.Errorf("go dependencies: %w", err)
+		}
+
+		changes = append(changes, more...)
+	}
+
+	raw, err := os.ReadFile(env.path("package.json"))
+	if !o.jsDeps || errors.Is(err, fs.ErrNotExist) {
+		return changes, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	var pkg packageJSON
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		return nil, fmt.Errorf("package.json: %w", err)
+	}
+
+	more, err := planJSUpdates(ctx, cmp.Or(env.npmRegistry, defaultNPMRegistry), pkg)
+	if err != nil {
+		return nil, fmt.Errorf("js dependencies: %w", err)
+	}
+
+	return append(changes, more...), nil
+}
+
+// upgradeMovedCmd keeps the old name from silently updating a project.
+func upgradeMovedCmd(*flag.FlagSet) func(context.Context, *Env, []string) error {
+	return func(context.Context, *Env, []string) error {
+		return errors.New("vukem upgrade no longer updates a project: run vukem update")
 	}
 }
 
@@ -120,7 +204,7 @@ func renderReferenceStarter(env *Env, mod string, check bool) (string, func(), e
 	data := starterData{Name: filepath.Base(abs), Module: mod}
 
 	if check {
-		tmp, err := os.MkdirTemp("", "vukem-upgrade-")
+		tmp, err := os.MkdirTemp("", "vukem-update-")
 		if err != nil {
 			return "", nil, err
 		}
@@ -148,9 +232,10 @@ func renderReferenceStarter(env *Env, mod string, check bool) (string, func(), e
 	return dir, func() {}, nil
 }
 
-func runUpgradeSteps(ctx context.Context, env *Env, state, cli string, quiet bool) error {
-	steps := upgradeSteps(state, cli)
-	if len(steps) == 0 {
+// runUpdateSteps applies the plan: go get and go mod tidy, then package.json and the package manager's install,
+// then go build. A project with nothing to change runs no command and writes nothing.
+func runUpdateSteps(ctx context.Context, env *Env, r updateReport, o updateOpts, quiet bool) error {
+	if len(r.Changes) == 0 {
 		return nil
 	}
 
@@ -160,18 +245,57 @@ func runUpgradeSteps(ctx context.Context, env *Env, state, cli string, quiet boo
 		e.Stdout = env.Stderr
 	}
 
-	for _, s := range steps {
+	for _, s := range updateSteps(r.Changes) {
 		if err := tool(ctx, &e, s[0], s[1:]...); err != nil {
 			return err
 		}
 	}
 
-	_, err := fmt.Fprintf(e.Stdout, "go.mod now requires %s\n", releaseVersion(cli))
+	if slices.ContainsFunc(r.Changes, func(c depChange) bool { return c.Kind == "js" }) {
+		if err := updatePackageJSON(ctx, &e, r.Changes); err != nil {
+			return err
+		}
+	}
+
+	if o.goDeps {
+		if err := tool(ctx, &e, "go", "build", "./..."); err != nil {
+			return err
+		}
+	}
+
+	_, err := fmt.Fprintln(e.Stdout, "next: go test ./...")
 
 	return err
 }
 
-func printUpgrade(w io.Writer, r upgradeReport, check bool) error {
+func updatePackageJSON(ctx context.Context, env *Env, changes []depChange) error {
+	root, err := os.OpenRoot(env.Dir)
+	if err != nil {
+		return err
+	}
+
+	defer root.Close()
+
+	raw, err := root.ReadFile("package.json")
+	if err != nil {
+		return err
+	}
+
+	info, err := root.Stat("package.json")
+	if err != nil {
+		return err
+	}
+
+	if err := root.WriteFile("package.json", rewritePackageJSON(raw, changes), info.Mode().Perm()); err != nil {
+		return err
+	}
+
+	install := jsInstaller(env)
+
+	return tool(ctx, env, install[0], install[1:]...)
+}
+
+func printUpdate(w io.Writer, r updateReport, readOnly, dryRun bool) error {
 	var b strings.Builder
 
 	f := r.Framework
@@ -198,6 +322,22 @@ func printUpgrade(w io.Writer, r upgradeReport, check bool) error {
 		}
 	}
 
+	if len(r.Changes) == 0 {
+		b.WriteString("dependencies: up to date\n")
+	} else {
+		fmt.Fprintf(&b, "dependencies: %d to change\n", len(r.Changes))
+
+		for _, c := range r.Changes {
+			fmt.Fprintf(&b, "  %s %s %s -> %s\n", c.Kind, c.Name, c.Old, c.New)
+		}
+	}
+
+	if dryRun {
+		_, err := io.WriteString(w, b.String())
+
+		return err
+	}
+
 	if len(r.Scaffold.Differ) == 0 {
 		fmt.Fprintf(&b, "scaffold: no file differs from the %s starter\n", f.CLI)
 	} else {
@@ -207,7 +347,7 @@ func printUpgrade(w io.Writer, r upgradeReport, check bool) error {
 			fmt.Fprintf(&b, "  %s\n", p)
 		}
 
-		if !check {
+		if !readOnly {
 			b.WriteString("compare one with: git diff --no-index .vukem/upgrade/starter/<file> <file>\n")
 		}
 	}
@@ -301,17 +441,21 @@ func versionParts(v string) []int {
 	return parts
 }
 
-// upgradeSteps returns the commands to run for a project in state: only a
-// project that is behind gets its requirement raised.
-func upgradeSteps(state, cli string) [][]string {
-	if state != "behind" {
+// updateSteps returns the Go commands for the planned changes: one go get for every module, then go mod tidy.
+func updateSteps(changes []depChange) [][]string {
+	get := []string{"go", "get"}
+
+	for _, c := range changes {
+		if c.Kind == "go" {
+			get = append(get, c.Name+"@"+c.New)
+		}
+	}
+
+	if len(get) == 2 {
 		return nil
 	}
 
-	return [][]string{
-		{"go", "get", frameworkModule + "@" + releaseVersion(cli)},
-		{"go", "mod", "tidy"},
-	}
+	return [][]string{get, {"go", "mod", "tidy"}}
 }
 
 // frameworkModules lists the drivers/* and contrib/* modules a project requires.

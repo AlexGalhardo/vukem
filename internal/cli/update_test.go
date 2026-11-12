@@ -128,23 +128,30 @@ func TestScaffoldDiff(t *testing.T) {
 	}
 }
 
-func TestUpgradeSteps(t *testing.T) {
+func TestUpdateSteps(t *testing.T) {
 	t.Parallel()
 
-	want := [][]string{{"go", "get", "github.com/AlexGalhardo/vukem@v0.2.0"}, {"go", "mod", "tidy"}}
-	if diff := cmp.Diff(want, upgradeSteps("behind", "v0.2.0")); diff != "" {
-		t.Fatalf("behind steps (-want +got):\n%s", diff)
+	changes := []depChange{
+		{"go", "github.com/AlexGalhardo/vukem", "v0.1.0", "v0.2.0"},
+		{"js", "vite", "^6.0.0", "7.0.0"},
+		{"go", "github.com/other/lib", "v1.0.0", "v1.1.0"},
+	}
+	want := [][]string{
+		{"go", "get", "github.com/AlexGalhardo/vukem@v0.2.0", "github.com/other/lib@v1.1.0"},
+		{"go", "mod", "tidy"},
 	}
 
-	for _, state := range []string{"up_to_date", "ahead", "replaced", "devel"} {
-		if got := upgradeSteps(state, "v0.2.0"); got != nil {
-			t.Errorf("upgradeSteps(%q) = %v, want nil", state, got)
-		}
+	if diff := cmp.Diff(want, updateSteps(changes)); diff != "" {
+		t.Fatalf("steps (-want +got):\n%s", diff)
+	}
+
+	if got := updateSteps(changes[1:2]); got != nil {
+		t.Errorf("updateSteps(js only) = %v, want nil", got)
 	}
 }
 
-// upgradeProject writes a minimal project: a go.mod and a vite.config.ts that differs from the starter.
-func upgradeProject(t *testing.T) string {
+// updateProject writes a minimal project: a go.mod and a vite.config.ts that differs from the starter.
+func updateProject(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -160,28 +167,28 @@ func upgradeProject(t *testing.T) string {
 	return dir
 }
 
-func runUpgrade(t *testing.T, dir, cliVersion string, args ...string) (int, string, string) {
+func runUpdate(t *testing.T, dir, cliVersion string, args ...string) (int, string, string) {
 	t.Helper()
 
 	var out, errOut bytes.Buffer
 
-	code := Run(t.Context(), append([]string{"upgrade"}, args...), Env{
+	code := Run(t.Context(), append([]string{"update"}, args...), Env{
 		Dir: dir, Stdout: &out, Stderr: &errOut, Now: fixedNow, Version: cliVersion,
 	})
 
 	return code, out.String(), errOut.String()
 }
 
-func TestUpgradeCheckWritesNothing(t *testing.T) {
+func TestUpdateCheckWritesNothing(t *testing.T) {
 	t.Parallel()
 
-	dir := upgradeProject(t)
+	dir := updateProject(t)
 	before, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	code, out, errOut := runUpgrade(t, dir, "v0.2.0", "--check")
+	code, out, errOut := runUpdate(t, dir, "v0.2.0", "--check")
 	if code != 1 || !strings.Contains(out, "behind") || !strings.Contains(out, "vite.config.ts") {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
 	}
@@ -200,30 +207,31 @@ func TestUpgradeCheckWritesNothing(t *testing.T) {
 	}
 }
 
-func TestUpgradeCheckUpToDate(t *testing.T) {
+func TestUpdateCheckUpToDate(t *testing.T) {
 	t.Parallel()
 
-	if code, out, errOut := runUpgrade(t, upgradeProject(t), "v0.1.0", "--check"); code != 0 {
+	if code, out, errOut := runUpdate(t, updateProject(t), "v0.1.0", "--check"); code != 0 {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
 	}
 }
 
-func TestUpgradeJSON(t *testing.T) {
+func TestUpdateJSON(t *testing.T) {
 	t.Parallel()
 
-	code, out, errOut := runUpgrade(t, upgradeProject(t), "v0.2.0", "--check", "--json")
+	code, out, errOut := runUpdate(t, updateProject(t), "v0.2.0", "--check", "--json")
 	if code != 1 {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 
-	var got upgradeReport
+	var got updateReport
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
 
-	want := upgradeReport{}
+	want := updateReport{}
 	want.Framework.Required, want.Framework.CLI, want.Framework.State = "v0.1.0", "v0.2.0", "behind"
 	want.Modules = []moduleVersion{}
+	want.Changes = []depChange{{"go", frameworkModule, "v0.1.0", "v0.2.0"}}
 	want.Scaffold.Differ = []string{"vite.config.ts"}
 
 	if diff := cmp.Diff(want, got); diff != "" {
@@ -258,14 +266,14 @@ func fileHashes(t *testing.T, dir string) map[string][32]byte {
 	return snap
 }
 
-func TestSecurity_A01_UpgradeNeverWritesProjectFiles(t *testing.T) {
+func TestSecurity_A01_UpdateNeverWritesProjectFiles(t *testing.T) {
 	t.Parallel()
 
-	dir := upgradeProject(t)
+	dir := updateProject(t)
 	before := fileHashes(t, dir)
 
 	// Up to date, so upgrade does not run go get.
-	if code, out, errOut := runUpgrade(t, dir, "v0.1.0"); code != 0 {
+	if code, out, errOut := runUpdate(t, dir, "v0.1.0"); code != 0 {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
 	}
 
