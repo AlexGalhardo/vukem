@@ -82,7 +82,8 @@ Fenced code blocks accept a file name: ` ```go title="main.go" `.
 ## Landing page and launch media
 
 The root page is a standalone viewport composition; documentation keeps its
-existing routes. `src/scripts/landing.js` owns the decorative Three.js scene,
+existing routes. A viewport 360px tall or shorter scrolls instead of clipping
+the headline and the Read Docs link. Taller screens stay one viewport. `src/scripts/landing.js` owns the decorative Three.js scene,
 including reduced-motion and WebGL-unavailable fallback behavior, and the
 feature tabs in the second column. The only marketing action is **Read Docs**.
 Each tab shows a short excerpt of real framework code: routing, controllers,
