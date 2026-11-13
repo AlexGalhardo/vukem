@@ -149,7 +149,7 @@ Run on the review branch (Windows 11, Go 1.27.2, golangci-lint with the reposito
 | `drivers/mongo` | 0 issues | 0 affecting; same `GO-2026-5932`, not called |
 | `drivers/mysql`, `drivers/otel`, `drivers/postgres`, `drivers/redis`, `drivers/s3`, `drivers/websocket` | 0 issues | no vulnerabilities |
 
-`examples/blog` is outside `go.work` and was not scanned. Watch `GO-2026-5932` and bump `golang.org/x/crypto` once a fixed version exists.
+`examples/blog` is outside `go.work` and was not scanned. `GO-2026-5932` was later cleared by `golang.org/x/crypto` `v0.59.0`, which drops `openpgp`.
 
 ## Verification
 
