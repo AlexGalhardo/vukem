@@ -1,0 +1,160 @@
+package accounts
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"strings"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/social"
+
+	"{{.Module}}/app/models"
+)
+
+// GoogleEnabled reports whether Google sign-in can be offered by the UI.
+// A fake provider is available only in the framework's isolated test app.
+func GoogleEnabled(app *vukem.App) bool {
+	return (app.Source.Get("SOCIAL_GOOGLE_CLIENT_ID") != "" && app.Source.Get("SOCIAL_GOOGLE_CLIENT_SECRET") != "") ||
+		(app.Kind == vukem.KindTest && app.Source.Get("SOCIAL_FAKE_ID") != "")
+}
+
+// NewSocial configures optional Google OAuth using Vukem's signed state,
+// PKCE and provider validation. Partial credentials fail closed at boot.
+func NewSocial(app *vukem.App) (*social.Social, error) {
+	key, err := app.DeriveKey("social.state", 32)
+	if err != nil {
+		return nil, err
+	}
+	s := social.New(key).WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...)
+	s.InsecureCookies = !app.Config.IsProduction() && !strings.HasPrefix(app.Config.URL, "https://")
+	id, secret := app.Source.Get("SOCIAL_GOOGLE_CLIENT_ID"), app.Source.Get("SOCIAL_GOOGLE_CLIENT_SECRET")
+	if (id == "") != (secret == "") {
+		return nil, errors.New("social: google: set both SOCIAL_GOOGLE_CLIENT_ID and SOCIAL_GOOGLE_CLIENT_SECRET")
+	}
+	if id != "" {
+		s.Use(social.Google(social.Config{
+			ClientID: id, ClientSecret: secret,
+			RedirectURL: strings.TrimSuffix(app.Config.URL, "/") + "/auth/google/callback",
+		}))
+	}
+	if app.Kind == vukem.KindTest {
+		if fakeID := app.Source.Get("SOCIAL_FAKE_ID"); fakeID != "" {
+			s.Use(social.Fake("google", "/auth/google/callback", social.User{
+				ID: fakeID, Email: app.Source.Get("SOCIAL_FAKE_EMAIL"), Name: app.Source.Get("SOCIAL_FAKE_NAME"),
+				EmailVerified: app.Source.Get("SOCIAL_FAKE_EMAIL_VERIFIED") == "true",
+			}))
+		}
+	}
+	return s, nil
+}
+
+// FindOrCreateFromSocial returns the user linked to su, linking by email
+// only when the provider verified it, or creating a new user.
+func (a *Accounts) FindOrCreateFromSocial(ctx context.Context, su social.User) (models.User, error) {
+	if su.Provider != "google" || strings.TrimSpace(su.ID) == "" || !su.EmailVerified {
+		return models.User{}, errs.New(422, "Google must supply a verified account identity")
+	}
+
+	links := orm.QueryOf[models.SocialAccount](a.DB).Where("provider", su.Provider)
+
+	link, err := links.Where("provider_id", su.ID).First(ctx)
+	if err == nil {
+		return orm.QueryOf[models.User](a.DB).Find(ctx, link.UserID)
+	}
+
+	if !errors.Is(err, orm.ErrNotFound) {
+		return models.User{}, err
+	}
+
+	email := strings.ToLower(strings.TrimSpace(su.Email))
+	if email == "" {
+		return models.User{}, errs.New(422, a.T(ctx, "auth.social.no_email", "provider", su.Provider))
+	}
+
+	var (
+		u        models.User
+		squatted bool
+	)
+
+	err = a.DB.Tx(ctx, func(tx *database.Tx) error {
+		existing, err := orm.QueryOf[models.User](tx).Where("email", email).First(ctx)
+
+		switch {
+		case err == nil && su.EmailVerified:
+			u = existing
+
+			// The provider proves the address; the local account was never
+			// verified, so its password, sessions and tokens may belong to
+			// someone who signed up first with it. End them all, like a
+			// password reset: the owner signs in with the provider or resets.
+			if !u.EmailVerified() {
+				if err := a.updatePassword(ctx, tx, u.ID, rand.Text()+rand.Text()); err != nil {
+					return err
+				}
+
+				if err := a.revokeAccess(ctx, tx, u.ID); err != nil {
+					return err
+				}
+
+				u.SessionVersion++
+				squatted = true
+			}
+		case err == nil:
+			// An unverified email must never take over an existing account.
+			return errs.New(409, a.T(ctx, "auth.social.email_taken"))
+		case errors.Is(err, orm.ErrNotFound):
+			if u, err = a.createSocialUser(ctx, tx, su, email); err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+
+		if su.EmailVerified {
+			if err := a.MarkVerified(ctx, tx, &u); err != nil {
+				return err
+			}
+		}
+
+		return orm.Create(ctx, tx, &models.SocialAccount{UserID: u.ID, Provider: su.Provider, ProviderID: su.ID})
+	})
+	if err != nil || !squatted {
+		return u, err
+	}
+
+	// After the commit: the session store may share SQLite's one writer.
+	return u, a.revokeServerSessions(ctx, u.ID, "")
+}
+
+func (a *Accounts) createSocialUser(
+	ctx context.Context,
+	tx database.Executor,
+	su social.User,
+	email string,
+) (models.User, error) {
+	name := su.Name
+	if name == "" {
+		name = su.Nickname
+	}
+
+	if name == "" {
+		name = email
+	}
+
+	// No usable password: these users sign in with the provider (or reset).
+	h, err := a.Hasher.Make(rand.Text() + rand.Text())
+	if err != nil {
+		return models.User{}, err
+	}
+
+	u := models.User{Name: name, Email: email, Password: h}
+	if err := orm.Create(ctx, tx, &u); err != nil {
+		return models.User{}, err
+	}
+
+	return u, nil
+}

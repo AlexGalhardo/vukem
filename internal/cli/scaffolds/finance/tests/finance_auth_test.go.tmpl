@@ -1,0 +1,114 @@
+package tests
+
+import (
+	"net/url"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/social"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/workspaces"
+	"{{.Module}}/bootstrap"
+	"{{.Module}}/database/seeders"
+)
+
+func financeGoogleSignIn(t *testing.T, c *vukemtest.Client) *vukemtest.Response {
+	t.Helper()
+	r := c.Get("/auth/google/redirect")
+	return c.Get(r.Header("Location"))
+}
+
+func TestFinanceGoogleOptional(t *testing.T) {
+	t.Parallel()
+	app := newApp(t)
+	if accounts.GoogleEnabled(app.App) {
+		t.Fatal("Google enabled without credentials")
+	}
+	app.Client(t).Get("/auth/google/redirect").AssertNotFound()
+}
+
+func TestSecurity_FinanceGoogleVerifiedLink(t *testing.T) {
+	t.Parallel()
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: vukemtest.FakeSocial(social.User{
+		ID: "google-owner", Email: "OWNER@example.com", EmailVerified: true, Name: "Owner",
+	})})
+	newVerifiedUser(t, app, "Existing owner", "owner@example.com")
+	financeGoogleSignIn(t, app.Client(t)).AssertRedirect("/dashboard")
+	vukemtest.AssertDatabaseCount(t, app, "users", 1)
+	vukemtest.AssertDatabaseCount(t, app, "social_accounts", 1)
+	financeGoogleSignIn(t, app.Client(t)).AssertRedirect("/dashboard")
+	vukemtest.AssertDatabaseCount(t, app, "social_accounts", 1)
+}
+
+func TestSecurity_FinanceGoogleRejectsUnverifiedClaim(t *testing.T) {
+	t.Parallel()
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: vukemtest.FakeSocial(social.User{
+		ID: "attacker", Email: "owner@example.com",
+	})})
+	newVerifiedUser(t, app, "Owner", "owner@example.com")
+	financeGoogleSignIn(t, app.Client(t)).AssertStatus(422)
+	vukemtest.AssertDatabaseCount(t, app, "social_accounts", 0)
+}
+
+func TestSecurity_FinanceGoogleRequiresTwoFactor(t *testing.T) {
+	t.Parallel()
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: vukemtest.FakeSocial(social.User{
+		ID: "google-2fa", Email: "owner@example.com", EmailVerified: true,
+	})})
+	u := newVerifiedUser(t, app, "Owner", "owner@example.com")
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = orm.QueryOf[models.TwoFactor](db).Where("id", u.ID).Update(t.Context(), orm.Set{
+		"two_factor_confirmed_at": app.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := app.Client(t)
+	financeGoogleSignIn(t, c).AssertRedirect("/two-factor-challenge")
+	c.Get("/dashboard").AssertRedirect("/login")
+}
+
+func TestSecurity_FinanceLocalSeedPreservesCredentialsAndData(t *testing.T) {
+	t.Parallel()
+	const password = "local-test-password-123456"
+	app := newApp(t, map[string]string{"ADMIN_EMAILS": "admin@example.test", "FINANCE_ADMIN_PASSWORD": password})
+	for range 2 {
+		if err := (seeders.FinanceAdminSeeder{}).SeedApp(t.Context(), app.App); err != nil {
+			t.Fatal(err)
+		}
+		if err := (seeders.FinanceDemoSeeder{}).SeedApp(t.Context(), app.App); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vukemtest.AssertDatabaseCount(t, app, "users", 1)
+	vukemtest.AssertDatabaseCount(t, app, "workspaces", 1)
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 24)
+	vukemtest.AssertDatabaseCount(t, app, "budgets", 3)
+	// The local account is verified and uses the same native password login.
+	app.Client(t).PostForm("/login", url.Values{
+		"email":    {"admin@example.test"},
+		"password": {password},
+	}).AssertRedirect("/dashboard")
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := orm.QueryOf[models.Workspace](db).First(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := workspaces.WithTenant(t.Context(), ws.ID)
+	if _, err := orm.QueryOf[models.Account](db).Update(edited, orm.Set{"name": "My edited checking"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (seeders.FinanceDemoSeeder{}).SeedApp(t.Context(), app.App); err != nil {
+		t.Fatal(err)
+	}
+	vukemtest.AssertDatabaseHas(t, app, "accounts", map[string]any{"name": "My edited checking"})
+}

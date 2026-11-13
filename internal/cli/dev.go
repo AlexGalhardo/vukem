@@ -83,7 +83,13 @@ func appBinary(ctx context.Context, env *Env) (string, error) {
 		return "", errors.New("no cmd/app in this directory: run vukem inside a Vukem project")
 	}
 
-	bin := env.path(filepath.Join(cacheDir, "bin", exe("app")))
+	// Absolute: exec looks up a relative binary from the process working
+	// directory, not from cmd.Dir. vukem new --seed sets a relative project
+	// Dir ("money"), and a second Join would build a different path.
+	bin, err := absoluteBuildOutput(env, filepath.Join(cacheDir, "bin", exe("app")))
+	if err != nil {
+		return "", err
+	}
 
 	newest, err := sourcesModTime(env.dirOrDot())
 	if err != nil {
@@ -115,8 +121,9 @@ func goBuild(ctx context.Context, env *Env, out string, extra ...string) error {
 
 // goBuildEnv is goBuild with extra environment variables for go build.
 func goBuildEnv(ctx context.Context, env *Env, out string, environ []string, extra ...string) error {
-	if !filepath.IsAbs(out) {
-		out = env.path(out)
+	out, err := absoluteBuildOutput(env, out)
+	if err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
@@ -136,6 +143,30 @@ func goBuildEnv(ctx context.Context, env *Env, out string, environ []string, ext
 	args = append(args, "-o", out, "./cmd/app")
 
 	return toolEnv(ctx, env, environ, "go", args...)
+}
+
+// absoluteBuildOutput is the path go build -o and exec both use.
+// A caller may pass a project-relative path or the result of env.path.
+// vukem new --seed leaves Dir relative ("money"); joining that twice builds
+// a different file than the one exec tries to start. The result is absolute
+// because exec resolves a relative name from the process working directory,
+// not from cmd.Dir.
+func absoluteBuildOutput(env *Env, out string) (string, error) {
+	if !filepath.IsAbs(out) {
+		dir := filepath.Clean(env.Dir)
+		clean := filepath.Clean(out)
+		already := dir != "" && dir != "." && strings.HasPrefix(clean, dir+string(filepath.Separator))
+
+		if !already {
+			out = env.path(out)
+		}
+	}
+
+	if filepath.IsAbs(out) {
+		return out, nil
+	}
+
+	return filepath.Abs(out)
 }
 
 // releaseBuildEnv is the environment of vukem build: CGO_ENABLED=0, like

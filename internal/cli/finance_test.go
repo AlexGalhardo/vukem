@@ -41,6 +41,10 @@ func TestNewFinanceProjectEndToEnd(t *testing.T) {
 		"resources/js/pages/Dashboard.tsx", "resources/js/pages/Import.tsx", "resources/js/emails/welcome.tsx",
 		"resources/emails/welcome.html", "resources/emails/monthly_summary.html", "README.md",
 		"resources/js/pages/Auth/TwoFactor.tsx", "resources/js/pages/Admin/Revenue.tsx",
+		"setup-local.md", "Dockerfile", "compose.yaml",
+		"resources/js/components/ui/sidebar.tsx", "resources/js/components/ui/dialog.tsx",
+		"resources/js/lib/i18n.ts", "app/accounts/social.go", "database/seeders/finance_admin_seeder.go",
+		"database/seeders/finance_demo_seeder.go", "routes/social.go",
 	} {
 		requireFile(t, project, rel)
 	}
@@ -62,6 +66,8 @@ func TestNewFinanceProjectEndToEnd(t *testing.T) {
 		t.Errorf("go.mod does not pin contrib/stripe %s:\n%s", stripeVersion, mod)
 	}
 
+	assertFinanceProduct(t, project)
+
 	// The to-do example and the finance app exclude each other.
 	if _, err := os.Stat(filepath.Join(project, "resources", "js", "pages", "Tasks")); err == nil {
 		t.Error("the finance app has the to-do pages")
@@ -77,6 +83,8 @@ func TestNewFinanceProjectEndToEnd(t *testing.T) {
 		if out, err := combinedOutput(cmd); err != nil {
 			t.Fatalf("%s %v: %v\n%s", name, args, err, out)
 		}
+
+		t.Logf("%s %v ok", name, args)
 	}
 
 	// A clone has no .env: create the key the way CI does.
@@ -144,6 +152,8 @@ func TestNewFinanceProjectEndToEnd(t *testing.T) {
 	if code, out, errOut := vukem(t, project, "build"); code != 0 {
 		t.Fatalf("vukem build = %d\n%s%s", code, out, errOut)
 	}
+
+	t.Log("vukem build ok")
 }
 
 func TestFinanceExampleNeedsTheReactStack(t *testing.T) {
@@ -158,6 +168,137 @@ func TestFinanceExampleNeedsTheReactStack(t *testing.T) {
 			t.Errorf("vukem %v = %d %q, want a usage error about --example finance", args, code, errOut)
 		}
 	}
+}
+
+func assertFinanceProduct(t *testing.T, project string) {
+	t.Helper()
+
+	checks := []struct{ file, needle string }{
+		{"resources/js/pages/Home.tsx", "finance-landing"},
+		{"resources/css/finance.css", "#bdfb6b"},
+		{"resources/js/layouts/AppLayout.tsx", "SidebarProvider"},
+		{"resources/js/pages/Transactions.tsx", "Dialog"},
+		{"resources/js/components/Preferences.tsx", "localStorage"},
+		{"resources/js/lib/i18n.ts", "pt-BR"},
+		{"resources/js/lib/i18n.ts", "const es"},
+		{"resources/views/app.html", "localStorage.getItem(\"theme\")"},
+		{"app/accounts/social.go", "SOCIAL_GOOGLE_CLIENT_ID"},
+		{"app/accounts/social.go", "set both SOCIAL_GOOGLE_CLIENT_ID and SOCIAL_GOOGLE_CLIENT_SECRET"},
+		{"setup-local.md", "compose.yaml"},
+		{"setup-local.md", "docker compose up --build"},
+		{"bootstrap/app.go", "WithAppSeeders"},
+		{"database/seeders/registry.go", "FinanceDemoSeeder{}"},
+	}
+
+	for _, c := range checks {
+		if body := read(t, project, c.file); !strings.Contains(body, c.needle) {
+			t.Errorf("%s missing %q", c.file, c.needle)
+
+			continue
+		}
+
+		t.Logf("%s contains %q", c.file, c.needle)
+	}
+}
+
+func TestSeedRequiresFinanceExample(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	code, _, errOut := vukem(t, dir, "new", "app", "--example", "todo", "--seed", "--no-install", "--pm", "npm")
+	if code != 2 || !strings.Contains(errOut, "--seed") {
+		t.Fatalf("vukem new --example todo --seed = %d %q", code, errOut)
+	}
+}
+
+func TestFinanceSeedFlag(t *testing.T) {
+	t.Parallel()
+	requireGo(t)
+
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(repo, "tenancy", "tenancy.go")); err != nil {
+		t.Skip("the finance example needs the tenancy package: ", err)
+	}
+
+	plain := filepath.Join(t.TempDir(), "plain")
+	if err := os.MkdirAll(plain, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := vukem(t, plain, "new", "app", "--example", "finance", "--module", "example.com/plain",
+		"--framework", repo, "--no-install", "--pm", "npm")
+	if code != 0 {
+		t.Fatalf("vukem new without --seed = %d\n%s%s", code, out, errOut)
+	}
+
+	project := filepath.Join(plain, "app")
+	if code, out, errOut := vukem(t, project, "migrate"); code != 0 {
+		t.Fatalf("migrate = %d\n%s%s", code, out, errOut)
+	}
+
+	if got := sqliteCount(t, project, "select count(*) from users"); got != "0" {
+		t.Fatalf("no-seed users = %s, want 0", got)
+	}
+
+	t.Log("no-seed users = 0")
+
+	seeded := filepath.Join(t.TempDir(), "seeded")
+	if err := os.MkdirAll(seeded, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut = vukem(t, seeded, "new", "money", "--example", "finance", "--seed",
+		"--module", "example.com/money", "--framework", repo, "--no-install", "--pm", "npm")
+	if code != 0 {
+		t.Fatalf("vukem new --seed = %d\n%s%s", code, out, errOut)
+	}
+
+	money := filepath.Join(seeded, "money")
+	if got := sqliteCount(t, money, "select count(*) from users"); got != "1" {
+		t.Fatalf("seeded users = %s, want 1", got)
+	}
+
+	if got := sqliteCount(t, money, "select count(*) from transactions"); got != "24" {
+		t.Fatalf("seeded transactions = %s, want 24", got)
+	}
+
+	if code, out, errOut = vukem(t, money, "db:seed"); code != 0 {
+		t.Fatalf("repeated db:seed = %d\n%s%s", code, out, errOut)
+	}
+
+	if got := sqliteCount(t, money, "select count(*) from users"); got != "1" {
+		t.Fatalf("repeated seed users = %s, want 1", got)
+	}
+
+	if got := sqliteCount(t, money, "select count(*) from transactions"); got != "24" {
+		t.Fatalf("repeated seed transactions = %s, want 24", got)
+	}
+
+	if got := sqliteCount(t, money, "select count(*) from social_accounts"); got != "0" {
+		t.Fatalf("social accounts = %s, want 0", got)
+	}
+
+	t.Log("seed users=1 transactions=24; repeated db:seed kept users=1 transactions=24; social_accounts=0")
+}
+
+func sqliteCount(t *testing.T, project, query string) string {
+	t.Helper()
+
+	cmd := exec.Command("python3", "-c", `
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+print(con.execute(sys.argv[2]).fetchone()[0])
+`, filepath.Join(project, "storage", "database.sqlite"), query)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sqlite %s: %v\n%s", query, err, out)
+	}
+
+	return strings.TrimSpace(string(out))
 }
 
 func TestFinanceDropsOnlyWhatTheStarterHas(t *testing.T) {

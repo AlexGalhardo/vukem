@@ -9,11 +9,12 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 
 ## Commands
 
-- `task ci`: lint, vet and test (run before finishing any task)
+- `task ci`: lint, vet and test (run before finishing any task). Markdownlint ignores `.vukem/**` because that gitignored directory holds local generated apps.
 - `task fmt` / `task lint` / `task test` (`-short`) / `task test:e2e` / `task test:integration`; `task lint:go` keeps one golangci-lint cache per worktree ([tooling](docs/tooling.md#repository-layout))
 - `task api:check`: apidiff gate on exported API (renames keep a deprecated `//go:fix inline` alias); each module comparison is capped at 1 minute: in `-report` mode (all modules until a v1 tag) a timeout is a `::warning` and the job stays green, in the `-major v1` gate it fails closed — see [API compatibility](docs/tooling.md#api-compatibility)
 - `task mod:check`: every nested module resolves from its own `go.mod` with `GOWORK=off` (part of `task ci`)
 - `go test ./path/...` for a single package
+- `vukem new <name> --example finance` always writes `Dockerfile` and `compose.yaml`. `--seed` migrates and runs `db:seed` (development and test only). Omitting `--seed` seeds nothing and deletes nothing. Seed later with `vukem db:seed FinanceAdminSeeder FinanceDemoSeeder`.
 
 ## Rules
 

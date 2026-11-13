@@ -1,0 +1,118 @@
+# Local finance application
+
+This application supports local password authentication with no external API
+keys. Google OAuth, Stripe and Resend are optional. Development mail appears in
+the application log (or Mailpit with Docker).
+
+## Create and run
+
+Install the Go version required by go.mod, Node.js and npm, and the Vukem CLI.
+To generate this application with its optional initial data:
+
+```sh
+vukem new money --example finance --seed
+cd money
+npm install
+npm run build:emails
+vukem serve
+```
+
+Open http://localhost:3000. The CLI generates APP_KEY and the initial seed runs
+migrations. Without `--seed`, generation creates no database records; run the
+following when ready:
+
+```sh
+vukem migrate
+vukem db:seed FinanceAdminSeeder FinanceDemoSeeder
+```
+
+The development administrator email is `admin@example.test`. The seed generates
+a random password and reports a private `storage/finance-admin-*.txt` file;
+read that file locally to sign in at `/login`, then visit `/dashboard` or
+`/admin`. Keep storage ignored by Git. The file contains local credentials;
+do not share it or publish it as an artifact. You can instead set your own
+password before the first seed in `.env`:
+
+```dotenv
+APP_ENV=development
+APP_URL=http://localhost:3000
+ADMIN_EMAILS=admin@example.test
+FINANCE_ADMIN_EMAIL=admin@example.test
+FINANCE_ADMIN_PASSWORD=replace-with-your-own-random-password-at-least-16-characters
+MAIL_MAILER=log
+```
+
+Leave FINANCE_ADMIN_PASSWORD empty to generate it securely. APP_KEY must remain
+the unique generated application key. ADMIN_EMAILS must include the seed email.
+Existing users are never assigned a new password or promoted by the seed.
+Repeated seeds leave existing users and demo data unchanged, including edits.
+The demo uses USD, integer cents, and November 2026 ISO dates; choose November
+2026 to view those transactions. An existing workspace membership makes the demo
+seed a no-op. Both finance seeders refuse production, including with `--force`.
+Use the regular registration and verification flow for production accounts.
+
+## Optional Google sign-in
+
+Create a Google OAuth web application and add the exact redirect URI:
+`http://localhost:3000/auth/google/callback`. Set these values in `.env`:
+
+```dotenv
+SOCIAL_GOOGLE_CLIENT_ID=your-google-client-id
+SOCIAL_GOOGLE_CLIENT_SECRET=your-google-client-secret
+```
+
+Restart the application. The sign-in button opens `/auth/google/redirect`.
+Neither credential is needed for password login; both must be supplied together
+for Google. Google must return a verified email. Existing verified email accounts
+link to that provider identity, and local two-factor authentication still applies.
+For deployment set APP_URL to the public HTTPS origin and register
+`https://your-host/auth/google/callback` with Google. Multiple application
+instances must share their OAuth state cache (database or Redis).
+
+## Docker
+
+Every finance app includes `Dockerfile`, `.dockerignore` and `compose.yaml`.
+The image needs the JavaScript lockfile from `npm install` (or the package
+manager you generated with). Compose publishes the app on 127.0.0.1:3000,
+keeps storage in the `storage` volume, and starts Mailpit at
+http://localhost:8025. PostgreSQL is defined for an optional switch; the
+default database is the SQLite file in that storage volume.
+
+Run these commands in the generated project. Keep the generated `.env` and
+APP_KEY; use a separate ignored `app.env` for runtime configuration:
+
+```sh
+npm install
+npm run build:emails
+cp .env app.env
+chmod 600 app.env
+```
+
+Edit `app.env` to set APP_ENV=development, APP_URL=http://localhost:3000,
+HOST=0.0.0.0, PORT=3000, MAIL_MAILER=log, ADMIN_EMAILS=admin@example.test,
+DATABASE_URL=file:storage/database.sqlite, and optionally FINANCE_ADMIN_EMAIL and
+FINANCE_ADMIN_PASSWORD. Add `app.env` to `.gitignore` and `.dockerignore` before
+building; secrets are passed only at runtime. The following uses the persistent
+storage volume and the same environment for migration, seeding and serving:
+
+```sh
+docker build -t money-local .
+docker volume create money-storage
+docker run --rm --env-file app.env -v money-storage:/app/storage money-local migrate
+docker run --rm --env-file app.env -v money-storage:/app/storage money-local db:seed FinanceAdminSeeder FinanceDemoSeeder
+```
+
+The image uses `/app/app` as its entrypoint. Read the generated credential
+file by overriding that entrypoint, then start the server:
+
+```sh
+docker run --rm --entrypoint /bin/sh -v money-storage:/app/storage money-local -c 'cat storage/finance-admin-*.txt'
+docker run --rm --name money-local -p 127.0.0.1:3000:3000 --env-file app.env -v money-storage:/app/storage money-local
+```
+
+Open http://localhost:3000. `docker compose up --build` is also available when
+compose.yaml was generated: it reads `.env`, migrates automatically and provides
+Mailpit at http://localhost:8025. Seed that stack with
+`docker compose exec app /app/app db:seed FinanceAdminSeeder FinanceDemoSeeder`.
+Compose does not seed automatically. Never reuse local administrator credentials
+or APP_ENV=development for production.

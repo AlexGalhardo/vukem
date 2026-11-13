@@ -53,6 +53,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	noInstall := set.Bool("no-install", false, "skip installing frontend dependencies")
 	example := set.String("example", "", "example app: todo (the default without a terminal), finance or none")
 	noExample := set.Bool("no-example", false, "same as --example none")
+	seed := set.Bool("seed", false, "with --example finance, migrate and seed the local admin and demo data")
 	pmFlag := set.String(
 		"pm", "",
 		"JavaScript package manager: npm, bun, pnpm or yarn (default: the first of bun, npm, pnpm, yarn on PATH)",
@@ -83,6 +84,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			noInstall:   *noInstall,
 			example:     *example,
 			noExample:   *noExample,
+			seed:        *seed,
 			std: standardsOpts{
 				standards: *standards,
 				license:   strings.ToLower(strings.TrimSpace(*license)),
@@ -99,6 +101,7 @@ type newOpts struct {
 	apiOnly, templ, minimal, noInstall                bool
 	noExample                                         bool
 	example                                           string
+	seed                                              bool
 	std                                               standardsOpts
 }
 
@@ -127,25 +130,19 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 		return err
 	}
 
-	st := stack{kind: "minimal"}
-
-	switch {
-	case o.minimal:
-		if o.apiOnly || o.templ || o.inertiaFW != "" {
-			return usagef("--minimal is an HTMX starter: drop --api, --templ and --inertia")
-		}
-	case kind == exampleFinance:
-		if st, err = financeStack(o); err != nil {
-			return err
-		}
-	default:
-		if st, err = chooseStack(env, o.apiOnly, o.templ, o.inertiaFW); err != nil {
-			return err
-		}
+	st, err := selectNewStack(env, o, kind)
+	if err != nil {
+		return err
 	}
 
 	askStandards(env, &std)
 	std = std.withStack(st.kind)
+
+	// The finance example always ships Dockerfile and compose.yaml. setup-local.md
+	// documents that stack; --docker on other examples stays opt-in.
+	if kind == exampleFinance {
+		std.docker = true
+	}
 
 	pm, err := packageManager(dir, o.pmFlag)
 	if err != nil {
@@ -204,6 +201,12 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 		return err
 	}
 
+	if o.seed {
+		if err := seedFinance(ctx, &project); err != nil {
+			return err
+		}
+	}
+
 	// After writeAppKey: the app needs its key to boot and type the pages.
 	if kind != exampleNone && st.kind == "inertia" {
 		refreshPageProps(ctx, &project)
@@ -218,6 +221,27 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 	fmt.Fprint(env.Stdout, nextSteps(name, stackDescription(st), st.kind, std, pm, hasLockfile(dir)))
 
 	return nil
+}
+
+// selectNewStack picks the starter. Finance is Inertia React. --seed is
+// refused for every other example so a later seed cannot run by accident.
+func selectNewStack(env *Env, o newOpts, kind string) (stack, error) {
+	if o.seed && kind != exampleFinance {
+		return stack{}, usagef("--seed is only valid with --example finance")
+	}
+
+	switch {
+	case o.minimal:
+		if o.apiOnly || o.templ || o.inertiaFW != "" {
+			return stack{}, usagef("--minimal is an HTMX starter: drop --api, --templ and --inertia")
+		}
+
+		return stack{kind: "minimal"}, nil
+	case kind == exampleFinance:
+		return financeStack(o)
+	default:
+		return chooseStack(env, o.apiOnly, o.templ, o.inertiaFW)
+	}
 }
 
 // applyStack turns the common starter into the chosen stack.
