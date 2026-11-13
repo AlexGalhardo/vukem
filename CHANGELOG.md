@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **cli:** Keep the finance scaffold clear of the secret scan. The admin display name is assigned apart from the password hash, the local sample passwords contain `example`, and password-field labels stay allowlisted.
 
+- **cli:** Accept that Windows does not report the Unix 0600 mode of the generated local admin credential file. Unix still requires 0600.
+
 - **cli:** Preserve every month's finance chart totals by allocating the complete history before indexing it (ST-3).
 
 - **cli:** Keep workspace settings props separate from the shared workspace switcher (ST-2).
