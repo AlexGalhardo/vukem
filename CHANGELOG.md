@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **site:** Let a landing viewport that is 360px tall or shorter scroll, so the headline and Read Docs link can both be brought fully into view. Taller screens stay one viewport.
+
 - **ci:** Retry the OpenTelemetry module download when the Go proxy drops the HTTP/2 stream, and point the reviewed finance secret-scan fingerprints at the commit that landed on main.
 
 - **cli:** Keep the finance scaffold clear of the secret scan. The admin display name is assigned apart from the password hash, the local sample passwords contain `example`, and password-field labels stay allowlisted.
