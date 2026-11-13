@@ -6,8 +6,7 @@ import { defineConfig } from "astro/config";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
-// Static HTML for GitHub Pages. "/" and "/docs" open the introduction.
-// Old snapshot roots open that snapshot's introduction.
+// Static HTML for GitHub Pages. The docs and old snapshot roots open their introductions.
 export default defineConfig({
   site: "https://vukem.dev",
   output: "static",
