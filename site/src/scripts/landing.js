@@ -50,7 +50,15 @@ if (host && !motion.matches) {
     halo.rotation.y = 0.6;
     halo.scale.setScalar(1.18);
     group.add(halo);
-    group.position.set(3.4, 0.15, -2.4);
+    group.position.set(0, 0.15, -2.4);
+    // The right column is an opaque code panel, so a positive x hides the
+    // sphere. Keep its center in the open left third of whatever viewport.
+    const place = () => {
+      const distance = camera.position.z - group.position.z;
+      const halfWidth =
+        Math.tan((camera.fov * Math.PI) / 360) * distance * camera.aspect;
+      group.position.x = -halfWidth * 0.55;
+    };
     const nodes = new THREE.Points(
       geometry,
       new THREE.PointsMaterial({
@@ -65,6 +73,7 @@ if (host && !motion.matches) {
       renderer.setSize(innerWidth, innerHeight);
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
+      place();
     };
     resize();
     addEventListener("resize", resize);
