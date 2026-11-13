@@ -143,8 +143,9 @@ jobs:
         with:
           name: coverage
           path: coverage.out
-      # The Codecov GitHub App has to include this repository. OIDC replaces
-      # a repository upload token, which is not stored here.
+      # OIDC replaces a stored upload token. Codecov answers "Repository not
+      # found" until its GitHub App includes this repository. The covergate
+      # above is the required coverage check, so that rejection stays green.
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -152,7 +153,7 @@ jobs:
           use_oidc: true
           files: coverage.out
           disable_search: true
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
   vuln:
     name: Vulnerabilities

@@ -147,4 +147,4 @@ mean an optional native tool (LilyPond, FFmpeg) runs on Windows.
 | --- | --- |
 | unit + e2e (`Test`) | `ubuntu`, `windows`, `macos` × Go `stable`, `-race`, no `-short` (`oldstable` joins once Go 1.28 ships, since 1.27 is the minimum) |
 | integration (one job per driver) | `ubuntu` + services `postgres:17`, `mysql:8.4`, `mariadb:11.8`, `redis:7` (and Valkey), `mongo:9.0.4`, RustFS (S3) |
-| coverage | `ubuntu/stable`; `coverage.out` is uploaded as an artifact and to [Codecov](https://app.codecov.io/gh/AlexGalhardo/vukem). The gate is enforced by `internal/tools/covergate` |
+| coverage | `ubuntu/stable`; `coverage.out` is uploaded as an artifact and to [Codecov](https://app.codecov.io/gh/AlexGalhardo/vukem). A Codecov rejection does not fail the job. The gate is enforced by `internal/tools/covergate` |
