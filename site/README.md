@@ -83,10 +83,13 @@ Fenced code blocks accept a file name: ` ```go title="main.go" `.
 
 The root page is a standalone viewport composition; documentation keeps its
 existing routes. `src/scripts/landing.js` owns the decorative Three.js scene,
-including reduced-motion and WebGL-unavailable fallback behavior. The only
-marketing action is **Read Docs**. Native video controls provide playback.
+including reduced-motion and WebGL-unavailable fallback behavior, and the
+feature tabs in the second column. The only marketing action is **Read Docs**.
+Each tab shows a short excerpt of real framework code: routing, controllers,
+validators, models, auth, uploads, mail, rate limiting and tests.
 
-Media in `public/media/` comes from the local production workflow in the sibling
-`vukem-video` repository (`films/vukem-launch/README.md`). Retain the poster,
-caption file and final horizontal film together when updating the media.
-The workspace-root `../ROADMAP.md` coordinates the cross-repository delivery.
+The launch film is not embedded on this page. The horizontal master, poster
+and captions sit at the workspace root, outside this repository. Production
+notes stay in the sibling `vukem-video` repository
+(`films/vukem-launch/README.md`). The workspace-root `../ROADMAP.md`
+coordinates the cross-repository delivery.
