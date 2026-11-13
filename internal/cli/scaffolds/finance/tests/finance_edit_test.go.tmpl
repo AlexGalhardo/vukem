@@ -1,0 +1,96 @@
+package tests
+
+import (
+	"maps"
+	"net/http"
+	"strconv"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/workspaces"
+)
+
+func TestEditTransactionKeepsOwnershipAndValidatesMoney(t *testing.T) {
+	t.Parallel()
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	bob := signUp(t, app, "Bob", "bob@example.com")
+	acc := firstAccount(t, app, ana)
+	addTransaction(t, ana, acc, 0, "expense", "10.00", "2026-01-10").AssertRedirect("/transactions")
+	row := firstOf[models.Transaction](t, app, ana, "")
+	target := "/transactions/" + strconv.FormatInt(row.ID, 10)
+	in := map[string]any{
+		"accountId":   strconv.FormatInt(acc, 10),
+		"categoryId":  "",
+		"kind":        "income",
+		"amount":      "25.75",
+		"description": "Updated",
+		"date":        "2026-01-11",
+	}
+	ana.Client.PatchJSON(target, in).AssertOK()
+	vukemtest.AssertDatabaseHas(t, app, "transactions", map[string]any{
+		"id":           row.ID,
+		"workspace_id": ana.Workspace.ID,
+		"amount_cents": 2575,
+		"description":  "Updated",
+		"kind":         "income",
+	})
+	vukemtest.AssertDatabaseCount(t, app, "transactions", 1)
+	bob.Client.PatchJSON(target, in).AssertNotFound()
+	for _, field := range []string{"amount", "date", "kind", "accountId"} {
+		bad := maps.Clone(in)
+		switch field {
+		case "amount":
+			bad[field] = "-2"
+		case "date":
+			bad[field] = "2026-99-99"
+		case "kind":
+			bad[field] = "transfer"
+		case "accountId":
+			bad[field] = strconv.FormatInt(firstAccount(t, app, bob), 10)
+		}
+		ana.Client.PatchJSON(target, bad).AssertStatus(http.StatusUnprocessableEntity)
+	}
+	vukemtest.AssertDatabaseHas(t, app, "transactions", map[string]any{"id": row.ID, "amount_cents": 2575})
+}
+
+func TestMoveTransactionCannotBypassMonthlyQuota(t *testing.T) {
+	t.Parallel()
+	app := newApp(t)
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	acc := firstAccount(t, app, ana)
+	addTransaction(t, ana, acc, 0, "expense", "1.00", "2026-01-10")
+	row := firstOf[models.Transaction](t, app, ana, "")
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := make([]models.Transaction, 100)
+	for i := range rows {
+		rows[i] = models.Transaction{
+			AccountID: acc, Kind: "expense", AmountCents: 100, Description: "bulk", OccurredOn: "2026-02-10",
+		}
+	}
+	if err := orm.CreateMany(workspaces.WithTenant(t.Context(), ana.Workspace.ID), db, rows); err != nil {
+		t.Fatal(err)
+	}
+	in := map[string]any{
+		"accountId": strconv.FormatInt(acc, 10),
+		"kind":      "expense",
+		"amount":    "2.00",
+		"date":      "2026-02-10",
+	}
+	ana.Client.PatchJSON("/transactions/"+strconv.FormatInt(row.ID, 10), in).AssertStatus(http.StatusPaymentRequired)
+	vukemtest.AssertDatabaseHas(t, app, "transactions", map[string]any{
+		"id": row.ID, "occurred_on": "2026-01-10", "amount_cents": 100,
+	})
+}
+
+func TestSignedOutTransactionEditRequiresLogin(t *testing.T) {
+	t.Parallel()
+	app := newApp(t)
+	app.Client(t).PatchJSON("/transactions/1", map[string]any{}).AssertStatus(http.StatusUnauthorized)
+}

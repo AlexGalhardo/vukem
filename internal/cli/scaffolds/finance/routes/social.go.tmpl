@@ -1,0 +1,70 @@
+package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/accounts"
+)
+
+// Social registers optional Google sign-in through the native OAuth flow.
+func Social(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	s, err := accounts.NewSocial(app)
+	if err != nil {
+		return err
+	}
+
+	// Used OAuth states live in the cache store, so a replayed callback is
+	// refused on every instance: use a shared store (CACHE_STORE=database
+	// or Redis) when several instances run.
+	c, err := app.Cache()
+	if err != nil {
+		return err
+	}
+
+	s.States = c.Store()
+
+	r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
+		return s.Redirect(c, c.Param("provider"))
+	}).Name("social.redirect").Use(auth.Guest(acc.Web))
+
+	callback := func(c *web.Ctx) error {
+		su, err := s.User(c, c.Param("provider"))
+		if err != nil {
+			return err
+		}
+
+		u, err := acc.FindOrCreateFromSocial(c.Context(), su)
+		if err != nil {
+			return err
+		}
+
+		pending, err := acc.StartTwoFactorChallenge(c, u, false)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return c.Redirect("/two-factor-challenge")
+		}
+
+		if err := acc.Web.Login(c, u); err != nil {
+			return err
+		}
+
+		// Back to the page that asked for the login, such as a verification link.
+		target, _ := c.Session().Pull(auth.IntendedKey).(string)
+
+		return c.Redirect(web.SafeRedirect(c.Request(), target, "/dashboard"))
+	}
+
+	r.Get("/auth/{provider}/callback", callback).Name("social.callback")
+
+	return nil
+}

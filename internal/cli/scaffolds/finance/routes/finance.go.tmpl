@@ -76,6 +76,7 @@ func Finance(r *router.Router, app *vukem.App) error {
 		g.Get("/dashboard", h.Dashboard).Name("dashboard")
 		g.Get("/transactions", h.Transactions).Name("transactions.index")
 		g.Post("/transactions", h.StoreTransaction).Name("transactions.store")
+		g.Patch("/transactions/{transaction}", h.UpdateTransaction).Name("transactions.update")
 		g.Delete("/transactions/{transaction}", h.DestroyTransaction).Name("transactions.destroy")
 		g.Get("/accounts", h.Accounts).Name("accounts.index")
 		g.Post("/accounts", h.StoreAccount).Name("accounts.store")

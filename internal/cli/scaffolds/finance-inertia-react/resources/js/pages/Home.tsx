@@ -1,25 +1,5 @@
-import { Head, Link } from "@inertiajs/react";
-
-import { primary, secondary } from "../components/ui";
-
-export default function Home() {
-  return (
-    <>
-      <Head title="Personal finances" />
-      <section className="py-12 text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">Know where your money goes</h1>
-        <p className="mx-auto mt-3 max-w-xl text-zinc-600 dark:text-zinc-400">
-          Accounts, transactions, monthly budgets and charts for you and the people you share money with. Import your bank statement as a CSV.
-        </p>
-        <div className="mt-6 flex justify-center gap-3">
-          <Link href="/register" className={primary}>
-            Create an account
-          </Link>
-          <Link href="/login" className={secondary}>
-            Log in
-          </Link>
-        </div>
-      </section>
-    </>
-  );
-}
+import { Head,Link } from "@inertiajs/react";
+import { ArrowUpRight,ArrowDownLeft,Wallet,PiggyBank,Users,TrendingUp } from "lucide-react";
+import { Button } from "../components/ui/button";
+import { useFinanceI18n } from "../lib/i18n";
+export default function Home(){const {t,money}=useFinanceI18n();return <><Head title={t('personalFinance')}/><section className="finance-landing finance-landing-grid flex flex-col justify-between overflow-hidden px-6 py-9 md:px-12 lg:px-20"><div className="mx-auto grid w-full max-w-[1440px] items-center gap-16 py-10 lg:grid-cols-[1.2fr_1fr] lg:py-20"><div className="flex flex-col items-start gap-8"><p className="flex items-center gap-2 text-sm font-medium"><span className="size-2 rounded-full bg-current"/>{t('homeEyebrow')}</p><h1 className="finance-hero-title max-w-3xl">{t('homeTitle')}</h1><p className="max-w-lg text-lg leading-relaxed opacity-75">{t('homeDescription')}</p><Button asChild size="lg"><Link href="/register">{t('homeCta')}<ArrowUpRight data-icon="inline-end"/></Link></Button><Link href="/login" className="text-sm underline underline-offset-4">{t('homeSecondary')} {t('login')}</Link></div><div className="finance-preview flex flex-col gap-7 rounded-3xl border border-current/10 p-7 md:p-9"><div className="flex items-center justify-between"><Wallet className="size-7"/><span className="text-sm">{t('previewGrowth')} ↗</span></div><div><p className="text-sm opacity-60">{t('previewBalance')}</p><p className="mt-3 text-5xl font-semibold tracking-tighter">{money(2485000,'USD')}</p></div><svg viewBox="0 0 400 140" className="w-full" role="img" aria-label={t('cashFlow')}><path d="M0 130 Q30 125 45 100 T95 110 T150 65 T210 75 T260 30 T320 50 T400 8" fill="none" stroke="#398648" strokeWidth="4"/><path d="M0 130 Q30 125 45 100 T95 110 T150 65 T210 75 T260 30 T320 50 T400 8 V140 H0Z" fill="#398648" opacity=".08"/></svg><div className="grid grid-cols-2 gap-5 border-t border-current/10 pt-6">{[[t('previewIncome'),money(625000,'USD'),ArrowDownLeft],[t('previewExpense'),money(213400,'USD'),ArrowUpRight]].map(([label,value,Icon])=>{const I=Icon as typeof ArrowUpRight;return <div key={String(label)} className="flex flex-col gap-2"><I className="size-5"/><span className="text-xs opacity-60">{String(label)}</span><strong className="text-xl">{String(value)}</strong></div>})}</div></div></div><footer className="mx-auto flex w-full max-w-[1440px] flex-wrap items-center justify-between gap-6 border-t border-current/20 py-6 text-sm">{[[Wallet,'homeFeature1'],[PiggyBank,'homeFeature2'],[Users,'homeFeature3']].map(([Icon,key])=>{const I=Icon as typeof Wallet;return <span key={String(key)} className="flex items-center gap-2"><I className="size-4"/>{t(key as 'homeFeature1')}</span>})}<TrendingUp className="size-6"/></footer></section></>}

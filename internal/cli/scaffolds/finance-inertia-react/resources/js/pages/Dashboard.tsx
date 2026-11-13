@@ -1,71 +1,10 @@
-import { Head, Link } from "@inertiajs/react";
-
+import { Head,Link } from "@inertiajs/react";
+import { ArrowDownLeft,ArrowUpRight,Wallet,Plus,PiggyBank } from "lucide-react";
 import BarChart from "../components/charts/BarChart";
 import DonutChart from "../components/charts/DonutChart";
-import { Card } from "../components/ui";
-import { formatMoney, monthLabel } from "../lib/money";
+import { Card,CardHeader,CardTitle,CardDescription,CardContent } from "../components/ui/card";
+import { Button } from "../components/ui/button";
+import { Empty,EmptyHeader,EmptyMedia,EmptyTitle } from "../components/ui/empty";
+import { useFinanceI18n } from "../lib/i18n";
 import type { Page } from "../page-props";
-
-export default function Dashboard({ dashboard }: Page<"Dashboard">) {
-  const { currency, month, balanceCents, months, categories, budgets } = dashboard;
-  const current = months[months.length - 1];
-
-  return (
-    <>
-      <Head title="Dashboard" />
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <span className="text-zinc-500">{monthLabel(month)}</span>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Card title="Balance">
-          <p className="text-2xl font-semibold">{formatMoney(balanceCents, currency)}</p>
-        </Card>
-        <Card title="Income this month">
-          <p className="text-2xl font-semibold text-emerald-600">{formatMoney(current?.incomeCents ?? 0, currency)}</p>
-        </Card>
-        <Card title="Expenses this month">
-          <p className="text-2xl font-semibold text-rose-600">{formatMoney(current?.expenseCents ?? 0, currency)}</p>
-        </Card>
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Income vs expenses">
-          <BarChart points={months} currency={currency} />
-        </Card>
-        <Card title="Spending by category">
-          <DonutChart slices={categories} currency={currency} />
-        </Card>
-      </div>
-      <Card title="Budgets">
-        {budgets.length === 0 ? (
-          <p className="text-zinc-500">
-            No budgets yet.{" "}
-            <Link href="/budgets" className="text-indigo-600 hover:underline dark:text-indigo-400">
-              Set one
-            </Link>{" "}
-            to get an email at 80% and 100%.
-          </p>
-        ) : (
-          <ul className="space-y-3">
-            {budgets.map((b) => (
-              <li key={b.id}>
-                <div className="flex justify-between text-sm">
-                  <span>{b.category}</span>
-                  <span>
-                    {formatMoney(b.spentCents, currency)} of {formatMoney(b.limitCents, currency)}
-                  </span>
-                </div>
-                <div className="mt-1 h-2 rounded bg-zinc-200 dark:bg-zinc-800">
-                  <div
-                    className={`h-2 rounded ${b.percent >= 100 ? "bg-red-500" : b.percent >= 80 ? "bg-amber-500" : "bg-emerald-500"}`}
-                    style={{ width: `${Math.min(b.percent, 100)}%` }}
-                  />
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-    </>
-  );
-}
+export default function Dashboard({dashboard}:Page<'Dashboard'>){const {t,money,month:monthText}=useFinanceI18n();const {currency,month,balanceCents,months,categories,budgets}=dashboard;const current=months[months.length-1];return <><Head title={t('dashboard')}/><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex flex-col gap-2"><p className="text-sm text-muted-foreground">{monthText(month)}</p><h1 className="text-3xl font-semibold tracking-tight">{t('overview')}</h1><p className="text-sm text-muted-foreground">{t('overviewDescription')}</p></div><Button asChild><Link href="/transactions?create=1"><Plus data-icon="inline-start"/>{t('newTransaction')}</Link></Button></div><div className="grid gap-4 md:grid-cols-3">{[[t('balance'),balanceCents,Wallet],[t('incomeMonth'),current?.incomeCents??0,ArrowDownLeft],[t('expenseMonth'),current?.expenseCents??0,ArrowUpRight]].map(([title,value,Icon])=>{const I=Icon as typeof Wallet;return <Card key={String(title)}><CardHeader><div className="flex items-center justify-between"><CardDescription>{String(title)}</CardDescription><I className="size-4 text-muted-foreground"/></div><CardTitle className="text-3xl tabular-nums">{money(Number(value),currency)}</CardTitle></CardHeader></Card>})}</div><div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]"><Card><CardHeader><CardTitle>{t('cashFlow')}</CardTitle><CardDescription>{monthText(month)}</CardDescription></CardHeader><CardContent><BarChart points={months} currency={currency}/></CardContent></Card><Card><CardHeader><CardTitle>{t('spending')}</CardTitle><CardDescription>{t('expenseMonth')}</CardDescription></CardHeader><CardContent><DonutChart slices={categories} currency={currency}/></CardContent></Card></div><Card><CardHeader><CardTitle>{t('budgets')}</CardTitle><CardDescription>{t('budgetDescription')}</CardDescription></CardHeader><CardContent>{budgets.length===0?<Empty><EmptyHeader><EmptyMedia variant="icon"><PiggyBank/></EmptyMedia><EmptyTitle>{t('emptyBudgets')}</EmptyTitle></EmptyHeader><Button asChild variant="outline"><Link href="/budgets">{t('setBudget')}<ArrowUpRight data-icon="inline-end"/></Link></Button></Empty>:<ul className="flex flex-col gap-5">{budgets.map(b=><li key={b.id} className="flex flex-col gap-2"><div className="flex justify-between gap-4 text-sm"><span>{b.category}</span><span className="text-muted-foreground">{money(b.spentCents,currency)} {t('of')} {money(b.limitCents,currency)}</span></div><progress className="h-2 w-full accent-primary" max={100} value={Math.min(b.percent,100)} aria-label={b.category}/></li>)}</ul>}</CardContent></Card></>}

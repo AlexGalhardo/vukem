@@ -64,6 +64,66 @@ func back(c *web.Ctx, path string, err error) error {
 	return err
 }
 
+// transactionError keeps a browser modal open. A 422 is flashed as field
+// errors and sent back to /transactions, which Inertia reports as onError
+// so the typed values stay. JSON clients still receive the original status.
+// Returning ValidationError would use the session hook and land on "/".
+func transactionError(c *web.Ctx, err error) error {
+	if c.WantsJSON() {
+		return err
+	}
+
+	if verr, ok := errors.AsType[*errs.ValidationError](err); ok {
+		return redirectTransactionFields(c, verr.Fields)
+	}
+
+	e, ok := errors.AsType[*errs.HTTPError](err)
+	if !ok || e.Status != http.StatusUnprocessableEntity {
+		return back(c, "/transactions", err)
+	}
+
+	return redirectTransactionFields(c, map[string][]string{transactionField(e.Message): {e.Message}})
+}
+
+func transactionField(message string) string {
+	msg := strings.ToLower(message)
+
+	switch {
+	case strings.Contains(msg, "date"):
+		return "date"
+	case strings.Contains(msg, "kind"):
+		return "kind"
+	case strings.Contains(msg, "account"):
+		return "accountId"
+	case strings.Contains(msg, "category"):
+		return "categoryId"
+	case strings.Contains(msg, "description"):
+		return "description"
+	default:
+		return "amount"
+	}
+}
+
+func redirectTransactionFields(c *web.Ctx, fields map[string][]string) error {
+	if s := c.Session(); s != nil {
+		s.Flash(web.ErrorsKey, fields)
+
+		if r := c.Request(); r != nil && r.PostForm != nil {
+			s.Flash(web.OldInputKey, web.FormToMap(r.PostForm))
+		}
+	}
+
+	for _, key := range []string{"date", "kind", "accountId", "categoryId", "description", "amount"} {
+		if len(fields[key]) > 0 {
+			inertia.Flash(c, "error", fields[key][0])
+
+			break
+		}
+	}
+
+	return c.Redirect("/transactions")
+}
+
 func done(c *web.Ctx, path, message string) error {
 	inertia.Flash(c, "success", message)
 	return c.Redirect(path)
@@ -128,7 +188,7 @@ func (h *Handlers) StoreTransaction(c *web.Ctx) error {
 
 	in, err := web.Parse(c, requests.TransactionSchema)
 	if err != nil {
-		return err
+		return transactionError(c, err)
 	}
 
 	t, err := h.Fin.CreateTransaction(c.Context(), finance.TxInput{
@@ -136,7 +196,7 @@ func (h *Handlers) StoreTransaction(c *web.Ctx) error {
 		Description: in.Description, Date: in.Date,
 	})
 	if err != nil {
-		return back(c, "/transactions", err)
+		return transactionError(c, err)
 	}
 
 	if c.WantsJSON() {
@@ -144,6 +204,36 @@ func (h *Handlers) StoreTransaction(c *web.Ctx) error {
 	}
 
 	return done(c, "/transactions", "Transaction added.")
+}
+
+// UpdateTransaction changes a transaction of the current workspace.
+func (h *Handlers) UpdateTransaction(c *web.Ctx) error {
+	if err := h.can(c, workspaces.AbilityRecord); err != nil {
+		return err
+	}
+	tid, err := c.ParamInt("transaction")
+	if err != nil {
+		return err
+	}
+	in, err := web.Parse(c, requests.TransactionSchema)
+	if err != nil {
+		return transactionError(c, err)
+	}
+	row, err := h.Fin.UpdateTransaction(c.Context(), tid, finance.TxInput{
+		AccountID:   id(in.AccountID),
+		CategoryID:  id(in.CategoryID),
+		Kind:        in.Kind,
+		Amount:      in.Amount,
+		Description: in.Description,
+		Date:        in.Date,
+	})
+	if err != nil {
+		return transactionError(c, err)
+	}
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, row)
+	}
+	return done(c, "/transactions", "Transaction updated.")
 }
 
 // DestroyTransaction deletes a transaction.

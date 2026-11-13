@@ -1,0 +1,130 @@
+package seeders
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/workspaces"
+)
+
+// FinanceDemoSeeder creates a USD demo for the local administrator once.
+// Any existing membership is left intact; reruns preserve all user edits.
+type FinanceDemoSeeder struct{}
+
+// SeedApp implements vukem.AppSeeder. Run FinanceAdminSeeder first.
+func (FinanceDemoSeeder) SeedApp(ctx context.Context, app *vukem.App) error {
+	if err := localSeedOnly(app); err != nil {
+		return err
+	}
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+	u, err := orm.QueryOf[models.User](db).Where("email", financeAdminEmail(app)).First(ctx)
+	if err != nil {
+		return err
+	}
+	return db.Tx(ctx, func(tx *database.Tx) error {
+		exists, err := orm.QueryOf[models.Membership](tx).Where("user_id", u.ID).Exists(ctx)
+		if err != nil || exists {
+			return err
+		}
+
+		return seedDemoWorkspace(ctx, tx, u.ID)
+	})
+}
+
+type demoFixture struct {
+	Name, Kind string
+	Amount     int64
+	Note       string
+	Limit      int64
+}
+
+func demoFixtures() []demoFixture {
+	return []demoFixture{
+		{"Salary", models.KindIncome, 480000, "Monthly salary", 0},
+		{"Housing", models.KindExpense, 145000, "Rent", 160000},
+		{"Groceries", models.KindExpense, 18940, "Groceries", 60000},
+		{"Transport", models.KindExpense, 6500, "Transit pass", 15000},
+	}
+}
+
+func seedDemoWorkspace(ctx context.Context, tx *database.Tx, userID int64) error {
+	ws := models.Workspace{Name: "My finances", Currency: "USD"}
+	if err := orm.Create(ctx, tx, &ws); err != nil {
+		return err
+	}
+
+	member := models.Membership{WorkspaceID: ws.ID, UserID: userID, Role: models.RoleOwner}
+	if err := orm.Create(ctx, tx, &member); err != nil {
+		return err
+	}
+
+	tenant := workspaces.WithTenant(ctx, ws.ID)
+	account := models.Account{WorkspaceID: ws.ID, Name: "Checking", Kind: "checking", OpeningCents: 125000}
+	if err := orm.Create(tenant, tx, &account); err != nil {
+		return err
+	}
+
+	ids, err := seedDemoCategories(tenant, tx, ws.ID)
+	if err != nil {
+		return err
+	}
+
+	return seedDemoMonths(tenant, tx, ws.ID, account.ID, ids)
+}
+
+func seedDemoCategories(ctx context.Context, tx *database.Tx, workspaceID int64) ([]int64, error) {
+	items := demoFixtures()
+	ids := make([]int64, len(items))
+
+	for i, item := range items {
+		category := models.Category{WorkspaceID: workspaceID, Name: item.Name, Kind: item.Kind}
+		if err := orm.Create(ctx, tx, &category); err != nil {
+			return nil, err
+		}
+
+		ids[i] = category.ID
+		if item.Limit == 0 {
+			continue
+		}
+
+		budget := models.Budget{WorkspaceID: workspaceID, CategoryID: category.ID, LimitCents: item.Limit}
+		if err := orm.Create(ctx, tx, &budget); err != nil {
+			return nil, err
+		}
+	}
+
+	return ids, nil
+}
+
+// June through November 2026: six months for the dashboard chart.
+func seedDemoMonths(ctx context.Context, tx *database.Tx, workspaceID, accountID int64, ids []int64) error {
+	items := demoFixtures()
+
+	for month := 6; month <= 11; month++ {
+		for i, item := range items {
+			transaction := models.Transaction{
+				WorkspaceID:  workspaceID,
+				AccountID:    accountID,
+				CategoryID:   sql.Null[int64]{V: ids[i], Valid: true},
+				Kind:         item.Kind,
+				AmountCents:  item.Amount,
+				Description:  item.Note,
+				OccurredOn:   fmt.Sprintf("2026-%02d-%02d", month, 1+i),
+			}
+			if err := orm.Create(ctx, tx, &transaction); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}

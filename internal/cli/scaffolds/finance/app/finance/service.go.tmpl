@@ -2,7 +2,6 @@ package finance
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -165,8 +164,9 @@ type TxFilter struct {
 type TxRow struct {
 	models.Transaction
 
-	AccountName  string `json:"accountName"`
-	CategoryName string `json:"categoryName"`
+	CategoryIDValue *int64 `json:"categoryId"`
+	AccountName     string `json:"accountName"`
+	CategoryName    string `json:"categoryName"`
 }
 
 func validDate(s string) bool {
@@ -227,6 +227,9 @@ func (s *Service) Transactions(ctx context.Context, f TxFilter) ([]TxRow, error)
 	for i := range txs {
 		t := &txs[i]
 		rows[i] = TxRow{Transaction: *t, AccountName: an[t.AccountID], CategoryName: cn[t.CategoryID.V]}
+		if t.CategoryID.Valid {
+			rows[i].CategoryIDValue = &t.CategoryID.V
+		}
 	}
 
 	return rows, nil
@@ -236,66 +239,7 @@ func (s *Service) Transactions(ctx context.Context, f TxFilter) ([]TxRow, error)
 // must belong to the workspace, the amount is positive, and the Free plan
 // stops at its transactions per month. An expense may raise a budget alert.
 func (s *Service) CreateTransaction(ctx context.Context, in TxInput) (models.Transaction, error) {
-	if in.Kind != models.KindIncome && in.Kind != models.KindExpense {
-		return models.Transaction{}, errKind
-	}
-
-	if !validDate(in.Date) {
-		return models.Transaction{}, errDate
-	}
-
-	cents, err := ParseAmount(in.Amount)
-	if err != nil || cents <= 0 {
-		return models.Transaction{}, errAmountIn
-	}
-
-	accounts := workspaces.Scoped[models.Account](ctx, s.DB)
-	if ok, err := accounts.Where("id", in.AccountID).Exists(ctx); err != nil || !ok {
-		return models.Transaction{}, firstErr(err, errAccount)
-	}
-
-	t := models.Transaction{
-		AccountID: in.AccountID, Kind: in.Kind, AmountCents: cents,
-		Description: strings.TrimSpace(in.Description), OccurredOn: in.Date,
-	}
-
-	if in.CategoryID > 0 {
-		cats := workspaces.Scoped[models.Category](ctx, s.DB)
-		ok, err := cats.Where("id", in.CategoryID).Where("kind", in.Kind).Exists(ctx)
-		if err != nil || !ok {
-			return models.Transaction{}, firstErr(err, errCategory)
-		}
-
-		t.CategoryID = sql.Null[int64]{V: in.CategoryID, Valid: true}
-	}
-
-	lim, err := s.WS.Limits(ctx)
-	if err != nil {
-		return models.Transaction{}, err
-	}
-
-	from, to := monthBounds(MonthOf(in.Date))
-
-	n, err := workspaces.Scoped[models.Transaction](ctx, s.DB).WhereBetween("occurred_on", from, to).Count(ctx)
-	if err != nil {
-		return models.Transaction{}, err
-	}
-
-	if err := lim.CheckTransactions(int(n) + 1); err != nil {
-		return models.Transaction{}, err
-	}
-
-	if err := orm.Create(ctx, s.DB, &t); err != nil {
-		return t, err
-	}
-
-	if t.Kind == models.KindExpense && t.CategoryID.Valid {
-		if err := s.alertBudget(ctx, t.CategoryID.V, MonthOf(t.OccurredOn), t.AmountCents); err != nil {
-			return t, err
-		}
-	}
-
-	return t, nil
+	return s.saveTransaction(ctx, 0, in)
 }
 
 func firstErr(err, fallback error) error {

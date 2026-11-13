@@ -12,9 +12,11 @@ import (
 
 // Shared is the props every page receives (inertia.Config.SharedType).
 type Shared struct {
-	AppName   string           `json:"appName"`
-	Auth      *SharedAuth      `json:"auth"`
-	Workspace *SharedWorkspace `json:"workspace"` // set on the pages inside a workspace
+	AppName       string           `json:"appName"`
+	Auth          *SharedAuth      `json:"auth"`
+	Workspace     *SharedWorkspace `json:"workspace"` // set on the pages inside a workspace
+	Locale        string           `json:"locale"`
+	GoogleEnabled bool             `json:"googleEnabled"`
 }
 
 // SharedAuth is the signed-in user, or null.

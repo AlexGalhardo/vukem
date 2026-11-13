@@ -1,24 +1,25 @@
-import { formatMoney } from "../../lib/money";
+import { useFinanceI18n } from "../../lib/i18n";
 
 type Slice = { category: string; cents: number };
 
-const colors = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#64748b"];
+const colors = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 
 // DonutChart draws the spending by category as SVG circle strokes with a
 // legend; each slice is a dash array of one circle, so there is no path maths.
 export default function DonutChart({ slices, currency }: { slices: Slice[]; currency: string }) {
+  const {t,money:formatMoney}=useFinanceI18n();
   const total = slices.reduce((sum, s) => sum + s.cents, 0);
   const radius = 50;
   const circumference = 2 * Math.PI * radius;
   let offset = 0;
 
   if (total === 0) {
-    return <p className="text-zinc-500">No spending this month.</p>;
+    return <p className="text-muted-foreground">{t("emptyTransactions")}</p>;
   }
 
   return (
     <div className="flex items-center gap-6">
-      <svg viewBox="0 0 140 140" role="img" aria-label="Spending by category" className="h-36 w-36 shrink-0 -rotate-90">
+      <svg viewBox="0 0 140 140" role="img" aria-label={t("spending")} className="size-36 shrink-0 -rotate-90">
         {slices.map((s, i) => {
           const length = (s.cents / total) * circumference;
           const circle = (
@@ -40,10 +41,10 @@ export default function DonutChart({ slices, currency }: { slices: Slice[]; curr
           return circle;
         })}
       </svg>
-      <ul className="space-y-1 text-sm">
+      <ul className="flex flex-col gap-1 text-sm">
         {slices.map((s, i) => (
           <li key={s.category} className="flex items-center gap-2">
-            <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: colors[i % colors.length] }} />
+            <span className="inline-block size-3 rounded-sm" style={{ backgroundColor: colors[i % colors.length] }} />
             {s.category}: {formatMoney(s.cents, currency)}
           </li>
         ))}

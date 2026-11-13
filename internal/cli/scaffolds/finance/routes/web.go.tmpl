@@ -1,13 +1,16 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 
 	vukem "github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
 
+	"{{.Module}}/app/accounts"
 	"{{.Module}}/app/controllers"
 	"{{.Module}}/resources"
 )
@@ -23,8 +26,39 @@ func Web(r *router.Router, app *vukem.App) error {
 	r.Use(app.Inertia.Middleware, shareProps(app))
 
 	r.Get("/", controllers.Home).Name("home")
+	r.Post("/locale", setLocale).Name("locale")
 
 	return nil
+}
+
+// setLocale stores en, pt-BR or es on the session. Anything else stays English.
+func setLocale(c *web.Ctx) error {
+	s := c.Session()
+	if s == nil {
+		return c.Back("/")
+	}
+
+	s.Put("locale", financeLocale(c))
+
+	return c.Back("/")
+}
+
+func financeLocale(c *web.Ctx) string {
+	lang := c.Request().FormValue("language")
+	if lang == "" {
+		var body struct {
+			Language string `json:"language"`
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&body)
+		lang = body.Language
+	}
+
+	switch lang {
+	case "en", "pt-BR", "es":
+		return lang
+	default:
+		return "en"
+	}
 }
 
 // shareProps adds the props every page receives (usePage().props).
@@ -32,7 +66,24 @@ func shareProps(app *vukem.App) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			inertia.Share(r.Context(), "appName", app.Config.Name)
+			inertia.Share(r.Context(), "locale", sharedLocale(r))
+			inertia.Share(r.Context(), "googleEnabled", accounts.GoogleEnabled(app))
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+func sharedLocale(r *http.Request) string {
+	s := web.SessionFrom(r.Context())
+	if s == nil {
+		return "en"
+	}
+
+	lang, _ := s.Get("locale").(string)
+	switch lang {
+	case "en", "pt-BR", "es":
+		return lang
+	default:
+		return "en"
 	}
 }

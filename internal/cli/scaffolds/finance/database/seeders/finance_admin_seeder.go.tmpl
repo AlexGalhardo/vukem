@@ -1,0 +1,105 @@
+package seeders
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"net/mail"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth/hash"
+	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/orm"
+
+	"{{.Module}}/app/admin"
+	"{{.Module}}/app/models"
+)
+
+// FinanceAdminSeeder creates an explicitly requested local development admin.
+// Existing users are never promoted, verified or given a new password.
+type FinanceAdminSeeder struct{}
+
+// SeedApp implements vukem.AppSeeder. No production mode (including --force)
+// can run this local convenience seed.
+func (FinanceAdminSeeder) SeedApp(ctx context.Context, app *vukem.App) error {
+	if err := localSeedOnly(app); err != nil {
+		return err
+	}
+	email := financeAdminEmail(app)
+	if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
+		return errors.New("finance seed: FINANCE_ADMIN_EMAIL must be an email address")
+	}
+	candidate := models.User{Email: email}
+	candidate.EmailVerifiedAt.V, candidate.EmailVerifiedAt.Valid = time.Now().UTC(), true
+	if !admin.NewAdmins(app.Source.Get("ADMIN_EMAILS")).Has(&candidate) {
+		return errors.New("finance seed: add FINANCE_ADMIN_EMAIL to ADMIN_EMAILS")
+	}
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+	_, err = orm.QueryOf[models.User](db).Where("email", email).First(ctx)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, orm.ErrNotFound) {
+		return err
+	}
+	password := app.Source.Get("FINANCE_ADMIN_PASSWORD")
+	if password != "" && len(password) < 16 {
+		return errors.New("finance seed: FINANCE_ADMIN_PASSWORD must contain at least 16 characters")
+	}
+	var credentialPath string
+	if password == "" {
+		password = rand.Text() + rand.Text()
+		if err := os.MkdirAll("storage", 0o700); err != nil {
+			return err
+		}
+		// A separate file per creation avoids overwriting an existing credential.
+		f, err := os.CreateTemp("storage", "finance-admin-*.txt")
+		if err != nil {
+			return err
+		}
+		credentialPath = f.Name()
+		if _, err := fmt.Fprintf(f, "Email: %s\nPassword: %s\n", email, password); err != nil {
+			return errors.Join(err, f.Close(), os.Remove(credentialPath))
+		}
+		if err := f.Close(); err != nil {
+			return errors.Join(err, os.Remove(credentialPath))
+		}
+	}
+	h, err := hash.Default().Make(password)
+	if err == nil {
+		candidate.Name, candidate.Password = "Local administrator", h
+		err = orm.Create(ctx, db, &candidate)
+	}
+	if err != nil {
+		if credentialPath != "" {
+			err = errors.Join(err, os.Remove(credentialPath))
+		}
+		return err
+	}
+	if credentialPath != "" {
+		app.Log.InfoContext(ctx, "local administrator credentials saved", "path", credentialPath)
+	}
+	return nil
+}
+
+func financeAdminEmail(app *vukem.App) string {
+	email := strings.ToLower(strings.TrimSpace(app.Source.Get("FINANCE_ADMIN_EMAIL")))
+	if email == "" {
+		return "admin@example.test"
+	}
+	return email
+}
+
+func localSeedOnly(app *vukem.App) error {
+	if app.Source.Env() != config.Development && app.Source.Env() != config.Test {
+		return errors.New("finance seed: available only in development or test")
+	}
+	return nil
+}

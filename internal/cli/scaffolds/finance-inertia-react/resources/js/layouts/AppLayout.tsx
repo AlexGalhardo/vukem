@@ -1,101 +1,21 @@
 import { Link, router, usePage } from "@inertiajs/react";
 import type { ReactNode } from "react";
-
+import { ArrowLeftRight, ChartNoAxesCombined, Wallet, Tags, PiggyBank, Users, Settings, Upload, LogOut, ArrowUpRight, ShieldCheck } from "lucide-react";
 import type { SharedProps } from "../page-props";
+import { useFinanceI18n } from "../lib/i18n";
+import Preferences from "../components/Preferences";
+import { Button } from "../components/ui/button";
+import { Badge } from "../components/ui/badge";
+import { NativeSelect,NativeSelectOption } from "../components/ui/native-select";
+import { TooltipProvider } from "../components/ui/tooltip";
+import { SidebarProvider,Sidebar,SidebarHeader,SidebarContent,SidebarGroup,SidebarGroupLabel,SidebarGroupContent,SidebarMenu,SidebarMenuItem,SidebarMenuButton,SidebarFooter,SidebarInset,SidebarTrigger } from "../components/ui/sidebar";
 
-const link = "text-indigo-600 hover:underline dark:text-indigo-400";
-
-const nav = [
-  ["/dashboard", "Dashboard"],
-  ["/transactions", "Transactions"],
-  ["/accounts", "Accounts"],
-  ["/categories", "Categories"],
-  ["/budgets", "Budgets"],
-  ["/import", "Import"],
-  ["/workspace", "Workspace"],
-  ["/billing", "Billing"],
-] as const;
-
-export default function AppLayout({ children }: { children: ReactNode }) {
-  const page = usePage<SharedProps>();
-  const { auth, workspace } = page.props;
-  const success = page.flash?.success ?? page.flash?.status;
-  const error = page.flash?.error;
-
-  return (
-    <>
-      <header className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3">
-          <Link href={auth?.user ? "/dashboard" : "/"} className="font-bold">
-            {page.props.appName}
-          </Link>
-          {auth?.user ? (
-            <div className="flex flex-wrap items-center gap-4">
-              {workspace && (
-                <label className="flex items-center gap-2 text-sm">
-                  <span className="sr-only">Workspace</span>
-                  <select
-                    value={workspace.current.id}
-                    onChange={(e) => router.post(`/workspaces/${e.target.value}/switch`)}
-                    className="rounded-md border border-zinc-300 bg-transparent px-2 py-1 dark:border-zinc-700"
-                  >
-                    {workspace.all.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs font-medium uppercase text-indigo-800 dark:bg-indigo-950 dark:text-indigo-200">
-                    {workspace.plan}
-                  </span>
-                </label>
-              )}
-              {workspace?.admin && (
-                <Link href="/admin" className={link}>
-                  Admin
-                </Link>
-              )}
-              <Link href="/user/two-factor" className={link}>
-                {auth.user.name}
-              </Link>
-              <Link href="/logout" method="post" as="button" className={link}>
-                Log out
-              </Link>
-            </div>
-          ) : (
-            <div className="flex items-center gap-4">
-              <Link href="/login" className={link}>
-                Log in
-              </Link>
-              <Link href="/register" className={link}>
-                Register
-              </Link>
-            </div>
-          )}
-        </div>
-        {auth?.user && workspace && (
-          <nav className="mx-auto mt-3 flex max-w-5xl flex-wrap gap-4 text-sm">
-            {nav.map(([href, label]) => (
-              <Link key={href} href={href} className={link}>
-                {label}
-              </Link>
-            ))}
-          </nav>
-        )}
-      </header>
-      <main className="mx-auto max-w-5xl space-y-4 p-4">
-        {typeof success === "string" && (
-          <p role="status" className="rounded-md bg-indigo-50 px-4 py-3 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-100">
-            {success}
-          </p>
-        )}
-        {typeof error === "string" && (
-          <p role="alert" className="rounded-md bg-red-50 px-4 py-3 text-red-900 dark:bg-red-950 dark:text-red-100">
-            {error}
-          </p>
-        )}
-        {children}
-      </main>
-    </>
-  );
+const nav=[['/dashboard','dashboard',ChartNoAxesCombined],['/transactions','transactions',ArrowLeftRight],['/accounts','accounts',Wallet],['/categories','categories',Tags],['/budgets','budgets',PiggyBank],['/import','import',Upload],['/workspace','workspace',Users],['/billing','billing',Settings]] as const;
+export default function AppLayout({children}:{children:ReactNode}) {
+ const page=usePage<SharedProps>();const {auth,workspace}=page.props;const {t}=useFinanceI18n();
+ const success=page.flash?.success??page.flash?.status;const error=page.flash?.error;
+ const notices=<>{typeof success==='string'&&<p role="status" className="rounded-lg border bg-muted p-4 text-sm">{success}</p>}{typeof error==='string'&&<p role="alert" className="rounded-lg border border-destructive p-4 text-sm text-destructive">{error}</p>}</>;
+ const brand=<Link href={auth?.user?'/dashboard':'/'} className="flex items-center gap-2 text-lg font-semibold tracking-tight"><span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground"><ArrowUpRight className="size-5"/></span>{page.props.appName}</Link>;
+ if(!auth?.user||!workspace)return <TooltipProvider><header className="flex h-20 items-center justify-between border-b px-5 md:px-12">{brand}<div className="flex items-center gap-3"><Preferences/><Button asChild variant="ghost"><Link href="/login">{t('login')}</Link></Button></div></header>{page.url.split('?')[0]==='/'?<main>{notices}{children}</main>:<main className="mx-auto flex min-h-[calc(100svh-5rem)] max-w-md flex-col justify-center gap-6 px-5 py-12">{notices}{children}</main>}</TooltipProvider>;
+ return <TooltipProvider><SidebarProvider><Sidebar><SidebarHeader className="gap-6 p-5">{brand}<div className="flex flex-col gap-2"><NativeSelect aria-label={t('workspace')} value={workspace.current.id} onChange={e=>router.post(`/workspaces/${e.target.value}/switch`)}>{workspace.all.map(w=><NativeSelectOption key={w.id} value={w.id}>{w.name}</NativeSelectOption>)}</NativeSelect><div><Badge variant="secondary">{workspace.plan}</Badge></div></div></SidebarHeader><SidebarContent><SidebarGroup><SidebarGroupLabel>{t('personalFinance')}</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>{nav.map(([href,key,Icon])=><SidebarMenuItem key={href}><SidebarMenuButton asChild isActive={page.url.split('?')[0]===href} tooltip={t(key)}><Link href={href}><Icon/><span>{t(key)}</span></Link></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu></SidebarGroupContent></SidebarGroup></SidebarContent><SidebarFooter className="p-4"><SidebarMenu>{workspace.admin&&<SidebarMenuItem><SidebarMenuButton asChild><Link href="/admin"><ShieldCheck/><span>{t('admin')}</span></Link></SidebarMenuButton></SidebarMenuItem>}<SidebarMenuItem><SidebarMenuButton asChild><Link href="/user/two-factor"><Settings/><span>{auth.user.name}</span></Link></SidebarMenuButton></SidebarMenuItem><SidebarMenuItem><SidebarMenuButton asChild><Link href="/logout" method="post" as="button"><LogOut/><span>{t('logout')}</span></Link></SidebarMenuButton></SidebarMenuItem></SidebarMenu></SidebarFooter></Sidebar><SidebarInset><header className="flex h-16 items-center justify-between border-b px-5 lg:px-8"><div className="flex items-center gap-3"><SidebarTrigger aria-label={t('navigate')}/><span className="text-sm text-muted-foreground">{workspace.current.name}</span></div><Preferences/></header><main className="finance-page mx-auto flex w-full max-w-7xl flex-col gap-7 p-5 lg:p-8">{notices}{children}</main></SidebarInset></SidebarProvider></TooltipProvider>;
 }

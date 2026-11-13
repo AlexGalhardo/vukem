@@ -1,143 +1,34 @@
-import { Head, Link, router, useForm, usePage } from "@inertiajs/react";
-import type { FormEvent } from "react";
-
-import Field from "../components/Field";
-import { Card, Select, danger, primary, secondary } from "../components/ui";
-import { formatMoney } from "../lib/money";
-import type { Page, SharedProps } from "../page-props";
-
-export default function Transactions({ transactions, accounts, categories, filters, today }: Page<"Transactions">) {
-  const currency = usePage<SharedProps>().props.workspace?.current.currency ?? "USD";
-  const form = useForm({
-    accountId: String(accounts[0]?.id ?? ""),
-    categoryId: "",
-    kind: "expense",
-    amount: "",
-    description: "",
-    date: today,
-  });
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    form.post("/transactions", { onSuccess: () => form.reset("amount", "description") });
-  };
-
-  const filter = (name: string, value: string) => {
-    const next = { ...filters, [name]: value };
-    router.get("/transactions", Object.fromEntries(Object.entries(next).filter(([, v]) => v)), {
-      preserveState: true,
-      replace: true,
-    });
-  };
-
-  const kindCategories = categories.filter((c) => c.kind === form.data.kind);
-
-  return (
-    <>
-      <Head title="Transactions" />
-      <h1 className="text-2xl font-semibold">Transactions</h1>
-      <Card title="New transaction">
-        <form onSubmit={submit} className="grid gap-3 sm:grid-cols-3">
-          <Select label="Kind" value={form.data.kind} onChange={(e) => form.setData({ ...form.data, kind: e.target.value, categoryId: "" })} error={form.errors.kind}>
-            <option value="expense">Expense</option>
-            <option value="income">Income</option>
-          </Select>
-          <Field label="Amount" inputMode="decimal" placeholder="12.50" required value={form.data.amount} onChange={(e) => form.setData("amount", e.target.value)} error={form.errors.amount} />
-          <Field label="Date" type="date" required value={form.data.date} onChange={(e) => form.setData("date", e.target.value)} error={form.errors.date} />
-          <Select label="Account" value={form.data.accountId} onChange={(e) => form.setData("accountId", e.target.value)} error={form.errors.accountId}>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </Select>
-          <Select label="Category" value={form.data.categoryId} onChange={(e) => form.setData("categoryId", e.target.value)} error={form.errors.categoryId}>
-            <option value="">None</option>
-            {kindCategories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-          <Field label="Description" value={form.data.description} onChange={(e) => form.setData("description", e.target.value)} error={form.errors.description} />
-          <div className="sm:col-span-3">
-            <button type="submit" disabled={form.processing} className={primary}>
-              Add
-            </button>
-          </div>
-        </form>
-      </Card>
-      <Card>
-        <div className="mb-4 grid gap-3 sm:grid-cols-5">
-          <Field label="From" type="date" value={filters.from} onChange={(e) => filter("from", e.target.value)} />
-          <Field label="To" type="date" value={filters.to} onChange={(e) => filter("to", e.target.value)} />
-          <Select label="Category" value={filters.categoryId} onChange={(e) => filter("categoryId", e.target.value)}>
-            <option value="">Any</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-          <Select label="Account" value={filters.accountId} onChange={(e) => filter("accountId", e.target.value)}>
-            <option value="">Any</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </Select>
-          <Select label="Kind" value={filters.kind} onChange={(e) => filter("kind", e.target.value)}>
-            <option value="">Any</option>
-            <option value="expense">Expense</option>
-            <option value="income">Income</option>
-          </Select>
-        </div>
-        {transactions.length === 0 ? (
-          <p className="text-zinc-500">
-            No transactions match.{" "}
-            <Link href="/import" className="text-indigo-600 hover:underline dark:text-indigo-400">
-              Import a statement
-            </Link>{" "}
-            or add one above.
-          </p>
-        ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="text-zinc-500">
-              <tr>
-                <th className="py-2">Date</th>
-                <th>Description</th>
-                <th>Category</th>
-                <th>Account</th>
-                <th className="text-right">Amount</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-              {transactions.map((t) => (
-                <tr key={t.id}>
-                  <td className="py-2">{t.occurred_on}</td>
-                  <td>{t.description}</td>
-                  <td>{t.categoryName}</td>
-                  <td>{t.accountName}</td>
-                  <td className={`text-right ${t.kind === "income" ? "text-emerald-600" : "text-rose-600"}`}>
-                    {t.kind === "income" ? "+" : "-"}
-                    {formatMoney(t.amount_cents, currency)}
-                  </td>
-                  <td className="text-right">
-                    <Link href={`/transactions/${t.id}`} method="delete" as="button" className={danger}>
-                      Delete
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <button type="button" className={`${secondary} mt-4`} onClick={() => router.get("/transactions")}>
-          Clear filters
-        </button>
-      </Card>
-    </>
-  );
+import { Head,Link,router,useForm,usePage } from "@inertiajs/react";
+import { useState,type FormEvent } from "react";
+import { Plus,Pencil,Trash2,ArrowLeftRight,Upload } from "lucide-react";
+import { Button } from "../components/ui/button";
+import { Card,CardHeader,CardTitle,CardContent } from "../components/ui/card";
+import { Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription,DialogFooter } from "../components/ui/dialog";
+import { Field,FieldGroup,FieldLabel,FieldError } from "../components/ui/field";
+import { Input } from "../components/ui/input";
+import { NativeSelect,NativeSelectOption } from "../components/ui/native-select";
+import { Table,TableHeader,TableBody,TableRow,TableHead,TableCell } from "../components/ui/table";
+import { Empty,EmptyHeader,EmptyMedia,EmptyTitle,EmptyDescription,EmptyContent } from "../components/ui/empty";
+import { useFinanceI18n } from "../lib/i18n";
+import { toInput } from "../lib/money";
+import type { Page,SharedProps } from "../page-props";
+export default function Transactions({transactions,accounts,categories,filters,today}:Page<'Transactions'>){
+ const {t,money,date}=useFinanceI18n();const page=usePage<SharedProps>();const currency=page.props.workspace?.current.currency??'USD';
+ const [open,setOpen]=useState(()=>typeof window!=='undefined'&&new URLSearchParams(window.location.search).get('create')==='1');const [editing,setEditing]=useState<number|null>(null);
+ const form=useForm({accountId:String(accounts[0]?.id??''),categoryId:'',kind:'expense',amount:'',description:'',date:today});
+ function create(){setEditing(null);form.setData({accountId:String(accounts[0]?.id??''),categoryId:'',kind:'expense',amount:'',description:'',date:today});form.clearErrors();setOpen(true);}
+ function edit(item:typeof transactions[number]){setEditing(item.id);form.clearErrors();form.setData({accountId:String(item.account_id),categoryId:item.categoryId?String(item.categoryId):'',kind:item.kind,amount:toInput(item.amount_cents),description:item.description,date:item.occurred_on.slice(0,10)});setOpen(true);}
+ function submit(e:FormEvent){e.preventDefault();const options={preserveState:true as const,onSuccess:()=>{setOpen(false);form.reset();},onError:()=>setOpen(true)};if(editing!==null)form.patch(`/transactions/${editing}`,options);else form.post('/transactions',options);}
+ function filter(name:string,value:string){const next={...filters,[name]:value};router.get('/transactions',Object.fromEntries(Object.entries(next).filter(([,v])=>v)),{preserveState:true,replace:true});}
+ const kindCategories=categories.filter(c=>c.kind===form.data.kind);
+ return <><Head title={t('transactions')}/><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex flex-col gap-2"><h1 className="text-3xl font-semibold tracking-tight">{t('transactions')}</h1><p className="text-sm text-muted-foreground">{t('transactionDescription')}</p></div><Button onClick={create}><Plus data-icon="inline-start"/>{t('newTransaction')}</Button></div>
+ <Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>{t(editing!==null?'editTransaction':'newTransaction')}</DialogTitle><DialogDescription>{t('modalDescription')}</DialogDescription></DialogHeader><form onSubmit={submit} className="flex flex-col gap-6"><FieldGroup>
+ <Field data-invalid={!!form.errors.kind}><FieldLabel htmlFor="transaction-kind">{t('kind')}</FieldLabel><NativeSelect id="transaction-kind" value={form.data.kind} aria-invalid={!!form.errors.kind} onChange={e=>form.setData({...form.data,kind:e.target.value,categoryId:''})}><NativeSelectOption value="expense">{t('expense')}</NativeSelectOption><NativeSelectOption value="income">{t('income')}</NativeSelectOption></NativeSelect><FieldError>{form.errors.kind}</FieldError></Field>
+ {(['amount','date','description'] as const).map(key=><Field key={key} data-invalid={!!form.errors[key]}><FieldLabel htmlFor={`transaction-${key}`}>{t(key)}</FieldLabel><Input id={`transaction-${key}`} type={key==='date'?'date':'text'} inputMode={key==='amount'?'decimal':undefined} required={key!=='description'} placeholder={key==='amount'?'12.50':undefined} value={form.data[key]} aria-invalid={!!form.errors[key]} onChange={e=>form.setData(key,e.target.value)}/><FieldError>{form.errors[key]}</FieldError></Field>)}
+ <Field data-invalid={!!form.errors.accountId}><FieldLabel htmlFor="transaction-account">{t('account')}</FieldLabel><NativeSelect id="transaction-account" value={form.data.accountId} required aria-invalid={!!form.errors.accountId} onChange={e=>form.setData('accountId',e.target.value)}>{accounts.map(a=><NativeSelectOption key={a.id} value={a.id}>{a.name}</NativeSelectOption>)}</NativeSelect><FieldError>{form.errors.accountId}</FieldError></Field>
+ <Field data-invalid={!!form.errors.categoryId}><FieldLabel htmlFor="transaction-category">{t('category')}</FieldLabel><NativeSelect id="transaction-category" value={form.data.categoryId} aria-invalid={!!form.errors.categoryId} onChange={e=>form.setData('categoryId',e.target.value)}><NativeSelectOption value="">{t('none')}</NativeSelectOption>{kindCategories.map(c=><NativeSelectOption key={c.id} value={c.id}>{c.name}</NativeSelectOption>)}</NativeSelect><FieldError>{form.errors.categoryId}</FieldError></Field>
+ </FieldGroup><DialogFooter><Button type="button" variant="outline" onClick={()=>setOpen(false)}>{t('cancel')}</Button><Button type="submit" disabled={form.processing||accounts.length===0}>{t(form.processing?'working':editing!==null?'save':'add')}</Button></DialogFooter></form></DialogContent></Dialog>
+ <Card><CardHeader><CardTitle>{t('activity')}</CardTitle></CardHeader><CardContent className="flex flex-col gap-6"><FieldGroup className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{(['from','to'] as const).map(key=><Field key={key}><FieldLabel htmlFor={`filter-${key}`}>{t(key)}</FieldLabel><Input id={`filter-${key}`} type="date" value={filters[key]} onChange={e=>filter(key,e.target.value)}/></Field>)}{(['categoryId','accountId','kind'] as const).map(key=><Field key={key}><FieldLabel htmlFor={`filter-${key}`}>{t(key==='categoryId'?'category':key==='accountId'?'account':'kind')}</FieldLabel><NativeSelect id={`filter-${key}`} value={filters[key]} onChange={e=>filter(key,e.target.value)}><NativeSelectOption value="">{t('any')}</NativeSelectOption>{key==='kind'?<><NativeSelectOption value="expense">{t('expense')}</NativeSelectOption><NativeSelectOption value="income">{t('income')}</NativeSelectOption></>:(key==='categoryId'?categories:accounts).map(item=><NativeSelectOption key={item.id} value={item.id}>{item.name}</NativeSelectOption>)}</NativeSelect></Field>)}</FieldGroup>
+ {transactions.length===0?<Empty><EmptyHeader><EmptyMedia variant="icon"><ArrowLeftRight/></EmptyMedia><EmptyTitle>{t('emptyTransactions')}</EmptyTitle><EmptyDescription>{t('emptyTransactionsDescription')}</EmptyDescription></EmptyHeader><EmptyContent><Button variant="outline" asChild><Link href="/import"><Upload data-icon="inline-start"/>{t('import')}</Link></Button></EmptyContent></Empty>:<Table><TableHeader><TableRow>{(['date','description','category','account','amount','actions'] as const).map(key=><TableHead key={key}>{t(key)}</TableHead>)}</TableRow></TableHeader><TableBody>{transactions.map(item=><TableRow key={item.id}><TableCell className="whitespace-nowrap text-muted-foreground">{date(item.occurred_on)}</TableCell><TableCell className="font-medium">{item.description||t(item.kind==='income'?'income':'expense')}</TableCell><TableCell>{item.categoryName||'—'}</TableCell><TableCell>{item.accountName}</TableCell><TableCell className="whitespace-nowrap tabular-nums">{item.kind==='income'?'+':'−'}{money(item.amount_cents,currency)}</TableCell><TableCell><div className="flex justify-end gap-1"><Button variant="ghost" size="icon" onClick={()=>edit(item)} aria-label={`${t('edit')} ${item.description}`}><Pencil/></Button><Button variant="ghost" size="icon" asChild><Link href={`/transactions/${item.id}`} method="delete" as="button" aria-label={`${t('delete')} ${item.description}`}><Trash2/></Link></Button></div></TableCell></TableRow>)}</TableBody></Table>}
+ <div><Button variant="outline" onClick={()=>router.get('/transactions')}>{t('clearFilters')}</Button></div></CardContent></Card></>;
 }

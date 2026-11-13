@@ -32,7 +32,16 @@ func financeEdits() []exampleEdit {
 		{
 			"database/seeders/registry.go",
 			"\treturn []vukem.Seeder{\n\t\tPostsSeeder{},\n\t}\n",
-			"\treturn []vukem.Seeder{}\n",
+			"\treturn []vukem.Seeder{}\n}\n\n" +
+				"// AllApp lists seeders that need the booted app. vukem db:seed runs them\n" +
+				"// after All. Both finance seeders refuse production.\n" +
+				"func AllApp() []vukem.AppSeeder {\n\treturn []vukem.AppSeeder{\n" +
+				"\t\tFinanceAdminSeeder{},\n\t\tFinanceDemoSeeder{},\n\t}\n",
+		},
+		{
+			"bootstrap/app.go",
+			"\t\tvukem.WithSeeders(seeders.All()...),\n",
+			"\t\tvukem.WithSeeders(seeders.All()...),\n\t\tvukem.WithAppSeeders(seeders.AllApp()...),\n",
 		},
 		// No resource has a policy yet: the parameter would be unused.
 		{"app/admin/registry.go", "func Policies(admins Admins)", "func Policies(_ Admins)"},
@@ -81,6 +90,32 @@ func financeEdits() []exampleEdit {
 			"\"devDependencies\": {\n    \"@react-email/components\": \"" + reactEmailComponentsVersion + "\",\n" +
 				"    \"react-email\": \"" + reactEmailCLIVersion + "\",\n",
 		},
+		{
+			"package.json",
+			"\"dependencies\": {\n    \"@inertiajs/react\": \"3.11.0\",\n    \"react\": \"19.3.1\",\n    \"react-dom\": \"19.3.1\"\n  }",
+			"\"dependencies\": {\n    \"@inertiajs/react\": \"3.11.0\",\n" +
+				"    \"class-variance-authority\": \"0.7.1\",\n    \"clsx\": \"2.1.1\",\n    \"lucide-react\": \"1.72.0\",\n" +
+				"    \"radix-ui\": \"1.8.1\",\n    \"react\": \"19.3.1\",\n    \"react-dom\": \"19.3.1\",\n" +
+				"    \"tailwind-merge\": \"3.7.0\"\n  }",
+		},
+		{
+			"resources/css/app.css",
+			"@import \"tailwindcss\";\n",
+			"@import \"tailwindcss\";\n@import \"./finance.css\";\n",
+		},
+		{
+			"resources/views/app.html",
+			"<meta property=\"csp-nonce\" nonce=\"{{cspNonce}}\">\n",
+			"<meta property=\"csp-nonce\" nonce=\"{{cspNonce}}\">\n" +
+				"\t<script nonce=\"{{cspNonce}}\">try{var t=localStorage.getItem(\"theme\");" +
+				"document.documentElement.classList.toggle(\"dark\",t?t===\"dark\":matchMedia(\"(prefers-color-scheme: dark)\").matches)}" +
+				"catch(e){}</script>\n",
+		},
+		{
+			".env.example",
+			"ADMIN_EMAILS=\n",
+			"ADMIN_EMAILS=admin@example.test\n",
+		},
 	}
 }
 
@@ -96,6 +131,16 @@ MAIL_MAILER=log
 MAIL_FROM="Finance <no-reply@example.com>"
 RESEND_API_KEY=
 RESEND_WEBHOOK_SECRET=
+
+# Optional Google sign-in. Leave both empty to use password login only.
+# Set both together, and register SOCIAL callback http://localhost:3000/auth/google/callback.
+SOCIAL_GOOGLE_CLIENT_ID=
+SOCIAL_GOOGLE_CLIENT_SECRET=
+
+# Local administrator created by vukem db:seed (development and test only).
+# Leave the password empty to generate one into storage/finance-admin-*.txt.
+FINANCE_ADMIN_EMAIL=admin@example.test
+FINANCE_ADMIN_PASSWORD=
 `
 
 // scaffoldFinance turns the Inertia + React starter in env.Dir into the
@@ -127,7 +172,9 @@ func scaffoldFinance(_ context.Context, env *Env, _ string, _ starterData) error
 	}
 
 	regs := []registration{
+		{"database/migrations/registry.go", "All", "m" + data["TS3"] + "CreateSocialAccountsTable()"},
 		{"database/migrations/registry.go", "All", "m" + data["TS6"] + "CreateFinanceTables()"},
+		{"routes/registry.go", "All", "Social"},
 		{"routes/registry.go", "All", "Finance"},
 	}
 
@@ -174,6 +221,19 @@ func scaffoldFinance(_ context.Context, env *Env, _ string, _ starterData) error
 	fmt.Fprintln(env.Stdout, "finance: workspaces, billing, mail, import and admin added")
 
 	return nil
+}
+
+// seedFinance migrates the new finance app and runs its idempotent local
+// seeders. It is the --seed path of vukem new. A second db:seed keeps the
+// existing password, credential file and demo rows.
+func seedFinance(ctx context.Context, env *Env) error {
+	fmt.Fprintln(env.Stdout, "finance: migrating and seeding local admin and demo data")
+
+	if err := delegate(ctx, env, []string{"migrate"}); err != nil {
+		return err
+	}
+
+	return delegate(ctx, env, []string{"db:seed"})
 }
 
 // installFinanceAuth is install:auth --2fa without the go mod tidy and
