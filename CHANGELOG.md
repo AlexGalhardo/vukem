@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **ci:** Upload the Ubuntu coverage profile to [Codecov](https://app.codecov.io/gh/AlexGalhardo/vukem).
 - Viewport landing page with a Three.js scene, the Vukem launch film and a Read Docs action.
 - **cli:** Refactor the generated personal-finance SaaS: green viewport landing, shadcn/ui sidebar, transaction modals, light/dark theme, English/pt-BR/es, Google sign-in, idempotent local admin and demo seeds, `vukem new --example finance --seed`, and generated Docker setup.
 
