@@ -58,9 +58,9 @@ fc3b71bd2af8a8e68120dd4aadd7680c36fa7519:contrib/stripe/stripe_test.go:stripe-ac
 89505dcc58b9d4a36088244e07c8eb9e918adbaa:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/en/passkeys.json:generic-password:5
 89505dcc58b9d4a36088244e07c8eb9e918adbaa:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/es/passkeys.json:generic-password:5
 89505dcc58b9d4a36088244e07c8eb9e918adbaa:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/pt-BR/passkeys.json:generic-password:5
-# 2026-11-13: finance scaffold commit. The test fixture and the docs sample
-# were rewritten afterward so they contain "example". "Local administrator"
-# is the account display name, assigned beside the password hash.
-61b94c4bd487368993f26ef6bc807abe5963961d:internal/cli/scaffolds/finance/tests/finance_auth_test.go.tmpl:generic-password:79
-61b94c4bd487368993f26ef6bc807abe5963961d:internal/cli/scaffolds/finance/database/seeders/finance_admin_seeder.go.tmpl:generic-password:77
-61b94c4bd487368993f26ef6bc807abe5963961d:internal/cli/scaffolds/finance/setup-local.md.tmpl:generic-password:41
+# 2026-11-13: first finance scaffold commit after rebase onto the landing.
+# The test fixture and the docs sample were rewritten in the next commit so
+# they contain "example". "Local administrator" is the account display name.
+ef03a76626a6edaa39b63139a0cbe93ef04ee88f:internal/cli/scaffolds/finance/tests/finance_auth_test.go.tmpl:generic-password:79
+ef03a76626a6edaa39b63139a0cbe93ef04ee88f:internal/cli/scaffolds/finance/database/seeders/finance_admin_seeder.go.tmpl:generic-password:77
+ef03a76626a6edaa39b63139a0cbe93ef04ee88f:internal/cli/scaffolds/finance/setup-local.md.tmpl:generic-password:41
