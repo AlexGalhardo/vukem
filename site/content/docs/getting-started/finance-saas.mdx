@@ -71,12 +71,14 @@ SQLite is the default, so there is nothing to install. The migration `create_fin
 vukem serve
 ```
 
-Open `http://localhost:3000` and register. Development writes emails to the log (`MAIL_MAILER=log`): copy the verification link from the terminal.
+Open `http://localhost:3000` and register. New accounts can sign in immediately.
+
+To require email confirmation, set `AUTH_REQUIRE_EMAIL_VERIFICATION=true`. Development then writes the verification link to the terminal (`MAIL_MAILER=log`).
 
 </Step>
 <Step title="Record a transaction">
 
-After you verify the email and log in, the first visit to `/dashboard` creates your workspace, a **Main account** and a set of categories. Add an expense on the Transactions page and see the charts move.
+Log in. The first visit to `/dashboard` creates your workspace, a **Main account** and a set of categories. Add an expense on the Transactions page and see the charts move.
 
 </Step>
 <Step title="Open the admin panel">
@@ -109,14 +111,18 @@ The starter's Posts demo is removed, because the finance app replaces it.
 
 ## Authentication
 
-Authentication is `vukem install:auth --2fa`: registration with email verification, login, password reset, remember-me, rate limits and optional two-factor authentication with TOTP. The [authentication](/docs/security/authentication) and [two-factor](/docs/security/two-factor) pages explain each rule.
+Authentication uses `vukem install:auth --2fa`: registration, login, password reset, remember-me, rate limits and optional two-factor authentication with TOTP. The finance example skips the confirmation email unless `AUTH_REQUIRE_EMAIL_VERIFICATION` is `true`.
+
+The [authentication](/docs/security/authentication) and [two-factor](/docs/security/two-factor) pages explain each rule.
 
 Two changes make it fit the finance app:
 
 - `/dashboard` is the finance dashboard and lives inside a workspace, so it is removed from `routes/auth.go`.
 - The verification and reset emails are React Email components (`verify_email` and `reset_password`).
 
-Anyone who is not signed in is sent to `/login`, and a signed-in user with an unverified email is sent to `/email/verify`. Both are tested.
+Anyone who is not signed in is sent to `/login`. With the default, a new account is already verified, so the next login opens the dashboard.
+
+Set `AUTH_REQUIRE_EMAIL_VERIFICATION=true` to keep the inbox check. A signed-in user with an unverified email is then sent to `/email/verify`.
 
 ## The admin panel
 
@@ -440,6 +446,7 @@ Run the generated tests against your PostgreSQL before you rely on it. The examp
 | `STRIPE_PRICE_PRO` | empty | The recurring price id of the Pro plan |
 | `STRIPE_CURRENCIES` | empty | Currencies a checkout may ask for, for example `usd,brl` |
 | `MAIL_MAILER` | `log` | `log` in development, `resend` in production |
+| `AUTH_REQUIRE_EMAIL_VERIFICATION` | `false` | Set `true` to send a confirmation link and require a verified address before dashboard access |
 | `MAIL_FROM` | `Finance <no-reply@example.com>` | The sender; use a domain verified in Resend |
 | `RESEND_API_KEY` | empty | Required when `MAIL_MAILER=resend` |
 | `RESEND_WEBHOOK_SECRET` | empty | Verifies `POST /webhooks/resend`; empty refuses every request |

@@ -13,6 +13,7 @@ import (
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/vukemtest"
 
+	"{{.Module}}/app/accounts"
 	"{{.Module}}/app/finance"
 	"{{.Module}}/app/models"
 	"{{.Module}}/app/workspaces"
@@ -35,6 +36,52 @@ func newApp(t *testing.T, env ...map[string]string) *vukemtest.App {
 	}
 
 	return vukemtest.New(t, bootstrap.New, opts)
+}
+
+// authTestApp exercises the opt-in verification path retained by the finance
+// scaffold. The app itself defaults to no verification email.
+func authTestApp(t *testing.T, opts ...vukemtest.Options) *vukemtest.App {
+	t.Helper()
+	options := vukemtest.Options{}
+	if len(opts) > 0 {
+		options = opts[0]
+	}
+	if options.Env == nil {
+		options.Env = map[string]string{}
+	}
+	options.Env["AUTH_REQUIRE_EMAIL_VERIFICATION"] = "true"
+	return vukemtest.New(t, bootstrap.New, options)
+}
+
+func TestSecurity_A07_RegistrationWithoutVerificationMail(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, map[string]string{"AUTH_REQUIRE_EMAIL_VERIFICATION": "false"})
+	c := app.Client(t).Inertia("")
+	form := map[string]any{
+		"name": "Alexandra", "email": "alexandra@example.com",
+		"password": testPassword, "password_confirmation": testPassword,
+	}
+	c.PostJSON("/register", form).AssertRedirect("/login")
+	if sent := app.Mails().SentTo("alexandra@example.com"); len(sent) != 0 {
+		t.Fatalf("registration sent %d mails, want none", len(sent))
+	}
+	acc, err := accounts.New(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := acc.Users.ByCredentials(t.Context(), map[string]string{"email": "alexandra@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !u.EmailVerified() {
+		t.Fatal("new account must be ready to sign in")
+	}
+
+	c.PostJSON("/login", map[string]any{
+		"email": "alexandra@example.com", "password": testPassword,
+	}).AssertRedirect("/dashboard")
 }
 
 func newVerifiedUser(t *testing.T, app *vukemtest.App, name, email string) models.User {

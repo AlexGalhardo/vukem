@@ -2,7 +2,7 @@
 
 A personal finance SaaS built with [Vukem](https://vukem.dev): Go on the server, React with Inertia and Tailwind in the browser, SQLite out of the box.
 
-It has sign-up with email verification, password reset and optional two-factor authentication, workspaces with roles and invitations, Stripe billing (Free and Pro, 14-day trial), email through Resend with React Email templates, and the finance itself: accounts, categories, transactions, monthly budgets, a dashboard with charts and CSV import.
+It has sign-up, password reset and optional two-factor authentication, workspaces with roles and invitations, Stripe billing (Free and Pro, 14-day trial), email through Resend with React Email templates, and the finance itself: accounts, categories, transactions, monthly budgets, a dashboard with charts and CSV import.
 
 ## Run it
 
@@ -14,7 +14,7 @@ vukem serve        # http://localhost:3000, with reload
 go test ./...
 ```
 
-Register at <http://localhost:3000/register>. Development writes emails to the log (`MAIL_MAILER=log`): copy the verification link from the output of `vukem serve`.
+Register at <http://localhost:3000/register>. New accounts can sign in immediately. Set `AUTH_REQUIRE_EMAIL_VERIFICATION=true` to send a confirmation link and require verification before dashboard access. Development writes emails to the log (`MAIL_MAILER=log`).
 
 Set `ADMIN_EMAILS=you@example.com` in `.env` to open the admin panel at `/admin` (users, workspaces, subscriptions) and the revenue page at `/admin/revenue`.
 

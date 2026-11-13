@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"go/format"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 )
 
 // financeFramework is the Inertia adapter of the finance example: its pages,
@@ -28,6 +30,57 @@ var financeDropped = []string{
 // admin installers that the finance app needs.
 func financeEdits() []exampleEdit {
 	return []exampleEdit{
+		{
+			"app/accounts/accounts.go",
+			`VerifyTTL time.Duration`,
+			"VerifyTTL time.Duration\n\tRequireEmailVerification bool",
+		},
+		{
+			"app/accounts/accounts.go",
+			`VerifyTTL: time.Hour,`,
+			"VerifyTTL: time.Hour,\n\t\tRequireEmailVerification: strings.EqualFold(" +
+				"app.Source.Get(\"AUTH_REQUIRE_EMAIL_VERIFICATION\"), \"true\"),",
+		},
+		{
+			"app/accounts/users.go",
+			`return true, a.SendVerification(ctx, u)`,
+			"if !a.RequireEmailVerification {\n" +
+				"\t\treturn true, a.MarkVerified(ctx, a.DB, &u)\n" +
+				"\t}\n\n" +
+				"\treturn true, a.SendVerification(ctx, u)",
+		},
+		{
+			"app/accounts/users.go",
+			"// account: the caller always answers \"check your email\" and never logs in.\n" +
+				"// A new address gets the account and a verification mail; an existing one\n" +
+				"// gets a notice (\"sign in or reset your password\", at most one per hour\n" +
+				"// per address) and nothing is created or changed. Both paths hash the\n" +
+				"// password and queue one mail, so they take about the same time. It\n" +
+				"// reports whether an account was created.",
+			"// account: the caller gives the same response to new and existing addresses\n" +
+				"// and never logs in. A new address gets an account. Verification mail is\n" +
+				"// sent only when AUTH_REQUIRE_EMAIL_VERIFICATION is true; otherwise the\n" +
+				"// address is marked verified. An existing address gets a notice (\"sign in\n" +
+				"// or reset your password\", at most one per hour per address) and nothing\n" +
+				"// is created or changed. It reports whether an account was created.",
+		},
+		{
+			"app/controllers/account/account.go",
+			`return c.Redirect("/register/check-email")`,
+			"if !h.a.RequireEmailVerification {\n" +
+				"\t\treturn c.Redirect(\"/login\")\n" +
+				"\t}\n\n" +
+				"\treturn c.Redirect(\"/register/check-email\")",
+		},
+		{
+			"app/controllers/account/account.go",
+			`// enumeration) and does not log in: the user is asked to check the inbox,`,
+			`// enumeration) and does not log in: verification may ask for an inbox check,`,
+		},
+		{
+			"routes/auth.go", `// Sign-up queues a mail: limit it per IP and per address. The limits count`,
+			`// Sign-up may queue a mail: limit it per IP and per address. The limits count`,
+		},
 		{"database/migrations/registry.go", "\t\tm20260101000000CreatePostsTable(),\n", ""},
 		{
 			"database/seeders/registry.go",
@@ -128,6 +181,7 @@ const financeEnv = `
 # (Resend dashboard, Webhooks: POST /webhooks/resend, email.bounced and
 # email.complained).
 MAIL_MAILER=log
+AUTH_REQUIRE_EMAIL_VERIFICATION=false
 MAIL_FROM="Finance <no-reply@example.com>"
 RESEND_API_KEY=
 RESEND_WEBHOOK_SECRET=
@@ -208,6 +262,10 @@ func scaffoldFinance(_ context.Context, env *Env, _ string, _ starterData) error
 		}
 	}
 
+	if err := finalizeFinanceAuth(env, data); err != nil {
+		return err
+	}
+
 	for _, reg := range regs {
 		if err := register(env, reg.file, reg.fn, reg.expr); err != nil {
 			return err
@@ -219,6 +277,50 @@ func scaffoldFinance(_ context.Context, env *Env, _ string, _ starterData) error
 	}
 
 	fmt.Fprintln(env.Stdout, "finance: workspaces, billing, mail, import and admin added")
+
+	return nil
+}
+
+// finalizeFinanceAuth points the shared auth tests at the opt-in verification
+// path, then formats the Go files the finance edits touched.
+func finalizeFinanceAuth(env *Env, data map[string]string) error {
+	for _, rel := range []string{"tests/auth_test.go", "tests/password_reset_test.go", "tests/two_factor_test.go"} {
+		file := env.path(filepath.FromSlash(rel))
+
+		content, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+
+		updated := strings.ReplaceAll(string(content), "vukemtest.New(t, bootstrap.New", "authTestApp(t")
+		updated = strings.ReplaceAll(updated, "\n\t\""+data["Module"]+"/bootstrap\"", "")
+		updated = strings.ReplaceAll(updated, "\n\n)", "\n)")
+
+		if err := writeFile(file, []byte(updated)); err != nil {
+			return err
+		}
+	}
+
+	for _, rel := range []string{
+		"app/accounts/accounts.go", "app/accounts/users.go", "app/controllers/account/account.go",
+		"tests/auth_test.go", "tests/password_reset_test.go", "tests/two_factor_test.go", "tests/finance_test.go",
+	} {
+		file := env.path(filepath.FromSlash(rel))
+
+		content, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+
+		formatted, err := format.Source(content)
+		if err != nil {
+			return fmt.Errorf("format %s: %w", rel, err)
+		}
+
+		if err := writeFile(file, formatted); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
