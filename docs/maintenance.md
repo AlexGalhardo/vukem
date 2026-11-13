@@ -54,7 +54,7 @@ After each [PLAN.md](PLAN.md) task group:
 Weekly, on Monday:
 
 1. Dependabot opens grouped PRs (`go-deps`, `actions`, `site-deps`, plus Docker for `docs/media` and `.config`); `vuln.yml` scans every module at 06:17 UTC. Merge the PRs once CI is green. Actions stay pinned by full commit SHA with a `# vX.Y.Z` comment. A digest PR for `.config/compose.yaml` must update the matching `services:` images (and `RUSTFS_IMAGE`) in `ci.yml` in the same PR.
-2. On every `golang.org/x/crypto` upgrade, re-run `govulncheck` (CI and the weekly `vuln.yml` do) and check whether `GO-2026-5932` (`golang.org/x/crypto/openpgp`, never imported, so not called) has a fixed release.
+2. On every `golang.org/x/crypto` upgrade, re-run `govulncheck` (CI and the weekly `vuln.yml` do). `v0.59.0` drops the unmaintained `openpgp` package, so `GO-2026-5932` no longer matches this module. The separate module `golang.org/x/crypto/openpgp` stays unfixed and must not become a dependency.
 3. Every Monday `starter-deps.yml` runs `go run ./internal/tools/starterdeps -write`, the starter end-to-end tests, and opens or updates the `chore/starter-deps` pull request. `task deps:starters` lists what is behind without changing anything.
 4. Quarterly: count third-party modules per `go.mod` (`go mod graph`); every new direct dependency needs a decision under the [dependency policy](architecture.md#dependency-policy).
 
@@ -110,7 +110,7 @@ Checked at each release (the "Scorecard tracking" issue #5 was closed on 2026-10
 | Metric | Source | Target |
 | --- | --- | --- |
 | Scorecard score and per-check scores | `api.scorecard.dev` | ≥ 8.5 by `v1.0.0`; no check drops between releases |
-| Open fixable vulnerabilities | `govulncheck`, Scorecard `Vulnerabilities` | 0 (only `GO-2026-5932` while it has no fix) |
+| Open fixable vulnerabilities | `govulncheck`, Scorecard `Vulnerabilities` | 0 |
 | Scheduled workflows green | `gh run list --workflow fuzz.yml` (and `vuln.yml`, `scorecard.yml`) | 100% over the last 4 weeks |
 | Coverage | `covergate` in `ci.yml` | ≥ 80% overall, ≥ 90% strict packages; no drop between releases |
 | `//nolint:gocognit` in non-test code | `GOCOGNIT_BUDGET` in `ci.yml` | never rising; 4 at `v1.0.0`: the GraphQL executor and schema tables in `contrib/graphql` (`introspection.go`, `schema.go` twice, `subscribe.go`), kept as recorded exceptions because splitting them reads worse; everything else is 0 |
