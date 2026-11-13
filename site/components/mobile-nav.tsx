@@ -31,6 +31,20 @@ export function MobileNav({ groupsByVersion }: { groupsByVersion: Record<string,
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-4 scroll-slim">
             <Link
+              href="/"
+              onClick={() => setOpen(false)}
+              className="flex rounded-lg px-2 py-1.5 text-sm font-medium text-muted hover:bg-hover hover:text-fg"
+            >
+              {t.home}
+            </Link>
+            <Link
+              href="/docs/introduction"
+              onClick={() => setOpen(false)}
+              className="flex rounded-lg px-2 py-1.5 text-sm font-medium text-muted hover:bg-hover hover:text-fg"
+            >
+              {t.docs}
+            </Link>
+            <Link
               href="/changelog"
               onClick={() => setOpen(false)}
               className="mb-4 flex rounded-lg px-2 py-1.5 text-sm font-medium text-muted hover:bg-hover hover:text-fg"

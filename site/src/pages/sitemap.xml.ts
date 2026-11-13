@@ -5,8 +5,6 @@ import { currentVersion } from "@/lib/versions";
 
 export const prerender = true;
 
-const HOME = "/docs/introduction";
-
 function escapeXml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -17,7 +15,7 @@ export const GET: APIRoute = () => {
     ...getEveryDoc().map((doc) => ({
       loc: `${site.url}${doc.href}/`,
       lastmod: doc.updated,
-      priority: doc.href === HOME ? "1.0" : doc.version.id === currentVersion.id ? "0.8" : "0.3",
+      priority: doc.version.id === currentVersion.id ? "0.8" : "0.3",
     })),
     { loc: `${site.url}/changelog/`, lastmod: undefined, priority: "0.5" },
   ];

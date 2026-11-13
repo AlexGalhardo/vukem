@@ -79,6 +79,12 @@ export function Header({ groupsByVersion }: { groupsByVersion: Record<string, Na
           <SearchLauncher />
         </div>
         <div className="flex items-center justify-end gap-1 sm:gap-2">
+          <Link
+            href="/docs/introduction"
+            className="hidden h-8 items-center rounded-lg px-2.5 text-sm font-medium text-muted transition-colors hover:bg-hover hover:text-fg sm:inline-flex"
+          >
+            {t.docs}
+          </Link>
           <a
             href="/llms.txt"
             target="_blank"

@@ -16,7 +16,7 @@ export function LogoMark({ className = "size-6" }: { className?: string }) {
 export function Logo() {
   return (
     <Link
-      href="/docs/introduction"
+      href="/"
       className="flex items-center gap-2 rounded-md font-semibold tracking-tight text-fg"
       aria-label={t.logoLabel}
     >

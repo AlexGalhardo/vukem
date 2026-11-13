@@ -1,398 +1,56 @@
 ---
-import '@fontsource/inter/latin-400.css';
-import '@fontsource/inter/latin-600.css';
-import '@fontsource/inter/latin-800.css';
-import '@fontsource/jetbrains-mono/latin-400.css';
-
-const keywords = new Set([
-  "func", "return", "var", "if", "type", "struct", "map", "nil", "true", "false",
-  "package", "import", "range", "for", "else", "chan", "go", "defer",
-]);
-const predeclared = new Set(["string", "int", "int64", "bool", "error", "byte", "any"]);
-
-function escapeHtml(value) {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-function highlightLine(line) {
-  const commentAt = line.indexOf("//");
-  const source = commentAt >= 0 ? line.slice(0, commentAt) : line;
-  const comment = commentAt >= 0 ? line.slice(commentAt) : "";
-  const pattern = /(`[^`]*`|"(?:\\.|[^"\\])*")|(\d+)|([A-Za-z_][A-Za-z0-9_]*)|(\s+)|([\s\S])/g;
-  let html = "";
-  let match;
-  while ((match = pattern.exec(source))) {
-    const [token, str, num, ident] = match;
-    if (str) html += `<span class="str">${escapeHtml(str)}</span>`;
-    else if (num) html += `<span class="num">${num}</span>`;
-    else if (ident) {
-      const call = /^\s*\(/.test(source.slice(pattern.lastIndex));
-      const cls = keywords.has(ident)
-        ? "kw"
-        : predeclared.has(ident)
-          ? "typ"
-          : call
-            ? "fn"
-            : /^[A-Z]/.test(ident)
-              ? "typ"
-              : "";
-      html += cls ? `<span class="${cls}">${escapeHtml(ident)}</span>` : escapeHtml(ident);
-    } else html += escapeHtml(token);
-  }
-  if (comment) html += `<span class="cmt">${escapeHtml(comment)}</span>`;
-  return html;
-}
-
-function highlight(code) {
-  return code
-    .split("\n")
-    .map((line, index) => {
-      const n = String(index + 1).padStart(2, " ");
-      return `<span class="ln" aria-hidden="true">${n}</span>${highlightLine(line)}`;
-    })
-    .join("\n");
-}
+import Base from "../layouts/Base.astro";
 
 const features = [
-  {
-    id: "routing",
-    label: "Routing",
-    note: "One route file registers the home page, the guest login routes, and the seven REST actions for posts.",
-    code: [
-      "func Web(",
-      "\tr *router.Router,",
-      "\tapp *vukem.App,",
-      ") error {",
-      "\tdb, err := app.DB()",
-      "\tif err != nil {",
-      "\t\treturn err",
-      "\t}",
-      "",
-      "\tposts := controllers.",
-      "\t\tNewPostController(db)",
-      "\tguest := auth.Guest(acc.Web)",
-      "",
-      '\tr.Get("/", controllers.Home).',
-      '\t\tName("home")',
-      '\tr.Get("/login", h.ShowLogin).',
-      '\t\tName("login").Use(guest)',
-      '\tr.Post("/login", h.Login).',
-      "\t\tUse(guest)",
-      "",
-      '\tr.Resource("posts", posts)',
-      "",
-      "\treturn nil",
-      "}",
-    ].join("\n"),
-  },
-  {
-    id: "controllers",
-    label: "Controllers",
-    note: "Show is a method value the router calls. ParamInt turns /posts/42 into an id, or returns 404.",
-    code: [
-      "func (pc *PostController) Show(",
-      "\tc *web.Ctx,",
-      ") error {",
-      "\tpost, err := pc.find(c)",
-      "\tif err != nil {",
-      "\t\treturn err",
-      "\t}",
-      "",
-      "\treturn c.Render(",
-      '\t\t"posts/show", post,',
-      "\t)",
-      "}",
-      "",
-      "func (pc *PostController) find(",
-      "\tc *web.Ctx,",
-      ") (models.Post, error) {",
-      '\tid, err := c.ParamInt("post")',
-      "\tif err != nil {",
-      "\t\treturn models.Post{}, err",
-      "\t}",
-      "",
-      "\treturn orm.QueryOf[models.Post](",
-      "\t\tpc.db,",
-      "\t).Find(c.Context(), id)",
-      "}",
-    ].join("\n"),
-  },
-  {
-    id: "validators",
-    label: "Validators",
-    note: "The schema is built once. web.Parse returns 422, or redirects back, and hands the handler a checked value.",
-    code: [
-      "type StoreComment struct {",
-      '\tAuthor string `json:"author"`',
-      '\tBody   string `json:"body"`',
-      "}",
-      "",
-      "var StoreCommentSchema = z.Struct[",
-      "\tStoreComment,",
-      "](z.Shape{",
-      '\t"author": z.String().Trim().',
-      "\t\tMin(2).Max(60),",
-      '\t"body": z.String().Trim().',
-      "\t\tMin(3).Max(500),",
-      "})",
-      "",
-      "func (cc *CommentController) Store(",
-      "\tc *web.Ctx,",
-      ") error {",
-      "\tin, err := web.Parse(",
-      "\t\tc, requests.StoreCommentSchema,",
-      "\t)",
-      "\tif err != nil {",
-      "\t\treturn err",
-      "\t}",
-      "",
-      "\treturn orm.Create(",
-      "\t\tc.Context(), cc.db,",
-      "\t\t&models.Comment{",
-      "\t\t\tAuthor: in.Author,",
-      "\t\t\tBody:   in.Body,",
-      "\t\t},",
-      "\t)",
-      "}",
-    ].join("\n"),
-  },
-  {
-    id: "models",
-    label: "Models",
-    note: "Post is a row, not a connection. QueryOf filters, orders and limits, then Get returns []Post.",
-    code: [
-      "type Post struct {",
-      "\torm.Model",
-      "",
-      '\tUserID int64  `json:"user_id"`',
-      '\tTitle  string `json:"title"`',
-      '\tSlug   string `json:"slug"`',
-      '\tBody   string `json:"body"`',
-      "}",
-      "",
-      "func (pc *PostController) Index(",
-      "\tc *web.Ctx,",
-      ") error {",
-      "\tposts, err := orm.QueryOf[",
-      "\t\tmodels.Post,",
-      "\t](pc.db).",
-      '\t\tWhere("user_id", id).',
-      '\t\tOrderBy("id", orm.Desc).',
-      "\t\tLimit(20).",
-      "\t\tGet(c.Context())",
-      "\tif err != nil {",
-      "\t\treturn err",
-      "\t}",
-      "",
-      '\treturn c.Render(',
-      '\t\t"posts/index", posts,',
-      "\t)",
-      "}",
-    ].join("\n"),
-  },
-  {
-    id: "auth",
-    label: "Auth",
-    note: "The session guard stores users with argon2id. Attempt checks the password and signs that user in.",
-    code: [
-      "web := auth.NewSessionGuard(",
-      '\t"web",',
-      "\tauth.NewORMProvider[",
-      "\t\tmodels.User,",
-      "\t](db),",
-      "\thash.Default(), // argon2id",
-      "\tauth.NewRememberStore(db),",
-      ")",
-      "",
-      "func (h *Handlers) Login(",
-      "\tc *web.Ctx,",
-      ") error {",
-      "\tin, err := web.Parse(",
-      "\t\tc, requests.LoginSchema,",
-      "\t)",
-      "\tif err != nil {",
-      "\t\treturn err",
-      "\t}",
-      "",
-      "\t_, err = h.a.Web.Attempt(",
-      "\t\tc,",
-      "\t\tmap[string]string{",
-      '\t\t\t"email":    in.Email,',
-      '\t\t\t"password": in.Password,',
-      "\t\t},",
-      "\t\tauth.Remember(in.Remember),",
-      "\t)",
-      "\tif err != nil {",
-      "\t\treturn err",
-      "\t}",
-      "",
-      '\treturn c.Redirect("/dashboard")',
-      "}",
-    ].join("\n"),
-  },
-  {
-    id: "uploads",
-    label: "File uploads",
-    note: "upload.Receive streams each file through the size, type and count rules, then stores it on the disk.",
-    code: [
-      "func photoRules() upload.Rules {",
-      "\trules := upload.Images(5 << 20)",
-      "\trules.MaxFiles = 5",
-      '\trules.Dir = "photos"',
-      "",
-      "\treturn rules",
-      "}",
-      "",
-      "func (pc *PhotoController) Store(",
-      "\tc *web.Ctx,",
-      ") error {",
-      "\tform, err := upload.Receive(",
-      "\t\tc, pc.disk, photoRules(),",
-      "\t)",
-      "\tif err != nil {",
-      "\t\treturn err",
-      "\t}",
-      "",
-      "\treturn c.JSON(",
-      "\t\thttp.StatusCreated,",
-      "\t\tform.Files,",
-      "\t)",
-      "}",
-    ].join("\n"),
-  },
-  {
-    id: "emails",
-    label: "Emails",
-    note: "Envelope sets the recipient and subject. Content points at the view. Mailer().Send delivers it.",
-    code: [
-      "func (m OrderShipped) Envelope() (",
-      "\tmail.Envelope,",
-      ") {",
-      "\treturn mail.Envelope{",
-      "\t\tTo: []string{",
-      "\t\t\tm.Order.CustomerEmail,",
-      "\t\t},",
-      "\t\tSubject:",
-      '\t\t\t"Your order has shipped",',
-      "\t\tTags: map[string]string{",
-      '\t\t\t"category": "orders",',
-      "\t\t},",
-      "\t}",
-      "}",
-      "",
-      "func (m OrderShipped) Content() (",
-      "\tmail.Content,",
-      ") {",
-      "\treturn mail.View(",
-      '\t\t"mail/order_shipped", m,',
-      "\t)",
-      "}",
-      "",
-      "err = mailer.Send(",
-      "\tc.Context(),",
-      "\tshopmail.OrderShipped{",
-      "\t\tOrder:       order,",
-      "\t\tTrackingURL: track,",
-      "\t},",
-      ")",
-    ].join("\n"),
-  },
-  {
-    id: "limiter",
-    label: "Rate limiter",
-    note: "Five login attempts per minute, keyed by client IP. The sixth attempt is rejected.",
-    code: [
-      "func Auth(",
-      "\tr *router.Router,",
-      "\tapp *vukem.App,",
-      ") error {",
-      "\tlimiters, err := app.RateLimiters()",
-      "\tif err != nil {",
-      "\t\treturn err",
-      "\t}",
-      "",
-      "\t// 5 attempts per minute, by IP.",
-      "\tthrottle := ratelimit.Middleware(",
-      "\t\tlimiters(",
-      '\t\t\t"login", 5, time.Minute,',
-      "\t\t),",
-      "\t\tratelimit.ByIP,",
-      "\t)",
-      "",
-      '\tr.Post("/login", login).',
-      '\t\tName("login.store").',
-      "\t\tUse(throttle)",
-      "",
-      "\treturn nil",
-      "}",
-    ].join("\n"),
-  },
-  {
-    id: "testing",
-    label: "Testing",
-    note: "vukemtest boots the real app in memory, posts the form, and checks the redirect and the row. No port is opened.",
-    code: [
-      "func TestCreatePost(t *testing.T) {",
-      "\tt.Parallel()",
-      "",
-      "\tapp := vukemtest.New(",
-      "\t\tt, bootstrap.New,",
-      "\t)",
-      "\tform := url.Values{",
-      '\t\t"title": {"Hello Vukem"},',
-      '\t\t"body":  {"First post."},',
-      "\t}",
-      "",
-      "\tapp.Client(t).",
-      '\t\tPostForm("/posts", form).',
-      "\t\tAssertRedirectRoute(",
-      '\t\t\t"posts.show", "post", 1,',
-      "\t\t)",
-      "",
-      "\tvukemtest.AssertDatabaseHas(",
-      '\t\tt, app, "posts",',
-      "\t\tmap[string]any{",
-      '\t\t\t"title": "Hello Vukem",',
-      "\t\t},",
-      "\t)",
-      "}",
-    ].join("\n"),
-  },
+  { number: "01", title: "Go all the way", description: "Build on net/http with familiar Go handlers, middleware, and packages. Keep the control you expect from Go." },
+  { number: "02", title: "Start with a real app", description: "Generate a working starter with routes, migrations, views, tests, and the pieces you need to ship." },
+  { number: "03", title: "Pick your stack", description: "Use HTMX, templ, Inertia with React, Vue or Svelte, or create a JSON API. One framework, your choice." },
 ];
 ---
-<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Vukem — From idea to application</title><meta name="description" content="Build APIs and full-stack applications with Vukem, a Go web framework. Routing, auth, models and the rest of the framework in real code." /><link rel="canonical" href="https://vukem.dev/" /><link rel="icon" href="/icon.svg" /><meta name="theme-color" content="#07090d" /><meta property="og:title" content="Vukem — From idea to application" /><meta property="og:description" content="Your next product starts here. A Go framework for APIs and full-stack apps." /><meta property="og:image" content="https://vukem.dev/icon.svg" /></head>
-<body>
-<div id="scene" aria-hidden="true"></div>
-<main>
-<header><span class="wordmark">vukem<span class="dot">.</span></span></header>
-<section class="hero" aria-labelledby="headline">
-<div class="intro"><h1 id="headline">From idea.<br />To <em>application.</em></h1><p class="description">A Modern Model-View-Controller (MVC) Full Stack Framework, To Build Web Applications and APIs</p><a class="cta" href="/docs/introduction/">Read Docs <span aria-hidden="true">↗</span></a></div>
-<section class="showcase" aria-label="Framework features">
-<div class="tabs" role="tablist" aria-label="Features">
-{features.map((feature, index) => (
-<button type="button" role="tab" id={`tab-${feature.id}`} aria-selected={index === 0 ? "true" : "false"} aria-controls={`panel-${feature.id}`} tabindex={index === 0 ? 0 : -1} data-note={feature.note}>{feature.label}</button>
-))}
-</div>
-<div class="stage">
-{features.map((feature, index) => (
-<div role="tabpanel" id={`panel-${feature.id}`} aria-labelledby={`tab-${feature.id}`} hidden={index !== 0 || undefined}><pre><code set:html={highlight(feature.code)} /></pre></div>
-))}
-</div>
-<p class="note" id="feature-note"><span class="status" aria-hidden="true"></span> {features[0].note}</p>
-</section>
-</section>
-</main>
-<script>import '../scripts/landing.js';</script>
-<style is:global>
-*{box-sizing:border-box}html,body{margin:0;background:#07090d;color:#edf1f5;font-family:Inter,sans-serif}body{height:100dvh;overflow:hidden}#scene{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at 22% 46%,#38e1ff1f,transparent 36%),radial-gradient(ellipse at 16% 28%,#12343f66,transparent 58%)}#scene canvas{display:block;width:100%;height:100%}main{position:relative;min-height:0;height:100dvh;padding:32px 5vw 24px;display:flex;flex-direction:column}header{display:flex;align-items:center;flex-shrink:0}.wordmark{font-size:35px;font-weight:600;letter-spacing:-2px}.dot{color:#38e1ff}.status{display:inline-block;width:5px;height:5px;border-radius:50%;background:#38e1ff;box-shadow:0 0 10px #38e1ff70}.hero{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,.78fr) minmax(0,1.32fr);align-items:stretch;gap:3vw}.intro{align-self:center}h1{font-size:clamp(42px,4.6vw,92px);line-height:1.08;font-weight:600;letter-spacing:-.065em;margin:0}h1 em{font-style:normal;color:#38e1ff}.description{color:#9caabb;font-size:clamp(12px,1.05vw,16px);line-height:1.45;margin:16px 0 20px;max-width:34rem}.cta{display:inline-flex;align-items:center;gap:45px;background:#ff6a00;color:#1a0a00;border:1px solid #ff6a00;border-radius:4px;padding:15px 22px;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;box-shadow:0 10px 28px #ff6a0066;transition:background .2s,transform .2s,box-shadow .2s}.cta:hover{background:#ff8124;border-color:#ff8124;transform:translateY(-2px);box-shadow:0 14px 32px #ff6a0088}.cta:focus-visible,.tabs button:focus-visible{outline:3px solid #38e1ff;outline-offset:4px}
-.showcase{min-width:0;min-height:0;max-height:100%;display:flex;flex-direction:column;background:#10141c;border:1px solid #2c3544;border-radius:10px;overflow:hidden;box-shadow:0 24px 80px #0009}.tabs{display:flex;flex-shrink:0;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid #2c3544}.tabs::-webkit-scrollbar{display:none}.tabs button{flex:1 0 auto;appearance:none;background:transparent;color:#d5dbe3;border:0;border-right:1px solid #2c3544;padding:11px 8px;font:600 12px/1 Inter,sans-serif;cursor:pointer;white-space:nowrap;text-align:center}.tabs button[aria-selected="true"]{background:#5b4dff;color:#fff}.stage{flex:1;min-height:0;overflow:auto;background:#0c0f16}.stage pre{margin:0;padding:22px 24px 28px;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:18px;line-height:1.6;color:#d7dee8;tab-size:4}.stage code{font:inherit}.ln{display:inline-block;width:2.4ch;margin-right:1.6ch;color:#526070;user-select:none;text-align:right}.kw{color:#c792ea}.str{color:#c3e88d}.cmt{color:#6d7887}.fn{color:#82aaff}.typ{color:#ffcb6b}.num{color:#f78c6c}.note{flex-shrink:0;display:flex;gap:10px;align-items:flex-start;margin:0;padding:12px 16px;border-top:1px solid #2c3544;color:#c5ced6;font-size:13px;line-height:1.45}.note .status{margin-top:6px}
-@media(max-width:760px){main{padding:max(16px,env(safe-area-inset-top)) 5vw max(12px,env(safe-area-inset-bottom))}.wordmark{font-size:26px}.hero{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:14px;align-content:stretch}h1{font-size:clamp(34px,9vw,52px)}.description{font-size:12px;margin:10px 0 14px;line-height:1.5}.cta{padding:11px 16px;font-size:12px;gap:28px}.tabs button{padding:9px 11px;font-size:12px}.stage pre{font-size:11px;padding:14px 12px 18px}.note{font-size:12px;padding:10px 12px}.desktop{display:none}}
-@media(max-height:700px) and (min-width:761px){main{padding-top:16px;padding-bottom:12px}h1{font-size:clamp(36px,4vw,64px)}.description{margin:12px 0 16px}.stage pre{font-size:14px}.note{font-size:12px;padding:10px 14px}}
-@media(max-height:700px) and (max-width:760px){main{padding-top:12px;padding-bottom:8px}.hero{gap:10px}.description{margin:8px 0 10px}h1{font-size:32px}.tabs button{padding:8px 10px}.stage pre{font-size:10.5px;line-height:1.45}.note{font-size:11px;padding:8px 10px}}
-@media(orientation:landscape) and (max-height:500px){main{padding:10px 4vw}.wordmark{font-size:22px}.hero{grid-template-columns:minmax(0,.72fr) minmax(0,1.28fr);grid-template-rows:minmax(0,1fr);gap:3vw}h1{font-size:30px}.description{font-size:11px;margin:8px 0;line-height:1.4}.cta{padding:8px 12px}.tabs button{padding:7px 9px;font-size:11px}.stage pre{font-size:11px;padding:8px 10px}.note{font-size:11px;padding:6px 10px}}
-@media(max-height:360px){body{height:auto;min-height:100dvh;overflow-x:hidden;overflow-y:auto}main{height:auto;min-height:100dvh}.hero{height:auto;grid-template-rows:auto;align-items:start}.intro{align-self:start}.showcase{max-height:none;height:auto;min-height:180px}}
-@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
-</style>
-</body></html>
+
+<Base title="Vukem — Web apps, the Go way" description="Build web apps and APIs in Go with a working starter, familiar net/http foundations, and your choice of frontend." canonical="/">
+  <main id="content" class="home overflow-hidden">
+    <section class="relative mx-auto grid max-w-[90rem] gap-8 px-5 pb-16 pt-16 sm:px-8 sm:pt-20 lg:min-h-[min(43rem,calc(100dvh-3.5rem))] lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,.75fr)] lg:items-center lg:gap-4 lg:px-16 lg:pb-20 lg:pt-12">
+      <div class="relative z-10 max-w-[48rem]">
+        <a href="/docs/introduction" class="mb-8 inline-flex items-center gap-2 rounded-full border border-border-strong bg-bg px-3 py-1.5 text-xs font-semibold tracking-wide text-muted transition hover:border-brand hover:text-fg">
+          <span class="size-1.5 rounded-full bg-brand"></span>
+          The Go framework for getting things done
+          <span aria-hidden="true" class="text-brand">↗</span>
+        </a>
+        <h1 class="max-w-[12ch] text-[clamp(3.25rem,7.5vw,6.7rem)] font-semibold leading-[.97] tracking-[-.075em] text-fg">
+          Make more.<br /><span class="text-brand">Wire less.</span>
+        </h1>
+        <p class="mt-7 max-w-[35rem] text-[1.05rem] leading-[1.7] text-muted sm:text-[1.16rem]">
+          Build full-stack web apps and APIs in Go. Start with a working project, choose the frontend you like, and get back to building.
+        </p>
+        <div class="mt-9 flex flex-wrap items-center gap-3">
+          <a href="/docs/quick-start" class="inline-flex min-h-11 items-center gap-3 rounded-lg bg-fg px-5 py-2.5 text-sm font-semibold text-bg transition hover:opacity-80">Get started <span aria-hidden="true">↗</span></a>
+          <a href="/docs/introduction" class="inline-flex min-h-11 items-center gap-3 rounded-lg border border-border-strong bg-bg px-5 py-2.5 text-sm font-semibold text-fg transition hover:bg-hover">Explore the docs <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="mt-12 max-w-[38rem] overflow-hidden rounded-xl border border-border-strong bg-code-bg shadow-[0_20px_60px_-30px_rgba(0,0,0,.2)]">
+          <div class="flex h-9 items-center gap-1.5 border-b border-border px-4"><span class="size-2 rounded-full bg-[#ff6b6b]"></span><span class="size-2 rounded-full bg-[#f3c35a]"></span><span class="size-2 rounded-full bg-[#64c584]"></span><span class="ml-auto font-mono text-[.625rem] text-faint">terminal</span></div>
+          <div class="flex items-center justify-between gap-3 px-4 py-4 sm:px-5"><code class="min-w-0 overflow-x-auto whitespace-nowrap font-mono text-[.75rem] text-fg sm:text-[.82rem]"><span class="mr-3 text-brand">$</span>vukem new myapp --example todo</code><button type="button" data-copy="vukem new myapp --example todo" aria-label="Copy starter command" class="shrink-0 rounded-md border border-border px-2.5 py-1.5 text-[.65rem] font-medium text-muted transition hover:border-border-strong hover:text-fg">Copy</button></div>
+        </div>
+      </div>
+      <div class="relative flex min-h-[24rem] items-center justify-center lg:min-h-[33rem]" aria-label="Go gopher mascot">
+        <div class="absolute size-[min(80vw,31rem)] rounded-full border border-brand/15 bg-[radial-gradient(circle,var(--accent-soft)_0%,transparent_70%)]"></div>
+        <div class="absolute size-[min(68vw,26rem)] rounded-full border border-brand/20"></div>
+        <div class="absolute size-[min(50vw,19rem)] rounded-full border border-brand/15"></div>
+        <span class="absolute right-[6%] top-[18%] rounded-lg border border-border-strong bg-bg px-3 py-2 font-mono text-[.75rem] text-brand shadow-sm rotate-6">net/http</span>
+        <span class="absolute bottom-[19%] left-[4%] rounded-lg border border-border-strong bg-bg px-3 py-2 font-mono text-[.75rem] text-brand shadow-sm -rotate-6">go run .</span>
+        <img src="/gopher.svg" alt="Friendly blue Go gopher waving" class="relative z-10 w-[min(67vw,24rem)] drop-shadow-[0_25px_35px_rgba(0,100,140,.18)]" width="440" height="450" />
+      </div>
+    </section>
+
+    <div class="border-y border-border bg-subtle"><div class="mx-auto flex max-w-[90rem] flex-wrap items-center justify-between gap-4 px-5 py-5 text-[.7rem] font-medium uppercase tracking-[.18em] text-faint sm:px-8 lg:px-16"><span>Built on Go</span><span>Web apps</span><span>JSON APIs</span><span>Real starters</span><span>Your frontend</span></div></div>
+
+    <section class="mx-auto max-w-[90rem] px-5 py-20 sm:px-8 lg:px-16 lg:py-28">
+      <div class="mb-11 max-w-[42rem]"><p class="mb-4 text-xs font-semibold uppercase tracking-[.2em] text-brand">From idea to running app</p><h2 class="text-[clamp(2.4rem,4.5vw,4rem)] font-semibold leading-[1.05] tracking-[-.06em]">Everything in place.<br />Room to make it yours.</h2><p class="mt-5 text-[.98rem] leading-7 text-muted">Vukem gives you a useful starting point and stays close to the Go you already know.</p></div>
+      <div class="grid gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-3">
+        {features.map((feature) => <article class="bg-bg p-7 sm:p-9"><span class="font-mono text-xs text-brand">/{feature.number}</span><h3 class="mt-9 text-xl font-semibold tracking-[-.035em]">{feature.title}</h3><p class="mt-3 text-sm leading-7 text-muted">{feature.description}</p></article>)}
+      </div>
+      <div class="mt-12 flex flex-wrap items-center justify-between gap-5 rounded-xl border border-border bg-subtle px-7 py-8 sm:px-9"><div><h2 class="text-xl font-semibold tracking-[-.035em]">Ready to make something?</h2><p class="mt-1 text-sm text-muted">The quick start takes you from installation to a running app.</p></div><a href="/docs/quick-start" class="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-85">Read the quick start <span aria-hidden="true">↗</span></a></div>
+    </section>
+  </main>
+  <footer class="border-t border-border"><div class="mx-auto flex max-w-[90rem] flex-wrap items-center justify-between gap-3 px-5 py-8 text-xs text-faint sm:px-8 lg:px-16"><span>© {new Date().getFullYear()} Vukem</span><div class="flex gap-5"><a href="/docs/introduction" class="hover:text-fg">Documentation</a><a href="/changelog" class="hover:text-fg">Changelog</a><a href="https://github.com/AlexGalhardo/vukem" target="_blank" rel="noreferrer" class="hover:text-fg">GitHub</a></div></div></footer>
+</Base>

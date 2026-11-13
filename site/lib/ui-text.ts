@@ -1,7 +1,9 @@
 /** Interface strings. The site is English only. Client-safe: no file system access here. */
 export const t = {
   skipToContent: "Skip to content",
-  logoLabel: "Vukem documentation",
+  logoLabel: "Vukem home",
+  home: "Home",
+  docs: "Docs",
   githubTooltip: "GitHub repository",
   githubLabel: "Vukem on GitHub",
   agents: "Agents",
