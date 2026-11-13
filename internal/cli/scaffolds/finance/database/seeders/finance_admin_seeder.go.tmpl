@@ -74,7 +74,8 @@ func (FinanceAdminSeeder) SeedApp(ctx context.Context, app *vukem.App) error {
 	}
 	h, err := hash.Default().Make(password)
 	if err == nil {
-		candidate.Name, candidate.Password = "Local administrator", h
+		candidate.Name = "Local administrator"
+		candidate.Password = h
 		err = orm.Create(ctx, db, &candidate)
 	}
 	if err != nil {

@@ -33,4 +33,5 @@ regexes = [
 	'''testPassword''',
 	'''\.\.\.$''',
 	'''_FAKE_|(?i)placeholder|example''',
+	'''(?i)^(password|confirm password|senha|confirmar senha|contraseña|confirmar contraseña)$''',
 ]
