@@ -16,23 +16,48 @@ if (host && !motion.matches) {
     camera.position.z = 9;
     const group = new THREE.Group();
     scene.add(group);
-    const geometry = new THREE.IcosahedronGeometry(2.8, 1),
+    const geometry = new THREE.IcosahedronGeometry(5.4, 1),
       edges = new THREE.EdgesGeometry(geometry),
       material = new THREE.LineBasicMaterial({
         color: 0x38e1ff,
         transparent: true,
-        opacity: 0.14,
+        opacity: 0.34,
       });
     const mesh = new THREE.LineSegments(edges, material);
     group.add(mesh);
-    group.position.set(2.6, 0.4, -2);
+    const shellGeometry = new THREE.IcosahedronGeometry(7.2, 1),
+      shellEdges = new THREE.EdgesGeometry(shellGeometry),
+      shellMaterial = new THREE.LineBasicMaterial({
+        color: 0x7af6ff,
+        transparent: true,
+        opacity: 0.1,
+      });
+    const shell = new THREE.LineSegments(shellEdges, shellMaterial);
+    group.add(shell);
+    const ringGeometry = new THREE.TorusGeometry(6.1, 0.015, 12, 140);
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: 0x38e1ff,
+      transparent: true,
+      opacity: 0.45,
+    });
+    const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+    ring.rotation.x = Math.PI / 2.6;
+    group.add(ring);
+    const haloMaterial = ringMaterial.clone();
+    haloMaterial.opacity = 0.2;
+    const halo = new THREE.Mesh(ringGeometry, haloMaterial);
+    halo.rotation.x = Math.PI / 1.7;
+    halo.rotation.y = 0.6;
+    halo.scale.setScalar(1.18);
+    group.add(halo);
+    group.position.set(3.4, 0.15, -2.4);
     const nodes = new THREE.Points(
       geometry,
       new THREE.PointsMaterial({
-        color: 0x38e1ff,
-        size: 0.045,
+        color: 0xb8fbff,
+        size: 0.07,
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.85,
       }),
     );
     group.add(nodes);
@@ -45,8 +70,11 @@ if (host && !motion.matches) {
     addEventListener("resize", resize);
     let frame = 0;
     const render = (t) => {
-      group.rotation.y = t * 0.000045;
-      group.rotation.z = 0.15 + Math.sin(t * 0.0001) * 0.1;
+      group.rotation.y = t * 0.00072;
+      group.rotation.x = Math.sin(t * 0.00031) * 0.45;
+      group.rotation.z = 0.25 + Math.sin(t * 0.00024) * 0.28;
+      ring.rotation.z = t * 0.0009;
+      halo.rotation.z = t * -0.00055;
       renderer.render(scene, camera);
       frame = requestAnimationFrame(render);
     };
@@ -63,6 +91,12 @@ if (host && !motion.matches) {
       geometry.dispose();
       edges.dispose();
       material.dispose();
+      shellGeometry.dispose();
+      shellEdges.dispose();
+      shellMaterial.dispose();
+      ringGeometry.dispose();
+      ringMaterial.dispose();
+      haloMaterial.dispose();
       nodes.material.dispose();
       renderer.dispose();
       renderer.domElement.remove();
