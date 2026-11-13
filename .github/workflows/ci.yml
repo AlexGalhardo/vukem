@@ -197,7 +197,17 @@ jobs:
         working-directory: drivers/otel
         env:
           GOWORK: "off"
-        run: go test -race -count=1 ./...
+        run: |
+          # This step builds against the published module, so it downloads
+          # dependencies. The proxy sometimes drops the HTTP/2 stream.
+          for attempt in 1 2 3; do
+            go mod download && break
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
+          go test -race -count=1 ./...
       - name: Unit tests (workspace, current core)
         working-directory: drivers/otel
         run: go test -count=1 ./...
