@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **ci:** Keep the Ubuntu test job green when Codecov has not registered the repository. The coverage gate still fails the job. The same OIDC upload succeeds once the Codecov GitHub App includes this repository.
+
 - **site:** Let a landing viewport that is 360px tall or shorter scroll, so the headline and Read Docs link can both be brought fully into view. Taller screens stay one viewport.
 
 - **ci:** Retry the OpenTelemetry module download when the Go proxy drops the HTTP/2 stream, and point the reviewed finance secret-scan fingerprints at the commit that landed on main.
