@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Viewport landing page with a Three.js scene, the Vukem launch film and a Read Docs action.
 - **cli:** Refactor the generated personal-finance SaaS: green viewport landing, shadcn/ui sidebar, transaction modals, light/dark theme, English/pt-BR/es, Google sign-in, idempotent local admin and demo seeds, `vukem new --example finance --seed`, and generated Docker setup.
 
+### Changed
+
+- **site:** Simplify the landing. Drop the eyebrow, the sample command, the edition line and the footer. The subtitle names web applications and APIs, and the feature panel shows larger examples from the docs.
+
 ### Fixed
 
 - **cli:** Keep the finance scaffold clear of the secret scan. The admin display name is assigned apart from the password hash, the local sample passwords contain `example`, and password-field labels stay allowlisted.
