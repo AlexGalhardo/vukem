@@ -106,6 +106,9 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }}, Go ${{ matrix.go }})
+    permissions:
+      contents: read
+      id-token: write # Codecov verifies the upload with OIDC. No token is stored.
     strategy:
       fail-fast: false
       matrix:
@@ -140,6 +143,16 @@ jobs:
         with:
           name: coverage
           path: coverage.out
+      # The Codecov GitHub App has to include this repository. OIDC replaces
+      # a repository upload token, which is not stored here.
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: coverage.out
+          disable_search: true
+          fail_ci_if_error: true
 
   vuln:
     name: Vulnerabilities
