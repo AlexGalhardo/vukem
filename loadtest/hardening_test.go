@@ -201,9 +201,24 @@ func TestMetricsConnectionSeriesRecordOnlyRealConnects(t *testing.T) {
 func TestRPSIsMeasuredOverTheGenerationWindow(t *testing.T) {
 	t.Parallel()
 
+	// Duration is a real time.AfterFunc. On a busy -race runner it can fire a few
+	// hundred milliseconds late, which collapsed a 300ms stop against a 600ms handler
+	// until a correct generation-window RPS missed the 1.4 factor. Hold both handlers
+	// until well after that timer must have fired.
+	const hold = time.Second
+
+	var started atomic.Int32
+
+	release := make(chan struct{})
+	both := make(chan struct{})
+
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if started.Add(1) == 2 {
+			close(both)
+		}
+
 		select {
-		case <-time.After(600 * time.Millisecond):
+		case <-release:
 		case <-r.Context().Done():
 		}
 
@@ -211,13 +226,28 @@ func TestRPSIsMeasuredOverTheGenerationWindow(t *testing.T) {
 	}))
 	t.Cleanup(slow.Close)
 
-	// Two workers send once, generation stops at 300ms, and the drain lasts until about 600ms.
-	s, err := Run(t.Context(), Config{Concurrency: 2, Duration: 300 * time.Millisecond}, get(slow))
+	ctx := t.Context()
+
+	go func() {
+		select {
+		case <-both:
+			select {
+			case <-time.After(hold):
+			case <-ctx.Done():
+			}
+		case <-time.After(2 * time.Second):
+		case <-ctx.Done():
+		}
+
+		close(release)
+	}()
+
+	s, err := Run(ctx, Config{Concurrency: 2, Duration: 300 * time.Millisecond}, get(slow))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if s.HTTPReqs != 2 || s.Elapsed < 500*time.Millisecond {
+	if s.HTTPReqs != 2 || s.Elapsed < hold {
 		t.Fatalf("reqs=%d elapsed=%v", s.HTTPReqs, s.Elapsed)
 	}
 
