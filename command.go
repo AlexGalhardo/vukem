@@ -48,8 +48,8 @@ type Command interface {
 	Name() string
 	// Description is shown by "list".
 	Description() string
-	// Flags defines flags on fs; it may be a no-op.
-	Flags(fs *flag.FlagSet)
+	// Flags defines flags on flags; it may be a no-op.
+	Flags(flags *flag.FlagSet)
 	// Run executes the command with the remaining positional args.
 	Run(ctx context.Context, app *App, args []string) error
 }
