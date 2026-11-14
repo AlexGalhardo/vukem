@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **auth:** Export `auth.ErrInvalidToken`, returned by `Tokens.Find` for a malformed, unknown, wrong, expired or revoked token, so an app can answer 401 for it and 503 for a failing store without matching the error text.
 - **vukemtest:** Add `App.Logs()` to assert on the log output of the test app.
 - **view:** Add `Engine.RenderBlocks(ctx, w, name, data, blocks...)` to render several blocks (such as out-of-band htmx slices) of a page with one template clone.
 - **cli:** Add `vukem.MainWith(build, opts...)`, `Main` with `Option`s such as `WithVersion` and `WithReady`, so a `main` no longer needs `RunMain` for them. With `PORT=0` the server now logs `http server listening` with the bound address.
