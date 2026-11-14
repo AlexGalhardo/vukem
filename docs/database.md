@@ -128,6 +128,7 @@ PRAGMA synchronous = NORMAL;
 PRAGMA temp_store = MEMORY;
 ```
 
+- A `_pragma` in the URL replaces the default of the same name: `file:storage/app.db?_pragma=synchronous(FULL)` keeps `FULL` while the other defaults still apply. The file path itself is not escaped, so a `?`, `#` or `%` in it is not supported.
 - SQLite does not create the directory of the database file. A `file:` or `sqlite:` URL whose directory is missing fails at connect with an error that names it (`directory storage does not exist (create it first)`), instead of the driver's bare "unable to open database file (14)".
 - Two pools: a **writer** with `SetMaxOpenConns(1)` and a read-only **reader** pool (`DB_MAX_OPEN`). `QueryContext`/`QueryRowContext` go to the reader (a `RETURNING` statement to the writer); `ExecContext` and every transaction go to the writer.
 - Write transactions use `BEGIN IMMEDIATE` to avoid `SQLITE_BUSY` upgrades.

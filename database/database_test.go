@@ -26,6 +26,37 @@ func openTemp(t *testing.T) *DB {
 	return db
 }
 
+func TestSQLitePragmaInTheURLWinsOverTheDefault(t *testing.T) {
+	t.Parallel()
+
+	// Both spellings SQLite accepts: name(value) and name=value.
+	for _, pragma := range []string{"synchronous(FULL)", "synchronous%3DFULL"} {
+		t.Run(pragma, func(t *testing.T) {
+			t.Parallel()
+
+			url := "file:" + filepath.Join(testutil.TempDir(t), "app.db") + "?_pragma=" + pragma
+
+			db, err := Open(t.Context(), url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+
+			pragmas := map[string]string{"synchronous": "2", "foreign_keys": "1", "journal_mode": "wal"}
+			for name, want := range pragmas {
+				var got string
+				if err := db.writer.QueryRowContext(t.Context(), "PRAGMA "+name).Scan(&got); err != nil {
+					t.Fatal(err)
+				}
+
+				if !strings.EqualFold(got, want) {
+					t.Errorf("PRAGMA %s = %s, want %s", name, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSQLitePragmas(t *testing.T) {
 	t.Parallel()
 
