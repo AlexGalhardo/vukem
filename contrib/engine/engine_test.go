@@ -526,3 +526,31 @@ func TestVersionProbeRunsInItsOwnDirectory(t *testing.T) {
 		t.Errorf("probe left %d entries in %q, want none", len(entries), parent)
 	}
 }
+
+// Prepare is the caller's hook on the command of every run, for limits this
+// package cannot apply on every system.
+func TestRunCallsPrepareWithTheFinishedCommand(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	var gotDir string
+
+	tool := find(t, engine.Config{Name: "faketool", Prepare: func(cmd *exec.Cmd) {
+		gotDir = cmd.Dir
+		cmd.Env = append(cmd.Env, "PREPARED=yes")
+	}})
+
+	res, err := tool.Run(t.Context(), dir, "env")
+	if err != nil {
+		t.Fatalf("Run() = %v: %s", err, res.Stderr)
+	}
+
+	if gotDir != dir {
+		t.Errorf("Prepare saw Dir %q, want the run directory %q", gotDir, dir)
+	}
+
+	if !strings.Contains(res.Stdout, "PREPARED=yes") {
+		t.Errorf("the tool did not see the variable Prepare added: %s", res.Stdout)
+	}
+}
