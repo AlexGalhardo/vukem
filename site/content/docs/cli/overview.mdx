@@ -152,6 +152,7 @@ vukem new blog --inertia react --pm bun
 | `--ci` | bool | `false` | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/release-notes.go` and `.github/dependabot.yml` |
 | `--deploy` | string | none | `railway`: `.railway/railway.ts` ([Railway](/docs/deployment/docker-and-railway#deploy-on-railway)) |
 | `--docker` | bool | `false` | `compose.yaml` running the app, PostgreSQL and a mail catcher, with every port bound to `127.0.0.1` ([local stack](/docs/deployment/docker-and-railway#the-local-stack-with-compose)) |
+| `--prebuilt` | bool | `false` | No source: writes only `compose.yaml`, `.env` and `README.md` that run the published `vukem-example-todo` or `vukem-example-finance` image ([details](/docs/cli/reference-new)) |
 
 Rules: the name must start with a letter and contain only letters, digits, `-`, `_` and `.`. The folder must not exist. `--api`, `--templ` and `--inertia` are exclusive (`usage error: choose one of --api, --templ or --inertia`), and `--minimal` refuses all three. `--license` and `--deploy` take one value each and are checked before anything is written (`usage error: --deploy must be railway, not "fly"`).
 

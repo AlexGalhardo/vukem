@@ -50,6 +50,8 @@ A terminal also asks *Example app?* before the stack. `--example todo|finance|no
 
 `--minimal` has no database, so it has no example.
 
+To try an example without any source or toolchain, `vukem new demo --example todo --prebuilt` writes only a `compose.yaml`, a `.env` with a fresh `APP_KEY` and a `README.md` that run the published image with `docker compose up`. It conflicts with the stack, package-manager and standards flags. See the [`vukem new` reference](/docs/cli/reference-new).
+
 ## Comparison
 
 | Starter | Flag | Pages drawn by | Views live in | Frontend build | Node.js or Bun |
