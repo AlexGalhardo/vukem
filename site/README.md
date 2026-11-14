@@ -81,16 +81,10 @@ Fenced code blocks accept a file name: ` ```go title="main.go" `.
 
 ## Landing page and launch media
 
-The root page is a standalone viewport composition; documentation keeps its
-existing routes. A viewport 360px tall or shorter scrolls instead of clipping
-the headline and the Read Docs link. Taller screens stay one viewport. `src/scripts/landing.js` owns the decorative Three.js scene,
-including reduced-motion and WebGL-unavailable fallback behavior, and the
-feature tabs in the second column. The only marketing action is **Read Docs**.
-Each tab shows a short excerpt of real framework code: routing, controllers,
-validators, models, auth, uploads, mail, rate limiting and tests.
+The root page (`src/pages/index.astro`) is a standalone composition. From 768px wide it fits one viewport with no vertical scroll; below that, or at 360px tall or less, it scrolls normally and the feature tabs become a swipeable chip row. The hero carries the copyable install commands (`go install`, `vukem new`, and the Finance scaffold with `--seed`).
 
-The launch film is not embedded on this page. The horizontal master, poster
-and captions sit at the workspace root, outside this repository. Production
-notes stay in the sibling `vukem-video` repository
-(`films/vukem-launch/README.md`). The workspace-root `../ROADMAP.md`
-coordinates the cross-repository delivery.
+The feature tabs (Routing, DB / ORM, Auth, Jobs, Admin, CLI) switch in place with the View Transitions API, with no URL change. Each code sample is trimmed from the docs page listed in the `tabs` array of the page; keep them in sync with the docs.
+
+The mascot is one SVG, `src/assets/gopher.svg`, inlined by the landing page and the header logo. Its animation (breathe, blink, wave) lives in `app/globals.css` and is off under `prefers-reduced-motion: reduce`. Credit: Go Gopher by Renee French, CC BY 4.0.
+
+**Watch the film** opens a native `<dialog>`. The video loads only when it opens, from `/media/vukem-launch-horizontal.mp4` (plus poster and captions under `/media/`). Those files are not in this repository; production notes stay in the sibling `vukem-video` repository (`films/vukem-launch/README.md`).
