@@ -57,6 +57,48 @@ func WithQueueDriverFunc(fn func(app *App) (queue.Driver, error)) Option {
 	return func(o *options) error { o.queueFunc, o.queueDriver = fn, nil; return nil }
 }
 
+// WithQueueWork sets the worker options of the queue runner that serve
+// starts (QUEUE_IN_SERVE), in code instead of QUEUE_NAMES, QUEUE_CONCURRENCY
+// and QUEUE_LIMITS. A field that is set replaces the value from the
+// configuration: Queues, Concurrency, Limits, Sleep (the polling interval,
+// 1s by default), StopTimeout, MaxJobs and StopWhenEmpty. Zero fields keep
+// the configured value. It does not affect queue:work, which has its own
+// flags.
+func WithQueueWork(w queue.WorkOptions) Option {
+	return func(o *options) error { o.queueWork = w; return nil }
+}
+
+// withQueueWork applies the fields of over that are set on top of base.
+func withQueueWork(base, over queue.WorkOptions) queue.WorkOptions {
+	if len(over.Queues) > 0 {
+		base.Queues = over.Queues
+	}
+
+	if over.Concurrency > 0 {
+		base.Concurrency = over.Concurrency
+	}
+
+	if over.Limits != nil {
+		base.Limits = over.Limits
+	}
+
+	if over.Sleep > 0 {
+		base.Sleep = over.Sleep
+	}
+
+	if over.StopTimeout > 0 {
+		base.StopTimeout = over.StopTimeout
+	}
+
+	if over.MaxJobs > 0 {
+		base.MaxJobs = over.MaxJobs
+	}
+
+	base.StopWhenEmpty = base.StopWhenEmpty || over.StopWhenEmpty
+
+	return base
+}
+
 // MailJobKind is the queue job that sends queued mail (App.MailLater).
 const MailJobKind = "vukem.mail"
 
@@ -461,12 +503,12 @@ func (a *App) queueRunner(cfg QueueConfig) Runner {
 				"queues", cfg.QueueNames(), "concurrency", cfg.Concurrency, "limits", limits)
 		}
 
-		return q.Work(ctx, queue.WorkOptions{
+		return q.Work(ctx, withQueueWork(queue.WorkOptions{
 			Queues:      cfg.QueueNames(),
 			Concurrency: cfg.Concurrency,
 			Limits:      limits,
 			StopTimeout: a.Config.ShutdownTimeout,
-		})
+		}, a.queueWork))
 	})
 }
 
