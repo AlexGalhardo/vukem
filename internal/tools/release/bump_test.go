@@ -41,7 +41,7 @@ func TestUpdatePlanStatus(t *testing.T) {
 	}
 
 	if _, err := updatePlanStatus("no table", "2026-11-01"); err == nil {
-		t.Error("expected an error without status rows")
+		t.Error(`updatePlanStatus("no table", ...) error = nil, want an error without status rows`)
 	}
 }
 
