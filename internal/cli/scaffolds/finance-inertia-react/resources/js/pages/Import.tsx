@@ -47,8 +47,10 @@ function Mapping({ preview, dateFormats }: { preview: PreviewProps; dateFormats:
           </thead>
           <tbody>
             {preview.rows.map((row, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: a static CSV preview, never reordered
               <tr key={i}>
                 {row.map((cell, j) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: a static CSV preview, never reordered
                   <td key={j} className="pr-4">
                     {cell}
                   </td>

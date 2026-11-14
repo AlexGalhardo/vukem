@@ -34,7 +34,7 @@ export default function Billing({ limits, subscription, trialDays, canManage, co
           {pro ? (
             <p className="mt-3 text-sm font-medium text-emerald-700">This workspace is on Pro.</p>
           ) : canManage ? (
-            <button className={`${primary} mt-3`} disabled={form.processing || !configured} onClick={() => form.post("/billing/checkout/pro")}>
+            <button type="button" className={`${primary} mt-3`} disabled={form.processing || !configured} onClick={() => form.post("/billing/checkout/pro")}>
               {subscription ? "Resubscribe to Pro" : `Start the ${trialDays}-day trial`}
             </button>
           ) : (
@@ -55,7 +55,7 @@ export default function Billing({ limits, subscription, trialDays, canManage, co
             </p>
           )}
           {canManage && (
-            <button className={`${secondary} mt-3`} disabled={form.processing} onClick={() => form.post("/billing/portal")}>
+            <button type="button" className={`${secondary} mt-3`} disabled={form.processing} onClick={() => form.post("/billing/portal")}>
               Open the billing portal
             </button>
           )}

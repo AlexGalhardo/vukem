@@ -99,6 +99,7 @@ export default function PasswordField({
         </p>
       )}
       {checks && (
+        // biome-ignore lint/a11y/noRedundantRoles: Safari/VoiceOver drops list semantics from a list with list-style: none
         <ul id={checksId} role="list" className="mt-2 space-y-1 text-sm">
           {checks.map((check) => (
             <li
