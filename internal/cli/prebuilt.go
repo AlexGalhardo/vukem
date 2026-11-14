@@ -56,11 +56,22 @@ func prebuiltConflict(o newOpts) string {
 		flag string
 		on   bool
 	}{
-		{"--minimal", o.minimal}, {"--no-example", o.noExample}, {"--example none", o.example == exampleNone},
-		{"--seed", o.seed}, {"--api", o.apiOnly}, {"--templ", o.templ}, {"--inertia", o.inertiaFW != ""},
-		{"--docker", o.std.docker}, {"--module", o.module != ""}, {"--framework", o.framework != ""},
-		{"--pm", o.pmFlag != ""}, {"--no-install", o.noInstall}, {"--assets-image", o.assetsImage != ""},
-		{"--standards", o.std.standards}, {"--license", o.std.license != ""}, {"--ci", o.std.ci},
+		{"--minimal", o.minimal},
+		{"--no-example", o.noExample},
+		{"--example none", o.example == exampleNone},
+		{"--seed", o.seed},
+		{"--api", o.apiOnly},
+		{"--templ", o.templ},
+		{"--inertia", o.inertiaFW != ""},
+		{"--docker", o.std.docker},
+		{"--module", o.module != ""},
+		{"--framework", o.framework != ""},
+		{"--pm", o.pmFlag != ""},
+		{"--no-install", o.noInstall},
+		{"--assets-image", o.assetsImage != ""},
+		{"--standards", o.std.standards},
+		{"--license", o.std.license != ""},
+		{"--ci", o.std.ci},
 		{"--deploy", o.std.deploy != ""},
 	}
 
@@ -71,6 +82,28 @@ func prebuiltConflict(o newOpts) string {
 	}
 
 	return ""
+}
+
+// checkPrebuiltFlags refuses --prebuilt together with a flag it cannot honor.
+func checkPrebuiltFlags(o newOpts) error {
+	if !o.prebuilt {
+		return nil
+	}
+
+	if c := prebuiltConflict(o); c != "" {
+		return usagef("--prebuilt runs a ready-made image and writes no source: drop %s", c)
+	}
+
+	return nil
+}
+
+// runPrebuilt writes the prebuilt folder for kind, which must be an example.
+func runPrebuilt(env *Env, name, kind string) error {
+	if kind == exampleNone {
+		return usagef("--prebuilt needs an example: choose todo or finance")
+	}
+
+	return writePrebuilt(env, name, kind)
 }
 
 // writePrebuilt writes the folder of `vukem new --prebuilt`: compose.yaml,

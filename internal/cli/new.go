@@ -119,10 +119,8 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 		return usagef("invalid project name %q (letters, digits, '-', '_' and '.')", name)
 	}
 
-	if o.prebuilt {
-		if c := prebuiltConflict(o); c != "" {
-			return usagef("--prebuilt runs a ready-made image and writes no source: drop %s", c)
-		}
+	if err := checkPrebuiltFlags(o); err != nil {
+		return err
 	}
 
 	std := o.std
@@ -141,11 +139,7 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 	}
 
 	if o.prebuilt || askPrebuilt(env, o, kind) {
-		if kind == exampleNone {
-			return usagef("--prebuilt needs an example: choose todo or finance")
-		}
-
-		return writePrebuilt(env, name, kind)
+		return runPrebuilt(env, name, kind)
 	}
 
 	st, err := selectNewStack(env, o, kind)
