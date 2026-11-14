@@ -2,6 +2,7 @@ package graphql
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,9 @@ func TestLexLongLineIsLinear(t *testing.T) {
 	measure := func(src string) time.Duration {
 		best := time.Duration(1<<63 - 1)
 
-		for range 3 {
+		for range 5 {
+			runtime.GC()
+
 			start := time.Now()
 			lexAll(src)
 			best = min(best, time.Since(start))
@@ -82,10 +85,13 @@ func TestLexLongLineIsLinear(t *testing.T) {
 		return best
 	}
 
+	// 4x the input separates the two outcomes: linear lexing takes about 4x
+	// the time and quadratic about 16x. A 2x input left too little room: a
+	// shared CI runner measured 5.3x for linear code (2x vs 4x expected).
 	one := measure(longLineDoc(1<<20, 25000))
-	two := measure(longLineDoc(2<<20, 50000))
+	four := measure(longLineDoc(4<<20, 100000))
 
-	if two > 4*one {
-		t.Errorf("lexing 2x input took %v vs %v for 1x: want <= 4x", two, one)
+	if four > 8*one {
+		t.Errorf("lexing 4x input took %v vs %v for 1x: want <= 8x (quadratic is about 16x)", four, one)
 	}
 }
