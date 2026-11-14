@@ -473,6 +473,29 @@ func TestSecurity_A02_ProductionRequiresAppKey(t *testing.T) {
 	}
 }
 
+// TestEphemeralKeyBootsInProduction backs the recipe in docs/security.md
+// (Apps without a persistent key): a per-process key from WithEnvDefaults
+// satisfies the production check, and it never overrides an explicit one.
+func TestEphemeralKeyBootsInProduction(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{"APP_ENV": "production"}
+	getenv := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+
+	app, err := New(
+		WithEnv(os.DirFS(t.TempDir()), getenv),
+		WithEnvDefaults(map[string]string{"APP_KEY": config.GenerateKey()}),
+		WithLogger(discardLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v, want a boot with the ephemeral key", err)
+	}
+
+	if app.Crypt == nil {
+		t.Fatal("Crypt = nil, want it derived from the ephemeral key")
+	}
+}
+
 func TestSecurity_A04_MissingKeyFailsClosed(t *testing.T) {
 	t.Parallel()
 

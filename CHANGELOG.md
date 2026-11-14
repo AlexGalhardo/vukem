@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **config:** Document how a stateless or standalone app boots in production without a persistent `APP_KEY` (an ephemeral key per process); the key requirement stays fail-closed (docs/security.md).
 - **site:** Rebuild the landing: copyable install commands in the hero (with the Finance scaffold) and feature tabs with real Go samples, in the docs code block with its copy button, that switch in place through the View Transitions API. No vertical scroll from 768px wide; below that the tabs become a swipeable chip row.
 - **site:** Restyle the landing install commands as a macOS terminal window (title bar, traffic lights, `$` prompt) and move the feature examples to the right column with their explanation under the code. The landing mascot is gone; the Gopher stays in the header logo, with its credit.
 - **site:** Expand the landing. The feature tabs go from 6 to 13 (adds Validation, Views, Mail, Cache, Realtime, Testing and Docker) with end-to-end samples (imports, model, handler and route) taken from the docs and the blog example. The code block has a fixed height and scrolls inside (thin scrollbar, keyboard focus ring); the page still does not scroll from 768px wide. The left column gains a short pitch and four highlights, and terms in both columns have tooltips that open on hover and keyboard focus, are linked with `aria-describedby` and close with Esc.
