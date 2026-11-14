@@ -260,6 +260,26 @@ func TestRunBoundsCapturedOutput(t *testing.T) {
 			t.Errorf("%s is not the tail of the stream: %.120q", name, got)
 		}
 	}
+
+	if !res.StdoutTruncated || !res.StderrTruncated {
+		t.Errorf("Truncated = stdout %v, stderr %v, want both true", res.StdoutTruncated, res.StderrTruncated)
+	}
+}
+
+// A short run is not flagged, so StdoutTruncated is safe to branch on.
+func TestRunDoesNotFlagShortOutput(t *testing.T) {
+	t.Parallel()
+
+	tool := find(t, engine.Config{Name: "faketool", MaxOutput: 64 << 10})
+
+	res, err := tool.Run(t.Context(), t.TempDir(), "spew", "5")
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if res.StdoutTruncated || res.StderrTruncated {
+		t.Errorf("Truncated = stdout %v, stderr %v, want both false", res.StdoutTruncated, res.StderrTruncated)
+	}
 }
 
 // And the streaming form never buffers the product at all.
