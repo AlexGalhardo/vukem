@@ -268,6 +268,22 @@ func ByUser(guard string) KeyFunc {
 // with Retry-After when the bucket is empty. A failing limiter denies the
 // request (fail closed).
 func Middleware(l Limiter, key KeyFunc) func(http.Handler) http.Handler {
+	return MiddlewareWith(l, key, Options{})
+}
+
+// Options tunes MiddlewareWith.
+type Options struct {
+	// OnLimit writes the response for a denied request, for an app whose
+	// errors share one envelope. It runs after the RateLimit-* headers and
+	// Retry-After are set, so it may keep or overwrite them, and it must
+	// write a response. The security event is recorded either way. A
+	// failing limiter still answers 503 itself (fail closed). Nil writes
+	// the default problem+json 429.
+	OnLimit func(w http.ResponseWriter, r *http.Request, res Result)
+}
+
+// MiddlewareWith is Middleware with Options.
+func MiddlewareWith(l Limiter, key KeyFunc, opts Options) func(http.Handler) http.Handler {
 	if key == nil {
 		key = ByIP
 	}
@@ -302,6 +318,14 @@ func Middleware(l Limiter, key KeyFunc) func(http.Handler) http.Handler {
 
 			if !res.Allowed {
 				web.SecurityEvent(r, "ratelimit.exceeded", "key_kind", strings.SplitN(k, ":", 2)[0])
+
+				if opts.OnLimit != nil {
+					h.Set("Retry-After", seconds(res.RetryAfter))
+					opts.OnLimit(w, r, res)
+
+					return
+				}
+
 				web.Fail(w, r, errs.New(http.StatusTooManyRequests, "Too many requests.").
 					WithHeader("Retry-After", seconds(res.RetryAfter)))
 
