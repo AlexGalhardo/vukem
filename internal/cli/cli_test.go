@@ -29,12 +29,12 @@ var update = flag.Bool("update", false, "rewrite golden files")
 var fixedNow = func() time.Time { return time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC) }
 
 // vukem runs the CLI in dir and returns exit code, stdout and stderr.
-func vukem(t *testing.T, dir string, args ...string) (int, string, string) {
+func vukem(t *testing.T, dir string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 
 	var out, errOut bytes.Buffer
 
-	code := Run(t.Context(), args, Env{
+	code = Run(t.Context(), args, Env{
 		Dir: dir, Stdout: &out, Stderr: &errOut, Now: fixedNow, Version: "v0.0.0-test",
 	})
 

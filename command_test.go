@@ -637,7 +637,7 @@ func runBenchMain(
 	env map[string]string,
 	scenarios []BenchScenario,
 	args ...string,
-) (string, string, error) {
+) (stdout, stderr string, err error) {
 	t.Helper()
 
 	var out, errOut bytes.Buffer
@@ -663,7 +663,7 @@ func runBenchMain(
 		)...)
 	}
 
-	err := RunMain(t.Context(), append([]string{"app", "bench:run"}, args...), getenv, build)
+	err = RunMain(t.Context(), append([]string{"app", "bench:run"}, args...), getenv, build)
 
 	return out.String(), errOut.String(), err
 }

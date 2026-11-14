@@ -217,7 +217,7 @@ func parseReport(out string) []change {
 
 // splitSubject splits "./auth/hash.Name" into "./auth/hash" and "Name"; a
 // subject of the module root package ("./.Name" or ".Name") yields ".".
-func splitSubject(s string) (string, string) {
+func splitSubject(s string) (pkg, name string) {
 	slash := strings.LastIndex(s, "/")
 
 	dot := strings.Index(s[slash+1:], ".")
@@ -225,8 +225,8 @@ func splitSubject(s string) (string, string) {
 		return ".", s
 	}
 
-	pkg := s[:slash+1+dot]
-	name := s[slash+1+dot+1:]
+	pkg = s[:slash+1+dot]
+	name = s[slash+1+dot+1:]
 
 	if pkg == "" || pkg == "." || pkg == "./" {
 		pkg = "."

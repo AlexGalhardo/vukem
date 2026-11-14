@@ -9,12 +9,12 @@ import (
 	"testing"
 )
 
-func vukemVersion(t *testing.T, dir, ver string, args ...string) (int, string, string) {
+func vukemVersion(t *testing.T, dir, ver string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 
 	var out, errOut bytes.Buffer
 
-	code := Run(t.Context(), args, Env{Dir: dir, Stdout: &out, Stderr: &errOut, Now: fixedNow, Version: ver})
+	code = Run(t.Context(), args, Env{Dir: dir, Stdout: &out, Stderr: &errOut, Now: fixedNow, Version: ver})
 
 	return code, out.String(), errOut.String()
 }
