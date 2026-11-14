@@ -11,8 +11,10 @@ import (
 var (
 	quoteStripper = strings.NewReplacer("\"", "", "`", "", "[", "", "]", "")
 	dropTableRe   = regexp.MustCompile(`(?is)^\s*DROP\s+(?:TEMPORARY\s+)?TABLE\s+(?:IF\s+EXISTS\s+)?([^;]+)`)
-	// dropColumnRe also matches the combined form (ALTER TABLE t ADD ..., DROP COLUMN c).
-	dropColumnRe = regexp.MustCompile(`(?is)^\s*ALTER\s+TABLE\s.*\bDROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?\S+`)
+	alterTableRe  = regexp.MustCompile(`(?is)^\s*ALTER\s+TABLE\s`)
+	// dropClauseRe finds each DROP clause of an ALTER TABLE, also in the
+	// combined form (ALTER TABLE t ADD ..., DROP COLUMN c).
+	dropClauseRe = regexp.MustCompile(`(?is)\bDROP\s+(COLUMN\s+)?(?:IF\s+EXISTS\s+)?(\S+)`)
 )
 
 // Destructive lists what Up of mig would destroy on the database db, read
@@ -76,10 +78,33 @@ func Destructive(ctx context.Context, db *database.DB, mig Migration) ([]string,
 					out = append(out, "drop table "+name)
 				}
 			}
-		} else if dropColumnRe.MatchString(st) {
+		} else if dropsColumn(st) {
 			out = append(out, strings.TrimSpace(strings.ToLower(strings.Join(strings.Fields(st), " "))))
 		}
 	}
 
 	return out, nil
+}
+
+// nonColumnDrops are what DROP can name instead of a column in an ALTER TABLE:
+// constraints, indexes and column attributes. MySQL and MariaDB also accept
+// DROP c without COLUMN, so any other word is read as a column.
+var nonColumnDrops = map[string]bool{
+	"CONSTRAINT": true, "DEFAULT": true, "NOT": true, "IDENTITY": true, "EXPRESSION": true,
+	"INDEX": true, "KEY": true, "PRIMARY": true, "FOREIGN": true, "CHECK": true,
+}
+
+// dropsColumn reports whether an ALTER TABLE statement drops a column.
+func dropsColumn(st string) bool {
+	if !alterTableRe.MatchString(st) {
+		return false
+	}
+
+	for _, m := range dropClauseRe.FindAllStringSubmatch(st, -1) {
+		if m[1] != "" || !nonColumnDrops[strings.ToUpper(m[2])] {
+			return true
+		}
+	}
+
+	return false
 }

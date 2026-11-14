@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **schema:** Stop `vukem migrate` in production from refusing `DROP CONSTRAINT`, `ALTER COLUMN ... DROP DEFAULT` and `DROP NOT NULL` (and MySQL `DROP INDEX`, `DROP PRIMARY KEY`, `DROP FOREIGN KEY`) as if they were `DROP COLUMN`: they no longer need `--allow-destructive`.
 - **ci:** Document the macOS test job that ends `cancelled` when GitHub never assigns a runner (no steps, no log), and that a re-run is the fix (docs/maintenance.md, Known CI issues).
 - **ci:** Keep the Ubuntu test job green when Codecov has not registered the repository. The coverage gate still fails the job. The same OIDC upload succeeds once the Codecov GitHub App includes this repository.
 
