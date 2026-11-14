@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ci:** Upload the Ubuntu coverage profile to [Codecov](https://app.codecov.io/gh/AlexGalhardo/vukem).
 - **cli:** Refactor the generated personal-finance SaaS: green viewport landing, shadcn/ui sidebar, transaction modals, light/dark theme, English/pt-BR/es, Google sign-in, idempotent local admin and demo seeds, `vukem new --example finance --seed`, and generated Docker setup.
 
+- **cli:** Add `vukem new --prebuilt` and a terminal prompt (*Develop locally (full source)* or *Run ready-made in Docker*): a folder with only `compose.yaml`, `.env` and `README.md` that runs the published example image. It is a usage error with `--example none`, `--no-example`, `--minimal`, `--seed`, `--docker` and the stack, package-manager and standards flags.
+- **ci:** Publish `vukem-example-todo` and `vukem-example-finance` images next to `vukem`, to GHCR and Docker Hub with `X.Y.Z`, `X.Y` and `latest` tags, cosign signatures and attestations. Each image passes an HTTP 200 smoke test before it is pushed.
+
 ### Changed
 
 - **site:** Rebuild the landing: copyable install commands in the hero (with the Finance scaffold) and feature tabs with real Go samples, in the docs code block with its copy button, that switch in place through the View Transitions API. No vertical scroll from 768px wide; below that the tabs become a swipeable chip row.

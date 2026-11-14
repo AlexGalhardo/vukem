@@ -140,6 +140,16 @@ Install it with `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest`, or 
 docker run --rm -it -v "$PWD:/work" ghcr.io/alexgalhardo/vukem:0.43.0 new todo --module example.com/todo
 ```
 
+Two ways to try an example app (`todo` or `finance`): develop it locally with the full source, or run it ready-made in Docker with no source at all.
+
+```sh
+vukem new money --example finance             # full source: edit, test, deploy
+vukem new money --example finance --prebuilt  # compose.yaml + .env only
+cd money && docker compose up                 # runs ghcr.io/alexgalhardo/vukem-example-finance
+```
+
+`--prebuilt` pulls the example image matching the CLI version (`latest` for a development build) and runs nothing itself. On a terminal, `vukem new` asks which of the two you want.
+
 <details>
 <summary><strong>Show the CLI in action (6 GIFs)</strong></summary>
 
