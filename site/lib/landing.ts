@@ -1,4 +1,10 @@
-export type TabFile = { path: string; lang: "go" | "html" | "bash"; code: string };
+export type TabFile = {
+  path: string;
+  lang: "go" | "html" | "bash" | "tsx" | "json" | "protobuf";
+  code: string;
+  /** Heading shown above the first file of a set that makes up one example. */
+  group?: string;
+};
 
 export type Tab = {
   id: string;
@@ -262,6 +268,7 @@ func (h *PostController) Store(c *web.Ctx) error {
       {
         path: "resources/views/posts/index.html",
         lang: "html",
+        group: "html/template",
         code: `{{define "content"}}
 <input type="search" name="q" value="{{.Search}}"
 	hx-get="{{route "posts.index"}}"
@@ -308,13 +315,451 @@ func (h *PostController) Store(c *web.Ctx) error {
         lang: "go",
         code: `r.Get("/posts", posts.Index).Name("posts.index")`,
       },
+      {
+        path: "resources/views/layouts/app.html",
+        lang: "html",
+        group: "htmx 4",
+        code: `<meta property="csp-nonce" nonce="{{cspNonce}}">
+{{htmxScript (asset "js/htmx.min.js")}}
+{{vite "resources/css/app.css" "resources/js/app.ts"}}`,
+      },
+      {
+        path: "resources/views/partials/post_form.html",
+        lang: "html",
+        code: `<form hx-post="{{route "posts.store"}}" hx-target="#form-errors">
+	<input name="title" required minlength="3">
+	<button>Add</button>
+</form>
+<div id="form-errors" role="alert"></div>
+
+<p id="post-count">{{len .Posts}} posts</p>`,
+      },
+      {
+        path: "app/controllers/post_controller.go",
+        lang: "go",
+        code: `func (pc *PostController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.PostSchema)
+	if err != nil {
+		// To htmx this is a 422 fragment, swapped into #form-errors.
+		return err
+	}
+
+	post := models.Post{Title: in.Title}
+	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	total, err := orm.QueryOf[models.Post](pc.db).Count(c.Context())
+	if err != nil {
+		return err
+	}
+
+	row := template.HTML(
+		"<li>" + template.HTMLEscapeString(post.Title) + "</li>",
+	)
+	label := template.HTML(fmt.Sprintf("%d posts", total))
+
+	// One response, two updates: the new row and the counter.
+	html := htmx.Partial("#post-list", "afterbegin", row) +
+		htmx.OOB("post-count", "", label)
+
+	return c.HTML(http.StatusCreated, string(html))
+}`,
+      },
+      {
+        path: "routes/web.go",
+        lang: "go",
+        code: `r.Post("/posts", posts.Store).Name("posts.store")`,
+      },
+      {
+        path: "routes/web.go",
+        lang: "go",
+        group: "Inertia + React",
+        code: `r.Use(app.Inertia.Middleware, shareProps(app))
+
+r.Get("/posts", posts.Index).Name("posts.index")
+r.Post("/posts", posts.Store).Name("posts.store")`,
+      },
+      {
+        path: "app/controllers/post_controller.go",
+        lang: "go",
+        code: `func (pc *PostController) Index(c *web.Ctx) error {
+	posts, err := orm.QueryOf[models.Post](pc.db).
+		OrderBy("id", orm.Desc).
+		Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	// The first visit gets HTML, later visits get this as JSON.
+	return inertia.Render(c, "Posts/Index", inertia.Props{
+		"posts": posts,
+	})
+}
+
+func (pc *PostController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.PostSchema)
+	if err != nil {
+		// Errors land in props.errors on the redirect back.
+		return err
+	}
+
+	post := models.Post{Title: in.Title}
+	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	inertia.Flash(c, "success", "Post created.")
+
+	return c.RedirectRoute("posts.index")
+}`,
+      },
+      {
+        path: "resources/js/pages/Posts/Index.tsx",
+        lang: "tsx",
+        code: `import { Head, Link, useForm } from "@inertiajs/react";
+import type { FormEvent } from "react";
+
+import type { Post } from "../../types";
+
+interface Props {
+  posts: Post[];
+}
+
+export default function Index({ posts }: Props) {
+  const form = useForm({ title: "" });
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    form.post("/posts", { onSuccess: () => form.reset() });
+  };
+
+  return (
+    <>
+      <Head title="Posts" />
+      <form onSubmit={submit}>
+        <input
+          value={form.data.title}
+          onChange={(e) => form.setData("title", e.target.value)}
+        />
+        {form.errors.title && <p role="alert">{form.errors.title}</p>}
+        <button disabled={form.processing}>Add</button>
+      </form>
+      <ul>
+        {posts.map((post) => (
+          <li key={post.id}>
+            <Link href={\`/posts/\${post.id}\`}>{post.title}</Link>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}`,
+      },
     ],
-    title: "Server-rendered pages, htmx where you want it.",
-    text: "Views are [[html/template|Go's standard HTML templating package. It escapes output by default.]] files. A named block can be rendered alone, so one URL serves the page and its live fragment.",
+    title: "Server-rendered pages, with htmx or Inertia.",
+    text: "Views are [[html/template|Go's standard HTML templating package. It escapes output by default.]] files. A named block can be rendered alone, so one URL serves the page and its live fragment. Or hand the page to a React component with [[Inertia|A protocol that lets a Go controller return a page name and its props. React renders it, and later visits arrive as JSON, with no API to design.]].",
     points: [
       "Layouts, partials and Vite assets",
-      "[[htmx|A small library that swaps HTML fragments from the server, so a page updates without a JSON API.]], templ or Inertia for the frontend",
+      "[[htmx 4|A small library that swaps HTML fragments from the server, so a page updates without a JSON API. The starter vendors version 4.0.1.]], templ or Inertia (React, Vue, Svelte)",
       "The same action answers HTML and JSON",
+    ],
+  },
+  {
+    id: "api",
+    label: "API",
+    source: "rest-apis/overview.mdx, rest-apis/typed-handlers.mdx, rest-apis/graphql.mdx, rest-apis/grpc.mdx, contrib/graphql/example_test.go, contrib/grpc/example_test.go",
+    files: [
+      {
+        path: "routes/api.go",
+        lang: "go",
+        group: "REST",
+        code: `package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"example.com/tasks/app/accounts"
+	"example.com/tasks/app/controllers/apiv1"
+)
+
+func API(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	tasks := apiv1.NewTasks(db)
+
+	r.Group("/api/v1", func(g *router.Group) {
+		g.Use(middleware.JSONOnly(), auth.Required(acc.API))
+
+		// index, store, show, update and destroy
+		g.APIResource("tasks", tasks)
+	}).Name("api.v1.")
+
+	return nil
+}`,
+      },
+      {
+        path: "app/requests/task.go",
+        lang: "go",
+        code: `package requests
+
+// StoreTask is the body of POST /api/v1/tasks.
+type StoreTask struct {
+	Title  string \`json:"title"  validate:"required,min=3,max=120"\`
+	Status string \`json:"status" validate:"oneof=todo doing done"\`
+}`,
+      },
+      {
+        path: "app/controllers/apiv1/tasks.go",
+        lang: "go",
+        code: `func (t *Tasks) Show(c *web.Ctx) error {
+	id, err := c.ParamInt("task")
+	if err != nil {
+		return err
+	}
+
+	task, err := orm.QueryOf[models.Task](t.db).Find(c.Context(), id)
+	if err != nil {
+		// orm.ErrNotFound becomes a 404 problem+json.
+		return err
+	}
+
+	return c.JSON(http.StatusOK, resources.Task(task))
+}
+
+func (t *Tasks) Store(c *web.Ctx) error {
+	in, err := web.Bind[requests.StoreTask](c)
+	if err != nil {
+		// Validation failures become a 422 with field errors.
+		return err
+	}
+
+	task := models.Task{Title: in.Title, Status: "todo"}
+	if err := orm.Create(c.Context(), t.db, &task); err != nil {
+		return err
+	}
+
+	location, err := c.URL("api.v1.tasks.show", "task", task.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.Created(location, resources.Task(task))
+}`,
+      },
+      {
+        path: "422 response to a title of two letters",
+        lang: "json",
+        code: `{
+  "type": "about:blank",
+  "title": "Validation failed",
+  "status": 422,
+  "detail": "1 field(s) are invalid.",
+  "instance": "/api/v1/tasks",
+  "errors": {
+    "title": ["The title field must be at least 3 characters."]
+  }
+}`,
+      },
+      {
+        path: "app/graph/schema.go",
+        lang: "go",
+        group: "GraphQL",
+        code: `package graph
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/contrib/graphql"
+	"github.com/AlexGalhardo/vukem/errs"
+)
+
+const sdl = \`
+type Query {
+  products: [Product!]!
+  product(id: ID!): Product
+}
+
+type Product {
+  id: ID!
+  name: String!
+  priceCents: Int!
+}
+\`
+
+type Product struct {
+	ID         int64  \`json:"id"\`
+	Name       string \`json:"name"\`
+	PriceCents int    \`json:"price_cents"\`
+}
+
+// ID values arrive as strings, so ",string" turns "1" into 1.
+type ProductArgs struct {
+	ID int64 \`json:"id,string"\`
+}
+
+var catalog = []Product{
+	{ID: 1, Name: "Lamp", PriceCents: 1999},
+	{ID: 2, Name: "Mug", PriceCents: 899},
+}
+
+func New() (*graphql.Schema, error) {
+	return graphql.New(sdl,
+		graphql.Query("products", listProducts),
+		graphql.Query("product", findProduct),
+	)
+}
+
+func listProducts(
+	_ context.Context, _ graphql.NoArgs,
+) ([]Product, error) {
+	return catalog, nil
+}
+
+func findProduct(
+	_ context.Context, a ProductArgs,
+) (*Product, error) {
+	for _, p := range catalog {
+		if p.ID == a.ID {
+			return &p, nil
+		}
+	}
+
+	return nil, errs.New(http.StatusNotFound, "Product not found.")
+}`,
+      },
+      {
+        path: "routes/api.go",
+        lang: "go",
+        code: `func API(r *router.Router, app *vukem.App) error {
+	schema, err := graph.New()
+	if err != nil {
+		// A schema that does not match its resolvers fails at boot.
+		return err
+	}
+
+	graphql.Serve(app, r, "/graphql", schema, graphql.Config{})
+
+	return nil
+}`,
+      },
+      {
+        path: "terminal",
+        lang: "bash",
+        code: `curl -s localhost:3000/graphql \\
+  -H 'Content-Type: application/json' \\
+  -d '{"query":"{ product(id: \\"1\\") { name priceCents } }"}'
+
+# {"data":{"product":{"name":"Lamp","priceCents":1999}}}`,
+      },
+      {
+        path: "proto/task/v1/task.proto",
+        lang: "protobuf",
+        group: "gRPC",
+        code: `syntax = "proto3";
+
+package task.v1;
+
+option go_package = "example.com/tasks/gen/task/v1;taskv1";
+
+service TaskService {
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse) {}
+}
+
+message GetTaskRequest {
+  int64 id = 1;
+}
+
+message GetTaskResponse {
+  int64 id = 1;
+  string name = 2;
+}`,
+      },
+      {
+        path: "app/rpc/tasks.go",
+        lang: "go",
+        code: `package rpc
+
+import (
+	"context"
+
+	"connectrpc.com/connect"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+
+	taskv1 "example.com/tasks/gen/task/v1"
+	"example.com/tasks/gen/task/v1/taskv1connect"
+	"example.com/tasks/app/models"
+)
+
+type Tasks struct {
+	taskv1connect.UnimplementedTaskServiceHandler
+
+	DB *database.DB
+}
+
+func (t *Tasks) GetTask(
+	ctx context.Context,
+	req *connect.Request[taskv1.GetTaskRequest],
+) (*connect.Response[taskv1.GetTaskResponse], error) {
+	task, err := orm.QueryOf[models.Task](t.DB).
+		Find(ctx, req.Msg.GetId())
+	if err != nil {
+		// orm.ErrNotFound reaches the client as NotFound.
+		return nil, err
+	}
+
+	return connect.NewResponse(&taskv1.GetTaskResponse{
+		Id:   task.ID,
+		Name: task.Title,
+	}), nil
+}`,
+      },
+      {
+        path: "routes/rpc.go",
+        lang: "go",
+        code: `func RPC(r *router.Router, app *vukem.App) error {
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	opts := grpc.HandlerOptions(grpc.Options{})
+	path, h := taskv1connect.NewTaskServiceHandler(
+		&rpc.Tasks{DB: db}, opts...,
+	)
+	grpc.Mount(r, path, h)
+
+	return nil
+}`,
+      },
+      {
+        path: "terminal",
+        lang: "bash",
+        code: `curl -s localhost:3000/task.v1.TaskService/GetTask \\
+  -H 'Content-Type: application/json' -d '{"id": 1}'
+
+# {"id":"1","name":"Buy milk"}`,
+      },
+    ],
+    title: "REST, GraphQL or gRPC, from the same app.",
+    text: "All three sit on the same [[router|Vukem's router is built on net/http, so each API is an ordinary http.Handler and shares your middleware: request ids, logging, rate limits and auth guards.]]. Pick JSON, a [[schema|GraphQL: a typed description of every field a client may ask for, written in SDL. Resolvers are plain Go functions bound to it.]] or a [[.proto contract|Protocol Buffers: the file that describes a gRPC service. The generator writes the typed Go server and client from it.]].",
+    points: [
+      "Errors as [[problem+json|RFC 9457 problem details: one JSON error shape with type, title, status and per-field errors.]], 422 with field errors",
+      "A bad GraphQL schema fails at boot, not on the first query",
+      "[[gRPC|Binary RPC over HTTP/2. contrib/grpc uses connect-go, so one handler also answers gRPC-Web and plain JSON over HTTP.]], gRPC-Web and Connect on one port",
     ],
   },
   {
