@@ -944,6 +944,65 @@ func TestDefaultMiddlewareWithStateless(t *testing.T) {
 	}
 }
 
+func TestDefaultMiddlewareWithMaxBody(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		max  int64
+		size int
+		want int
+	}{
+		"default allows a small body":  {0, 100, http.StatusOK},
+		"limit lower than the default": {64, 100, http.StatusRequestEntityTooLarge},
+		"body within the limit":        {64, 32, http.StatusOK},
+		"limit above the default":      {web.DefaultMaxBody + 1024, int(web.DefaultMaxBody) + 512, http.StatusOK},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+				r.Post("/upload", func(c *web.Ctx) error {
+					if _, err := io.Copy(io.Discard, c.Request().Body); err != nil {
+						return c.String(http.StatusRequestEntityTooLarge, "too large")
+					}
+
+					return c.String(http.StatusOK, "ok")
+				})
+
+				return DefaultMiddlewareWith(app, r, MiddlewareOptions{Stateless: true, MaxBody: tt.max})
+			}))
+
+			h, err := app.Handler()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/upload",
+				strings.NewReader(strings.Repeat("x", tt.size)))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tt.want {
+				t.Errorf("MaxBody %d, %d bytes: status = %d, want %d", tt.max, tt.size, rec.Code, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultMiddlewareWithRefusesNegativeMaxBody(t *testing.T) {
+	t.Parallel()
+
+	_, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()),
+		WithRoutes(func(r *router.Router, app *App) error {
+			return DefaultMiddlewareWith(app, r, MiddlewareOptions{MaxBody: -1})
+		}))
+	if err == nil {
+		t.Fatal("New() error = nil, want a negative MaxBody refused at boot")
+	}
+}
+
 func TestSecurity_A01_DefaultMiddlewareWithCSRFTokenFallback(t *testing.T) {
 	t.Parallel()
 

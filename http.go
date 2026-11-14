@@ -1,6 +1,7 @@
 package vukem
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -576,6 +577,15 @@ type MiddlewareOptions struct {
 	// their order, or the selectable locales. It is validated at boot and
 	// needs WithTranslations.
 	I18n *i18n.MiddlewareConfig
+	// MaxBody is the router-wide request body limit in bytes; zero keeps
+	// web.DefaultMaxBody (10 MiB), a negative value is a boot error. Prefer
+	// it to a UseServer(middleware.BodyLimit(n)) of your own: the router
+	// limit is applied later and replaces a server-level one (the innermost
+	// limit wins), so a server-level BodyLimit registered through UseServer
+	// is silently ignored on routes. An urlencoded form is parsed before the
+	// router (by MethodOverride), so it keeps the 10 MiB default unless a
+	// server-level BodyLimit is placed ahead of MethodOverride.
+	MaxBody int64
 }
 
 // DefaultMiddlewareWith installs the DefaultMiddleware stacks with opts.
@@ -586,6 +596,10 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 
 	if opts.Stateless && opts.CSRFTokenFallback {
 		return errors.New("vukem: CSRFTokenFallback needs sessions; it cannot be combined with Stateless")
+	}
+
+	if opts.MaxBody < 0 {
+		return errors.New("vukem: MaxBody must not be negative")
 	}
 
 	if err := validCrossOrigin(opts.CrossOrigin); err != nil {
@@ -636,7 +650,8 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 	}
 
 	csrfCfg := csrf.Config{TrustedOrigins: origins, BypassPatterns: csrfBypass}
-	routerMW := []router.Middleware{middleware.BodyLimit(web.DefaultMaxBody)}
+	maxBody := cmp.Or(opts.MaxBody, web.DefaultMaxBody)
+	routerMW := []router.Middleware{middleware.BodyLimit(maxBody)}
 	if cacheMW != nil {
 		routerMW = append(routerMW, cacheMW)
 	}
