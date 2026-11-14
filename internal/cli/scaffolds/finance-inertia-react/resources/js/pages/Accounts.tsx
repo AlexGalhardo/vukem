@@ -2,6 +2,7 @@ import { useFinanceI18n } from "../lib/i18n";
 import { Head, Link, useForm, usePage } from "@inertiajs/react";
 import type { FormEvent } from "react";
 
+import ConfirmDelete from "../components/ConfirmDelete";
 import Field from "../components/Field";
 import { Card, Select, danger, primary } from "../components/ui";
 import type { Page, SharedProps } from "../page-props";
@@ -36,9 +37,15 @@ export default function Accounts({ accounts, limits }: Page<"Accounts">) {
               <span>
                 {a.name} <span className="text-sm text-muted-foreground">({a.kind}, opening {formatMoney(a.opening_cents, currency)})</span>
               </span>
-              <Link href={`/accounts/${a.id}`} method="delete" as="button" className={danger}>
-                {t("delete")}
-              </Link>
+              <ConfirmDelete
+                href={`/accounts/${a.id}`}
+                name={a.name}
+                trigger={
+                  <button type="button" className={danger}>
+                    {t("delete")}
+                  </button>
+                }
+              />
             </li>
           ))}
         </ul>
