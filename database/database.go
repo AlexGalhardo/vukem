@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -265,6 +267,24 @@ func sqliteDSN(rawURL string, write bool) (dsn string, memory bool) {
 	return "file:" + path + "?" + vals.Encode(), memory
 }
 
+// sqliteMissingDir reports the directory of a file database that does not
+// exist: SQLite only says "unable to open database file (14)" for it.
+func sqliteMissingDir(rawURL string) (string, bool) {
+	path := strings.TrimPrefix(strings.TrimPrefix(rawURL, "sqlite:"), "file:")
+	path, _, _ = strings.Cut(path, "?")
+
+	if path == "" || path == ":memory:" {
+		return "", false
+	}
+
+	dir := filepath.Dir(path)
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return dir, true
+	}
+
+	return "", false
+}
+
 func openSQLite(ctx context.Context, rawURL string, cfg Config) (*DB, error) {
 	if !sqliteLinked {
 		return nil, errors.New("database: SQLite is not linked into this binary (built with -tags vukem_nosqlite); " +
@@ -284,6 +304,15 @@ func openSQLite(ctx context.Context, rawURL string, cfg Config) (*DB, error) {
 
 	if err := writer.PingContext(ctx); err != nil {
 		_ = writer.Close()
+
+		if dir, missing := sqliteMissingDir(rawURL); missing {
+			return nil, fmt.Errorf(
+				"database: connect sqlite: directory %s does not exist (create it first): %w",
+				dir,
+				err,
+			)
+		}
+
 		return nil, fmt.Errorf("database: connect sqlite: %w", err)
 	}
 

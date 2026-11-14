@@ -180,6 +180,19 @@ func TestTxCommitRollbackPanic(t *testing.T) {
 	}
 }
 
+func TestOpenSQLiteMissingDirectoryNamesIt(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "missing", "dir")
+
+	for _, prefix := range []string{"file:", "sqlite:"} {
+		_, err := Open(t.Context(), prefix+filepath.Join(dir, "x.db")+"?cache=shared")
+		if err == nil || !strings.Contains(err.Error(), "directory "+dir+" does not exist") {
+			t.Fatalf("%sx.db error = %v, want it to name the missing directory %s", prefix, err, dir)
+		}
+	}
+}
+
 func TestOpenErrorsAndDialects(t *testing.T) {
 	t.Parallel()
 
