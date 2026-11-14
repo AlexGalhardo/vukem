@@ -248,3 +248,22 @@ func TestPrebuiltComposeSharesImagePins(t *testing.T) {
 		}
 	}
 }
+
+// A development CLI has no published image to pin to, so the project runs the
+// moving latest tag and its README says so.
+func TestPrebuiltREADMEExplainsALatestTag(t *testing.T) {
+	t.Parallel()
+
+	for ver, want := range map[string]bool{"devel": true, "v0.44.0": false} {
+		out, err := renderPrebuilt("README.md.tmpl", prebuiltData{
+			Name: "x", Example: exampleTodo, Image: prebuiltImage(exampleTodo, ver),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got := strings.Contains(string(out), "development build"); got != want {
+			t.Errorf("README for CLI %q mentions the development build = %v, want %v\n%s", ver, got, want, out)
+		}
+	}
+}
