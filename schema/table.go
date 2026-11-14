@@ -230,6 +230,20 @@ func indexName(table string, cols []string, unique bool) string {
 	return table + "_" + strings.Join(cols, "_") + suffix
 }
 
+// Name replaces the derived index name, for two indexes over the same
+// columns (partial ones, for example) or a name the app already uses.
+// The name is a plain identifier like any other in the schema.
+func (i *Index) Name(name string) *Index {
+	if err := checkIdent("index", name); err != nil {
+		i.t.fail(err)
+		return i
+	}
+
+	i.ix.name = name
+
+	return i
+}
+
 // Using picks the PostgreSQL index method: "gin" for a JSONB column queried
 // with @> or ?, "gist", "brin", "hash", "spgist" or "btree" (the default).
 // Other dialects have no equivalent, so the migration fails there instead
@@ -504,6 +518,24 @@ func (c *Column) Constrained(table ...string) *Column {
 	} else {
 		c.t.fks = append(c.t.fks, c.ref)
 	}
+
+	return c
+}
+
+// References points the foreign key added by Constrained at another column
+// of the target table instead of "id"; the column should be unique there.
+func (c *Column) References(column string) *Column {
+	if c.ref == nil {
+		c.t.fail(fmt.Errorf("schema: References(%q) on %s needs Constrained first", column, c.name))
+		return c
+	}
+
+	if err := checkIdent("column", column); err != nil {
+		c.t.fail(err)
+		return c
+	}
+
+	c.ref.refCol = column
 
 	return c
 }
