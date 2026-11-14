@@ -2,7 +2,6 @@
 import Base from "../layouts/Base.astro";
 import { CopyButton } from "@/components/copy-button";
 import { highlight } from "@/lib/highlight";
-import gopher from "../assets/gopher.svg?raw";
 
 // Every snippet is trimmed from the docs page named in `source`; keep them in sync.
 const tabs = [
@@ -90,55 +89,69 @@ vukem serve`,
 	},
 ];
 
+const commands = [
+	"go install github.com/AlexGalhardo/vukem/cmd/vukem@latest",
+	"vukem new myapp",
+	"vukem new shop --example finance --seed",
+];
+
 const highlighted = await Promise.all(tabs.map((tab) => highlight(tab.code, tab.id === "cli" ? "bash" : "go")));
 ---
 
 <Base title="Vukem — Web apps, the Go way" description="Build web apps and APIs in Go with a working starter, familiar net/http foundations, and your choice of frontend." canonical="/">
 	<main id="content" class="home flex flex-col gap-5 px-5 pb-6 pt-6 md:h-[calc(100dvh-var(--header-h))] md:gap-3 md:overflow-hidden md:px-8 md:pb-3 md:pt-6 lg:px-16 [@media(max-height:360px)]:h-auto [@media(max-height:360px)]:overflow-visible">
-		<section class="mx-auto grid w-full max-w-[90rem] grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-			<div class="min-w-0">
+		<div class="mx-auto grid w-full max-w-[90rem] min-h-0 flex-1 grid-cols-1 gap-6 md:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)] md:items-center md:gap-8 lg:gap-12">
+			<section class="min-w-0" aria-label="Get started">
 				<h1 class="text-[clamp(2rem,min(5vw,6.5vh),3.5rem)] font-semibold leading-[1.02] tracking-[-.06em] text-fg">
 					Make more. <span class="text-brand">Wire less.</span>
 				</h1>
-				<p class="mt-2 max-w-[38rem] [@media(min-width:768px)_and_(max-height:800px)]:hidden text-[.9rem] leading-[1.5] text-muted">
+				<p class="mt-2 max-w-[38rem] text-[.9rem] leading-[1.5] text-muted [@media(min-width:768px)_and_(max-height:800px)]:hidden">
 					Build full-stack web apps and APIs in Go. Start from a working project, pick your frontend, get back to building.
 				</p>
-				<div class="mt-2 max-w-[40rem] divide-y divide-border overflow-hidden rounded-lg border border-border-strong bg-code-bg font-mono text-[.7rem] text-fg">
-					<div class="flex items-center justify-between gap-2 py-0.5 pl-3 pr-1"><code class="min-w-0 overflow-x-auto whitespace-nowrap [scrollbar-width:thin]"><span class="mr-2 text-brand">$</span>go install github.com/AlexGalhardo/vukem/cmd/vukem@latest</code><CopyButton client:visible text="go install github.com/AlexGalhardo/vukem/cmd/vukem@latest" /></div>
-					<div class="flex items-center justify-between gap-2 py-0.5 pl-3 pr-1"><code class="min-w-0 overflow-x-auto whitespace-nowrap [scrollbar-width:thin]"><span class="mr-2 text-brand">$</span>vukem new myapp</code><CopyButton client:visible text="vukem new myapp" /></div>
-					<div class="flex items-center justify-between gap-2 py-0.5 pl-3 pr-1"><code class="min-w-0 overflow-x-auto whitespace-nowrap [scrollbar-width:thin]"><span class="mr-2 text-brand">$</span>vukem new shop --example finance --seed</code><CopyButton client:visible text="vukem new shop --example finance --seed" /></div>
+				<div role="group" aria-label="Install commands" class="terminal mt-3 max-w-[40rem] overflow-hidden rounded-xl border border-[#3a3d44] bg-[#1c1e24] font-mono text-[.72rem] text-[#e6e8ee] shadow-lg">
+					<div class="flex h-8 items-center gap-2 border-b border-[#3a3d44] bg-[#2a2c33] px-3" aria-hidden="true">
+						<span class="size-3 rounded-full bg-[#ff5f57]"></span><span class="size-3 rounded-full bg-[#febc2e]"></span><span class="size-3 rounded-full bg-[#28c840]"></span>
+						<span class="ml-2 text-[.68rem] text-[#9a9ea8]">Terminal</span>
+					</div>
+					<ul class="py-1">
+						{commands.map((cmd) => (
+							<li class="flex items-center justify-between gap-2 py-0.5 pl-3 pr-1">
+								<code class="min-w-0 overflow-x-auto whitespace-nowrap py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" tabindex="0"><span class="mr-2 select-none text-[#28c840]" aria-hidden="true">$</span>{cmd}</code>
+								<CopyButton client:visible text={cmd} className="terminal-copy" />
+							</li>
+						))}
+					</ul>
 				</div>
-				<div class="mt-2 flex flex-wrap items-center gap-2">
+				<div class="mt-3 flex flex-wrap items-center gap-2">
 					<a href="/docs/quick-start" class="inline-flex min-h-9 items-center gap-2 rounded-lg bg-fg px-4 py-1.5 text-sm font-semibold text-bg transition hover:opacity-80">Read the quick start <span aria-hidden="true">→</span></a>
 				</div>
-			</div>
-			<div class="gopher h-[clamp(8rem,38vh,24rem)] aspect-[200/230] drop-shadow-[0_14px_18px_rgba(0,100,140,.18)] max-md:h-32" set:html={gopher} aria-hidden="true" />
-		</section>
+			</section>
 
-		<section data-feature-tabs class="mx-auto flex w-full min-h-0 max-w-[90rem] flex-1 flex-col gap-2" aria-label="Framework features">
-			<div role="tablist" aria-label="Framework features" class="tablist -mx-5 flex shrink-0 snap-x snap-proximity gap-2 overflow-x-auto px-6 py-1 [scrollbar-width:none] md:mx-0 md:px-1">
-				{tabs.map((tab, i) => (
-					<button type="button" role="tab" id={`tab-${tab.id}`} aria-selected={i === 0 ? "true" : "false"} aria-controls={`panel-${tab.id}`} tabindex={i === 0 ? 0 : -1} class="shrink-0 snap-start rounded-full border border-border-strong px-4 py-1.5 text-sm font-medium text-muted transition-colors hover:text-fg aria-selected:border-fg aria-selected:bg-fg aria-selected:text-bg">{tab.label}</button>
-				))}
-			</div>
-			<div class="tab-panels min-h-0 flex-1">
-				{tabs.map((tab, i) => (
-					<div role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} tabindex="0" hidden={i !== 0} data-source={tab.source} class="grid h-full min-h-0 gap-4 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] md:gap-8">
-						<figure class="landing-code flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-code-bg">
-							<figcaption class="flex h-10 shrink-0 items-center justify-between border-b border-border pr-1.5 pl-4"><span class="truncate font-mono text-xs text-muted">{tab.id === "cli" ? "Terminal" : "Go"}</span><CopyButton client:visible text={tab.code} /></figcaption>
-							<div class="code-body min-h-0 flex-1 overflow-auto" set:html={highlighted[i]} />
-						</figure>
-						<div class="min-h-0 md:self-center">
-							<h2 class="text-lg font-semibold leading-snug tracking-[-.03em]">{tab.title}</h2>
-							<p class="mt-1 text-sm leading-6 text-muted">{tab.text}</p>
-							<ul class="mt-2 space-y-1 text-sm text-fg">
-								{tab.points.map((point) => <li class="flex gap-2"><span aria-hidden="true" class="text-brand">✓</span>{point}</li>)}
-							</ul>
+			<section data-feature-tabs class="flex min-h-0 min-w-0 flex-col gap-2 md:h-full" aria-label="Framework features">
+				<div role="tablist" aria-label="Framework features" class="tablist -mx-5 flex shrink-0 snap-x snap-proximity gap-2 overflow-x-auto px-6 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:mx-0 md:px-1">
+					{tabs.map((tab, i) => (
+						<button type="button" role="tab" id={`tab-${tab.id}`} aria-selected={i === 0 ? "true" : "false"} aria-controls={`panel-${tab.id}`} tabindex={i === 0 ? 0 : -1} class="shrink-0 snap-start rounded-full border border-border-strong px-4 py-1.5 text-sm font-medium text-muted transition-colors hover:text-fg aria-selected:border-fg aria-selected:bg-fg aria-selected:text-bg">{tab.label}</button>
+					))}
+				</div>
+				<div class="tab-panels min-h-0 flex-1">
+					{tabs.map((tab, i) => (
+						<div role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} tabindex="0" hidden={i !== 0} data-source={tab.source} class="flex h-full min-h-0 flex-col gap-3">
+							<figure class="landing-code flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-code-bg md:flex-1">
+								<figcaption class="flex h-10 shrink-0 items-center justify-between border-b border-border pr-1.5 pl-4"><span class="truncate font-mono text-xs text-muted">{tab.id === "cli" ? "Terminal" : "Go"}</span><CopyButton client:visible text={tab.code} /></figcaption>
+								<div class="code-body min-h-0 flex-1 overflow-auto" set:html={highlighted[i]} />
+							</figure>
+							<div class="shrink-0">
+								<h2 class="text-lg font-semibold leading-snug tracking-[-.03em]">{tab.title}</h2>
+								<p class="mt-1 text-sm leading-6 text-muted">{tab.text}</p>
+								<ul class="mt-2 space-y-1 text-sm text-fg">
+									{tab.points.map((point) => <li class="flex gap-2"><span aria-hidden="true" class="text-brand">✓</span>{point}</li>)}
+								</ul>
+							</div>
 						</div>
-					</div>
-				))}
-			</div>
-		</section>
+					))}
+				</div>
+			</section>
+		</div>
 
 		<footer class="mx-auto flex w-full max-w-[90rem] shrink-0 flex-wrap items-center justify-between gap-x-5 gap-y-1 text-[.7rem] text-faint">
 			<span>© {new Date().getFullYear()} Vukem. Go Gopher by Renee French, <a href="https://creativecommons.org/licenses/by/4.0/" class="underline underline-offset-2 hover:text-fg">CC BY 4.0</a>.</span>
@@ -154,6 +167,20 @@ const highlighted = await Promise.all(tabs.map((tab) => highlight(tab.code, tab.
 		padding: 0.75rem 1rem;
 		font-size: 0.75rem;
 		line-height: 1.55;
+	}
+
+	.terminal .terminal-copy {
+		color: #9a9ea8;
+	}
+
+	.terminal .terminal-copy:hover {
+		background: rgb(255 255 255 / 0.1);
+		color: #fff;
+	}
+
+	.terminal :focus-visible {
+		outline-offset: -2px;
+		border-radius: 0.375rem;
 	}
 
 	.tab-panels {
