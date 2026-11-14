@@ -4,7 +4,7 @@
 	<g stroke="#0B7B94" stroke-width="4">
 		<ellipse cx="74" cy="216" rx="20" ry="9" fill="#6AD7E5"/>
 		<ellipse cx="126" cy="216" rx="20" ry="9" fill="#6AD7E5"/>
-		<g class="g-body">
+		<g>
 			<ellipse cx="50" cy="58" rx="17" ry="17" fill="#6AD7E5"/>
 			<ellipse cx="150" cy="58" rx="17" ry="17" fill="#6AD7E5"/>
 			<ellipse cx="50" cy="58" rx="8" ry="8" fill="#F4B6B0" stroke="none"/>
@@ -12,7 +12,7 @@
 			<ellipse cx="42" cy="158" rx="12" ry="24" fill="#6AD7E5" transform="rotate(18 42 158)"/>
 			<path d="M100 40c40 0 66 30 66 78v36c0 38-24 62-66 62s-66-24-66-62v-36c0-48 26-78 66-78Z" fill="#6AD7E5"/>
 			<ellipse cx="100" cy="178" rx="34" ry="28" fill="#D6F5F9" stroke="none"/>
-			<g class="g-eyes" stroke="none">
+			<g stroke="none">
 				<circle cx="76" cy="88" r="18" fill="#fff"/>
 				<circle cx="124" cy="88" r="18" fill="#fff"/>
 				<circle cx="79" cy="90" r="6.5" fill="#10272F"/>
@@ -22,7 +22,7 @@
 			<ellipse cx="100" cy="109" rx="9" ry="6" fill="#10272F" stroke="none"/>
 			<path d="M91 124v12a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-12Z" fill="#fff" stroke="#10272F" stroke-width="3"/>
 			<path d="M100 124v15" stroke="#10272F" stroke-width="3"/>
-			<g class="g-wave">
+			<g>
 				<ellipse cx="164" cy="132" rx="12" ry="26" fill="#6AD7E5" transform="rotate(-24 164 132)"/>
 			</g>
 		</g>

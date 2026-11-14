@@ -10,19 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **ci:** Upload the Ubuntu coverage profile to [Codecov](https://app.codecov.io/gh/AlexGalhardo/vukem).
-- Viewport landing page with a Three.js scene, the Vukem launch film and a Read Docs action.
 - **cli:** Refactor the generated personal-finance SaaS: green viewport landing, shadcn/ui sidebar, transaction modals, light/dark theme, English/pt-BR/es, Google sign-in, idempotent local admin and demo seeds, `vukem new --example finance --seed`, and generated Docker setup.
 
 ### Changed
 
-- **site:** Rebuild the landing: copyable install commands in the hero (with the Finance scaffold), feature tabs with real Go samples that switch in place through the View Transitions API, and a native dialog for the launch film. No vertical scroll from 768px wide; below that the tabs become a swipeable chip row.
-- **site:** Use one animated Go Gopher SVG (`site/src/assets/gopher.svg`) for the logo and the landing, with credit to Renee French (CC BY 4.0). The animation respects `prefers-reduced-motion`.
+- **site:** Rebuild the landing: copyable install commands in the hero (with the Finance scaffold) and feature tabs with real Go samples, in the docs code block with its copy button, that switch in place through the View Transitions API. No vertical scroll from 768px wide; below that the tabs become a swipeable chip row.
+- **site:** Use one static Go Gopher SVG (`site/src/assets/gopher.svg`) for the logo and the landing, with credit to Renee French (CC BY 4.0).
 - **site:** Move the landing background sphere into the open left side. The code panel on the right was covering it.
 - **site:** Simplify the landing. Drop the eyebrow, the sample command, the edition line and the footer. The subtitle names web applications and APIs, and the feature panel shows larger examples from the docs.
 
 ### Removed
 
-- **site:** Remove the Three.js scene and the `three` dependency.
+- **site:** Remove the Three.js scene, the `three` dependency and the launch film (button, dialog and video) from the landing.
 
 ### Fixed
 
