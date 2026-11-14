@@ -96,6 +96,15 @@ func financeEdits() []exampleEdit {
 			"\t\tvukem.WithSeeders(seeders.All()...),\n",
 			"\t\tvukem.WithSeeders(seeders.All()...),\n\t\tvukem.WithAppSeeders(seeders.AllApp()...),\n",
 		},
+		// Radix's scroll lock injects a <style>: without the nonce the CSP blocks it on every dialog.
+		{
+			"resources/js/app.tsx",
+			"createInertiaApp({",
+			"// react-style-singleton, used by the Radix scroll lock, reads the nonce of its injected <style> here.\n" +
+				"(globalThis as { __webpack_nonce__?: string }).__webpack_nonce__ =\n" +
+				"  document.querySelector<HTMLMetaElement>('meta[property=\"csp-nonce\"]')?.nonce;\n\n" +
+				"createInertiaApp({",
+		},
 		// The panel's feature flags page needs install:flags, which this app does not use.
 		{"tests/admin_test.go", "\tc.Get(\"/admin-api/_flags\").AssertOK().AssertSee(\"Feature flags\")\n", ""},
 		// /dashboard is the finance dashboard (routes/finance.go, inside a workspace).

@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **cli:** The finance app hands the CSP nonce to the Radix scroll lock (`__webpack_nonce__`), so opening a dialog no longer logs a `style-src` violation.
 - **cli:** The generated finance app passes `biome lint` on its first commit (type-only imports, `===`, template string, button types, list keys, stable hook dependencies). The few intentional exceptions (a `div` that must stay a `role="group"`, the sidebar cookie, the static CSV preview keys, the Safari list role) carry a `biome-ignore` with the reason.
 - **cli:** The finance app's `/admin` lists users, workspaces and subscriptions (read-only, behind the admin policies; `/admin/users` was a 404) and its screens no longer sit inside the visitor layout, which showed a second header and a "Log in" button to a signed-in admin.
 - **studio:** The row page saves and deletes again. Its form `action` was escaped twice (`?k%3d1`), so every edit or delete answered 422 "the key does not match the primary key"; a handler test now submits the rendered forms.
