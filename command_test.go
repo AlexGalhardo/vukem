@@ -1404,3 +1404,65 @@ func TestBenchRunUIServesDashboard(t *testing.T) {
 		t.Error("the scenario never ran")
 	}
 }
+
+type bootProbe struct {
+	boots, shutdowns *int
+	cmd              Command
+}
+
+func (p bootProbe) Register(app *App) error { app.AddCommand(p.cmd); return nil }
+
+func (p bootProbe) Boot(context.Context, *App) error { *p.boots++; return nil }
+
+func (p bootProbe) Shutdown(context.Context, *App) error { *p.shutdowns++; return nil }
+
+type noBootCommand struct {
+	CommandFunc
+	noBoot bool
+}
+
+func (c noBootCommand) NoBoot() bool { return c.noBoot }
+
+func TestCommandNoBoot(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		noBoot         bool
+		bootsInCommand bool
+		wantBoots      int
+		wantShutdowns  int
+	}{
+		{"default boots", false, false, 1, 1},
+		{"NoBoot skips boot and shutdown", true, false, 0, 0},
+		{"NoBoot command that boots itself is shut down", true, true, 1, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var boots, shutdowns int
+
+			cmd := noBootCommand{noBoot: tt.noBoot, CommandFunc: CommandFunc{
+				CommandName: "test:noboot",
+				Fn: func(ctx context.Context, app *App, _ []string) error {
+					if tt.bootsInCommand {
+						return app.Boot(ctx)
+					}
+
+					return nil
+				},
+			}}
+
+			app := newTestApp(t, WithProviders(bootProbe{&boots, &shutdowns, cmd}))
+			if err := runCommand(t.Context(), app, "test:noboot", nil); err != nil {
+				t.Fatal(err)
+			}
+
+			if boots != tt.wantBoots || shutdowns != tt.wantShutdowns {
+				t.Errorf("boots, shutdowns = %d, %d, want %d, %d", boots, shutdowns, tt.wantBoots, tt.wantShutdowns)
+			}
+		})
+	}
+}
