@@ -35,10 +35,14 @@ type HTTPError struct {
 	// Params fill the {name} placeholders of the translated Key.
 	Params map[string]any
 	// Extensions are RFC 9457 extension members added to the problem+json
-	// body of 4xx responses (never 5xx); they cannot replace a standard
-	// member (type, title, status, detail, instance, request_id, errors).
-	// Values must be safe to show to clients.
+	// body of 4xx responses, and of 5xx responses only when
+	// ExtensionsOn5xx is set; they cannot replace a standard member (type,
+	// title, status, detail, instance, request_id, errors). Values must be
+	// safe to show to clients.
 	Extensions map[string]any
+	// ExtensionsOn5xx opts a 5xx error into showing Extensions (see
+	// WithExtensionsOn5xx). Without it a 5xx never leaks members (CWE-209).
+	ExtensionsOn5xx bool
 	// Type is the RFC 9457 "type" URI of a 4xx problem; empty means
 	// "about:blank" (see WithType). 5xx responses never use it.
 	Type string
@@ -113,6 +117,18 @@ func (e *HTTPError) WithExtension(key string, value any) *HTTPError {
 	}
 
 	c.Extensions[key] = value
+
+	return &c
+}
+
+// WithExtensionsOn5xx returns a copy of e whose Extensions are also written
+// in the problem+json body of a 5xx response, such as a machine-readable
+// "code" and "retryable" on a 503. Only the app builds this error, so only
+// values the app put in Extensions are shown; the cause, the message and
+// Type stay hidden. Use it for values that are safe to show to clients.
+func (e *HTTPError) WithExtensionsOn5xx() *HTTPError {
+	c := *e
+	c.ExtensionsOn5xx = true
 
 	return &c
 }

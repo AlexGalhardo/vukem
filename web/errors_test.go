@@ -634,6 +634,47 @@ func TestSecurity_A10_ProblemExtensionsNotSentOn5xx(t *testing.T) {
 	}
 }
 
+// TestSecurity_A10_ProblemExtensionsOn5xxAreOptIn checks that a 5xx shows its
+// extension members only when the app asked with WithExtensionsOn5xx, and
+// that the cause, the message and the type stay hidden either way.
+func TestSecurity_A10_ProblemExtensionsOn5xxAreOptIn(t *testing.T) {
+	t.Parallel()
+
+	jsonReq := func(r *http.Request) { r.Header.Set("Accept", "application/json") }
+	base := errs.Wrap(http.StatusServiceUnavailable, errors.New("dial tcp 10.0.0.5: refused")).
+		WithType("https://example.test/p/secret").
+		WithExtension("code", "E_WORKSPACE_LOCKED").
+		WithExtension("retryable", true)
+
+	t.Run("not opted in", func(t *testing.T) {
+		t.Parallel()
+
+		rec, _ := runError(t, base, jsonReq, nil)
+		if body := rec.Body.String(); strings.Contains(body, "E_WORKSPACE_LOCKED") {
+			t.Errorf("5xx problem without opt-in leaked an extension: %s", body)
+		}
+	})
+
+	t.Run("opted in", func(t *testing.T) {
+		t.Parallel()
+
+		rec, _ := runError(t, base.WithExtensionsOn5xx(), jsonReq, nil)
+
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+
+		if got["code"] != "E_WORKSPACE_LOCKED" || got["retryable"] != true || got["status"] != float64(503) {
+			t.Errorf("problem = %v, want the extensions next to the standard members", got)
+		}
+
+		if got["type"] != "about:blank" || strings.Contains(rec.Body.String(), "refused") {
+			t.Errorf("problem = %s, want the type and the cause hidden", rec.Body)
+		}
+	})
+}
+
 func TestProblemTypeTitleAndDecorator(t *testing.T) {
 	t.Parallel()
 

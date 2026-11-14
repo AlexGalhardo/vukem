@@ -51,6 +51,12 @@ type Info struct {
 	// SecuritySchemes). A plain route with .Doc(openapi.Public{}) requires
 	// none. Routes from api.Register keep their api.Op.Security.
 	Security []string
+	// ProblemExtensions documents the extension members the app adds to its
+	// problem+json errors (errs.HTTPError.Extensions, web.Services
+	// .ProblemDecorator): each key becomes an optional property of the Problem
+	// component, with the given schema. A key naming a standard member of
+	// web.Problem is ignored.
+	ProblemExtensions map[string]Schema
 	// RequiredOutputs lists in `required` every field of a response
 	// schema the server always sends: not a pointer, not omitempty or
 	// omitzero. A named type used by both a request and a response is
@@ -315,7 +321,7 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 			ErrEmptyDocument, prefix, documentable)
 	}
 
-	addErrorResponses(doc, s)
+	addErrorResponses(doc, s, info.ProblemExtensions)
 
 	doc.Components.Schemas = s.Components()
 
@@ -388,7 +394,7 @@ func routeOperation(s *Schemas, rt router.RouteInfo, info Info, untyped *[]strin
 
 // addErrorResponses adds only the error responses an operation references:
 // an unused component is a lint error.
-func addErrorResponses(doc *Document, s *Schemas) {
+func addErrorResponses(doc *Document, s *Schemas, extensions map[string]Schema) {
 	refs := map[string]bool{}
 
 	for _, ops := range doc.Paths {
@@ -401,6 +407,8 @@ func addErrorResponses(doc *Document, s *Schemas) {
 
 	if refs["Problem"] || refs["ValidationError"] {
 		problem := s.For(reflect.TypeFor[web.Problem]())
+		addProblemExtensions(s, problem, extensions)
+
 		doc.Components.Responses = map[string]Response{}
 
 		if refs["Problem"] {
@@ -417,6 +425,30 @@ func addErrorResponses(doc *Document, s *Schemas) {
 			}
 		}
 	}
+}
+
+// addProblemExtensions adds the app's extension members to the Problem
+// component. The component is replaced by a copy, so the schema of the type
+// stays shared and untouched.
+func addProblemExtensions(s *Schemas, ref Schema, extensions map[string]Schema) {
+	name := strings.TrimPrefix(fmt.Sprint(ref["$ref"]), "#/components/schemas/")
+
+	def, ok := s.defs[name]
+	if !ok || len(extensions) == 0 {
+		return
+	}
+
+	props := maps.Clone(def["properties"].(map[string]any)) //nolint:forcetypeassert // built by structSchema
+
+	for k, v := range extensions {
+		if _, standard := props[k]; !standard {
+			props[k] = v
+		}
+	}
+
+	out := maps.Clone(def)
+	out["properties"] = props
+	s.defs[name] = out
 }
 
 func addSecuritySchemes(doc *Document, schemes map[string]Schema, used map[string]bool) error {
