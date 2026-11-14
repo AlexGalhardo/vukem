@@ -94,6 +94,18 @@ func WithDevtools() Option {
 	return func(o *options) error { o.devtools = true; return nil }
 }
 
+// WithKeyOptional declares that the app uses no feature derived from APP_KEY
+// (cookie sessions, app.Crypt, signed URLs, the maintenance bypass cookie), so
+// a missing APP_KEY does not refuse the boot in any APP_ENV, production
+// included. Everything that needs the key still fails closed: app.DeriveKey
+// returns config.ErrKeyMissing (the message names this option), Key.Derive
+// panics, app.Crypt is nil and cookie sessions refuse to start. A malformed
+// key is still a boot error, and without this option a missing key refuses
+// every boot except an explicit APP_ENV=development or test.
+func WithKeyOptional() Option {
+	return func(o *options) error { o.keyOptional = true; return nil }
+}
+
 // WithoutHTTP disables the HTTP server runner (workers-only processes).
 func WithoutHTTP() Option {
 	return func(o *options) error { o.noHTTP = true; return nil }

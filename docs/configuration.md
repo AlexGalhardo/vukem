@@ -189,6 +189,7 @@ Every exported `With*` option of the root package, grouped in the source by subs
 | `WithInertia` | Inertia | `options_views.go` | [frontend.md](frontend.md) |
 | `WithJobs` | Queue | `background.go` | [subsystems.md](subsystems.md) |
 | `WithJobsFunc` | Queue | `background.go` | [subsystems.md](subsystems.md) |
+| `WithKeyOptional` | Configuration | `options.go` | [security.md](security.md#apps-without-a-persistent-key) |
 | `WithKind` | Runtime | `options_runtime.go` | [architecture.md](architecture.md) |
 | `WithListeners` | Events | `services.go` | [subsystems.md](subsystems.md) |
 | `WithLogOutput` | Logging | `options_runtime.go` | [subsystems.md](subsystems.md) |

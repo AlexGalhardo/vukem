@@ -975,3 +975,126 @@ func TestRunMain_KeyGenerateIfMissingForms(t *testing.T) {
 		})
 	}
 }
+
+// keyOptionalApp builds an app with WithKeyOptional and the given environment.
+func keyOptionalApp(t *testing.T, env map[string]string, opts ...Option) (*App, error) {
+	t.Helper()
+
+	opts = append([]Option{WithSource(config.MapSource(env)), WithLogger(discardLogger()), WithKeyOptional()}, opts...)
+
+	return New(opts...)
+}
+
+// TestSecurity_A02_KeyOptionalIsExplicit checks that only WithKeyOptional lets a
+// keyless app boot in production or without APP_ENV, and that a malformed key is
+// still refused with it.
+func TestSecurity_A02_KeyOptionalIsExplicit(t *testing.T) {
+	t.Parallel()
+
+	for _, env := range []map[string]string{
+		{"APP_ENV": "production"},
+		{"APP_ENV": ""},
+		{},
+		{"APP_ENV": "development"},
+		{"APP_ENV": "test"},
+	} {
+		if _, err := New(
+			WithSource(config.MapSource(env)),
+			WithLogger(discardLogger()),
+		); env["APP_ENV"] != "development" &&
+			env["APP_ENV"] != "test" &&
+			(err == nil || !strings.Contains(err.Error(), "APP_KEY is not set")) {
+			t.Errorf("without the option, env %v: New() error = %v, want APP_KEY is not set", env, err)
+		}
+
+		if _, err := keyOptionalApp(t, env); err != nil {
+			t.Errorf("with WithKeyOptional, env %v: New() error = %v, want a boot", env, err)
+		}
+	}
+
+	_, err := keyOptionalApp(t, map[string]string{"APP_ENV": "production", "APP_KEY": "base64:YWJj"})
+	if err == nil || !strings.Contains(err.Error(), "at least 32 bytes") {
+		t.Errorf("malformed key with WithKeyOptional: error = %v, want at least 32 bytes", err)
+	}
+
+	_, err = keyOptionalApp(t, map[string]string{"APP_ENV": "production", "APP_DEBUG": "true"})
+	if err == nil || !strings.Contains(err.Error(), "APP_DEBUG") {
+		t.Errorf("WithKeyOptional must not skip the other production checks: error = %v", err)
+	}
+}
+
+// TestSecurity_A04_KeyOptionalKeepsKeyFeaturesClosed checks that declaring the key
+// optional never enables a key-derived feature without a key: they fail closed and
+// the error names the option.
+func TestSecurity_A04_KeyOptionalKeepsKeyFeaturesClosed(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{"APP_ENV": "production"}
+
+	t.Run("cookie sessions refuse to start", func(t *testing.T) {
+		t.Parallel()
+
+		app, err := keyOptionalApp(t, env)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = app.Sessions()
+		if !errors.Is(err, config.ErrKeyMissing) || !strings.Contains(err.Error(), "WithKeyOptional") {
+			t.Fatalf("Sessions() error = %v, want ErrKeyMissing naming WithKeyOptional", err)
+		}
+	})
+
+	t.Run("DefaultMiddleware is a boot error with cookie sessions", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := keyOptionalApp(t, env, WithRoutes(defaultMiddleware))
+		if !errors.Is(err, config.ErrKeyMissing) {
+			t.Fatalf("New(DefaultMiddleware) error = %v, want ErrKeyMissing", err)
+		}
+	})
+
+	t.Run("server-side sessions need no key", func(t *testing.T) {
+		t.Parallel()
+
+		withMemory := map[string]string{"APP_ENV": "production", "SESSION_DRIVER": "memory"}
+		if _, err := keyOptionalApp(t, withMemory, WithRoutes(defaultMiddleware)); err != nil {
+			t.Fatalf("New(DefaultMiddleware, SESSION_DRIVER=memory) = %v, want nil", err)
+		}
+	})
+
+	t.Run("DeriveKey, Key.Derive and Crypt fail closed", func(t *testing.T) {
+		t.Parallel()
+
+		app, err := keyOptionalApp(t, env)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		b, err := app.DeriveKey("signed.urls", 32)
+		if !errors.Is(err, config.ErrKeyMissing) || b != nil || !strings.Contains(err.Error(), "WithKeyOptional") {
+			t.Fatalf("DeriveKey() = %x, %v, want nil and ErrKeyMissing naming WithKeyOptional", b, err)
+		}
+
+		if msg := panicMessage(func() { app.Key.Derive("signed.urls", 32) }); !strings.Contains(msg, "APP_KEY") {
+			t.Fatalf("Key.Derive() panicked with %q, want an APP_KEY message", msg)
+		}
+
+		if app.Crypt != nil {
+			t.Fatal("Crypt != nil, want nil without APP_KEY")
+		}
+	})
+
+	t.Run("a key still works with the option", func(t *testing.T) {
+		t.Parallel()
+
+		app, err := keyOptionalApp(t, map[string]string{"APP_ENV": "production", "APP_KEY": config.GenerateKey()})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if app.Crypt == nil {
+			t.Fatal("Crypt = nil, want it derived from the given key")
+		}
+	})
+}
