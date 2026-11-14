@@ -298,7 +298,7 @@ func store(ctx context.Context, d storage.Disk, img image.Image, dst string, o O
 
 // fit scales w×h down to fit maxW×maxH, keeping the aspect ratio; it never
 // upscales and never returns a zero side.
-func fit(w, h, maxW, maxH int) (int, int) {
+func fit(w, h, maxW, maxH int) (fitW, fitH int) {
 	if w <= maxW && h <= maxH {
 		return w, h
 	}

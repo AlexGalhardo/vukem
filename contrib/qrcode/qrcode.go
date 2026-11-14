@@ -163,7 +163,7 @@ func imageOf(content string, opt Options) (*image.Paletted, error) {
 	return img, nil
 }
 
-func layout(content string, opt Options) (*qr.Code, int, int, error) {
+func layout(content string, opt Options) (code *qr.Code, scale, quiet int, err error) {
 	if content == "" {
 		return nil, 0, 0, ErrEmpty
 	}
@@ -172,7 +172,7 @@ func layout(content string, opt Options) (*qr.Code, int, int, error) {
 		return nil, 0, 0, ErrTooLarge
 	}
 
-	scale := opt.Scale
+	scale = opt.Scale
 	if scale == 0 {
 		scale = DefaultScale
 	}
@@ -181,7 +181,7 @@ func layout(content string, opt Options) (*qr.Code, int, int, error) {
 		return nil, 0, 0, fmt.Errorf("%w: scale %d", ErrInvalidOptions, scale)
 	}
 
-	quiet := DefaultQuiet
+	quiet = DefaultQuiet
 	if opt.Quiet != nil {
 		quiet = *opt.Quiet
 	}
@@ -195,7 +195,7 @@ func layout(content string, opt Options) (*qr.Code, int, int, error) {
 		return nil, 0, 0, err
 	}
 
-	code, err := qr.Encode(content, level)
+	code, err = qr.Encode(content, level)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("qrcode: encode: %w", err)
 	}

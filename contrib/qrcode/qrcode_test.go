@@ -235,7 +235,7 @@ func hasBlack(img image.Image) bool {
 	return ok
 }
 
-func firstBlack(img image.Image) (int, int, bool) {
+func firstBlack(img image.Image) (x, y int, ok bool) {
 	b := img.Bounds()
 
 	for y := b.Min.Y; y < b.Max.Y; y++ {
