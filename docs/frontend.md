@@ -24,6 +24,7 @@ type View interface {
 - Directory layout: `layouts/`, `partials/` and `components/` are shared; every other file is a page named by its path without extension (`posts/index`).
 - Layouts: a page defines blocks (`{{define "content"}}…{{end}}`) and renders inside `layouts/app.html`. Its first line can pick another layout, `{{/* layout: admin */}}`, or none, `{{/* layout: none */}}`. Each page gets its own template set, so block names never collide.
 - **Fragments:** `c.Render("posts/index", data, web.Block("post-list"))` renders the whole page for normal requests and only the `post-list` block for htmx partial requests; `c.Fragment(name, block, data)` always renders the block.
+- **Several blocks:** `engine.RenderBlocks(ctx, w, "posts/index", data, "post-list", "post-count")` writes the blocks one after the other (for example the main slice plus `hx-swap-oob` slices) with the same data, cloning the template once instead of once per `RenderBlock`; a block the page lacks fails before any output. It is a `*view.Engine` method, not part of `web.Renderer`.
 - Funcs: `route`, `asset`, `csrfField`, `csrfToken`, `cspNonce`, `old`, `error`, `errors`, `flash`, `json` (safe in `<script>`), `dict` (data for partials), `htmxScript`, `can` (authorization), `vite`, `viteReactRefresh` (see [Vite](#vite)), `analytics` (Umami, GA4 and Search Console head tags from `UMAMI_*`, `GA_*` and `GOOGLE_SITE_VERIFICATION*`, nonce'd; empty when unset), `t` and `locale` (see [i18n](subsystems.md#i18n)). Request-scoped funcs read the session, CSP nonce and locale from the request context.
 
 ### Typed views and `view:check`
@@ -163,7 +164,7 @@ Invalid input from a classic form post → the validation hook flashes the error
 
 `c.SSE(func(s *sse.Stream) error { return s.Send("message", html) })` (or `sse.Serve(w, r, fn)` in plain handlers) streams `text/event-stream`: every event is flushed through `http.ResponseController`, the server's `WriteTimeout` is lifted for the stream, a `: ping` comment goes out every 15s (`sse.Heartbeat(d)`), and `Stream.Context()` ends on client disconnect, when `fn` returns, or when the app shuts down (the HTTP server signals open streams so shutdown never waits on them). `s.SendJSON`, `s.SendEvent(sse.Event{ID, Event, Data, Retry})` and `s.LastEventID()` cover reconnects; field values lose CR/LF so input cannot forge fields.
 
-`sse.NewHub(broker)` fans events out by topic: `hub.Publish(ctx, "posts", ev)` and `hub.Stream(s, "posts")`. With a nil broker it works within one process; pass a broker to reach every instance — the `drivers/redis` client (pub/sub) or `postgres.NewBroker(db)` from `drivers/postgres` (`LISTEN`/`NOTIFY`), which is what an app on PostgreSQL with no Redis uses to stream a `queue:work` job's progress to a browser connected to the web service. A topic holds one broker subscription while it has local subscribers and releases it when the last one leaves (a custom `Broker` must end the subscription when the `Subscribe` ctx is done). `Subscribe` waits for that broker subscription (at most 10s); on failure or timeout the subscriber's channel is closed and the next subscriber retries. When the broker ends a topic's subscription (a lost connection), the hub closes that topic's streams so the browsers reconnect and the next `Subscribe` opens a new one. Slow subscribers that fall 64 events behind are dropped (the browser reconnects). Pairs with htmx `hx-sse`.
+`sse.NewHub(broker)` fans events out by topic (a subscriber may lag 64 events behind before the hub drops it; `sse.NewHub(broker, sse.Buffer(256))` raises that, at 256 events of memory per subscriber): `hub.Publish(ctx, "posts", ev)` and `hub.Stream(s, "posts")`. With a nil broker it works within one process; pass a broker to reach every instance — the `drivers/redis` client (pub/sub) or `postgres.NewBroker(db)` from `drivers/postgres` (`LISTEN`/`NOTIFY`), which is what an app on PostgreSQL with no Redis uses to stream a `queue:work` job's progress to a browser connected to the web service. A topic holds one broker subscription while it has local subscribers and releases it when the last one leaves (a custom `Broker` must end the subscription when the `Subscribe` ctx is done). `Subscribe` waits for that broker subscription (at most 10s); on failure or timeout the subscriber's channel is closed and the next subscriber retries. When the broker ends a topic's subscription (a lost connection), the hub closes that topic's streams so the browsers reconnect and the next `Subscribe` opens a new one. Slow subscribers that fall 64 events behind are dropped (the browser reconnects). Pairs with htmx `hx-sse`.
 
 The PostgreSQL broker (`drivers/postgres`) costs what `LISTEN`/`NOTIFY` costs, and all of it is deliberate:
 
@@ -271,6 +272,38 @@ Every starter ships Vite 8 + Tailwind CSS v4 (`@tailwindcss/vite`) preconfigured
 - Every tag carries the request's CSP nonce; manifest `integrity` values (e.g. from `vite-plugin-manifest-sri`) become SRI attributes.
 - `/build/*` served with immutable cache headers.
 - `vukem serve` starts the Go app with reload and, if `vite.config.*` exists, `npm run dev` alongside.
+
+### Single-page app fallback (outside Inertia)
+
+A client-routed SPA (for example an editor under `/editor`) needs every sub-route to answer with the Vite build's `index.html`, while real files keep their own cache headers. Vukem has no dedicated helper: `middleware.StaticFS` already serves the build files and passes everything else on, so the fallback is one `net/http` handler on a catch-all pattern.
+
+```go
+dist, err := fs.Sub(distFS, "dist") // embed.FS holding the `vite build` output
+if err != nil {
+	return err
+}
+
+index, err := fs.ReadFile(dist, "index.html")
+if err != nil {
+	return err
+}
+
+r.UseServer(middleware.StaticFS(dist, middleware.StaticConfig{
+	ImmutablePrefixes: []string{"/assets/"}, // Vite's hashed output
+}))
+
+r.Handle("GET /editor/{path...}", http.HandlerFunc(
+	func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(index)
+	}))
+```
+
+- Real files win: `StaticFS` runs first, so `/assets/index-BkS3pZ8_.js` is served with a one-year immutable cache and never reaches the fallback. A missing asset under `/assets/` should answer 404, not HTML: keep the catch-all on the app prefix (`/editor/`), not `/{path...}`.
+- `index.html` must not be cached for long (`no-cache`): it names the hashed assets of the current build.
+- The default CSP (`script-src 'self' 'nonce-…'`) allows the build's external module scripts without a nonce. An inline script or style in `index.html` needs the request nonce: write a placeholder in the file and replace it per request with `middleware.CSPNonce(r.Context())`.
+- Authentication belongs to the API the SPA calls, not to the HTML shell: the shell holds no data.
 
 ## Inertia v3 (BETA)
 

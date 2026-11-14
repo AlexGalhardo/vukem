@@ -21,8 +21,8 @@ type Broker interface {
 	Subscribe(ctx context.Context, channels ...string) (<-chan []byte, error)
 }
 
-// subscriberBuffer is how many events a slow subscriber may lag behind
-// before it is dropped (its stream ends; the client reconnects).
+// subscriberBuffer is the default number of events a slow subscriber may
+// lag behind before it is dropped (its stream ends; the client reconnects).
 const subscriberBuffer = 64
 
 // Hub fans events published on topics out to subscribed streams. Without
@@ -31,6 +31,7 @@ const subscriberBuffer = 64
 // subscribers and releases it when the last one leaves.
 type Hub struct {
 	broker Broker
+	buffer int
 
 	mu     sync.Mutex
 	subs   map[string]map[*sub]struct{}
@@ -61,10 +62,34 @@ const brokerSubscribeTimeout = 10 * time.Second
 
 var errSubscribeTimeout = errors.New("sse: broker subscribe timed out")
 
+// HubOption configures NewHub.
+type HubOption func(*Hub)
+
+// Buffer sets how many events each subscriber may lag behind before it is
+// dropped (64 by default; values below 1 keep the default). A client that
+// receives bursts, such as a project editor replaying many operations,
+// needs a larger one; memory grows with subscribers times n.
+func Buffer(n int) HubOption {
+	return func(h *Hub) {
+		if n > 0 {
+			h.buffer = n
+		}
+	}
+}
+
 // NewHub returns a hub; broker may be nil for a single instance.
-func NewHub(broker Broker) *Hub {
+func NewHub(broker Broker, opts ...HubOption) *Hub {
 	ctx, stop := context.WithCancel(context.Background())
-	return &Hub{broker: broker, subs: map[string]map[*sub]struct{}{}, relays: map[string]*relay{}, ctx: ctx, stop: stop}
+	h := &Hub{
+		broker: broker, buffer: subscriberBuffer,
+		subs: map[string]map[*sub]struct{}{}, relays: map[string]*relay{}, ctx: ctx, stop: stop,
+	}
+
+	for _, o := range opts {
+		o(h)
+	}
+
+	return h
 }
 
 func channel(topic string) string { return "sse:" + topic }
@@ -98,7 +123,7 @@ func (h *Hub) Subscribe(ctx context.Context, topics ...string) (<-chan Event, fu
 // relay cannot subscribe to the broker it returns that error together with
 // an already closed channel, and no subscriber stays registered.
 func (h *Hub) TrySubscribe(ctx context.Context, topics ...string) (<-chan Event, func(), error) {
-	s := &sub{ch: make(chan Event, subscriberBuffer), topics: topics}
+	s := &sub{ch: make(chan Event, h.buffer), topics: topics}
 
 	h.mu.Lock()
 	if h.closed {

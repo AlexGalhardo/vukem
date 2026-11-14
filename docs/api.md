@@ -213,7 +213,7 @@ Database unique-constraint violations are mapped to `409` by the dialect.
 | Concern | Support |
 | --- | --- |
 | CORS | `middleware.CORS(cfg)`: allowlisted origins, methods, headers, credentials, max-age; deny by default; `*` with credentials is a boot error |
-| Rate limiting | `ratelimit.Middleware(limiter, key)`: GCRA (`ratelimit.NewMemory(limit, window)`), keyed by `ratelimit.ByIP` (the default) or `ratelimit.ByToken` (hashed bearer token, else IP; use it after `auth.Required`, behind an IP limit, since unverified tokens would each get a bucket); `RateLimit-Limit/Remaining/Reset` on every response, `429` + `Retry-After` when empty; a failing store denies (503) |
+| Rate limiting | `ratelimit.Middleware(limiter, key)`: GCRA (`ratelimit.NewMemory(limit, window)`), keyed by `ratelimit.ByIP` (the default) or `ratelimit.ByToken` (hashed bearer token, else IP; use it after `auth.Required`, behind an IP limit, since unverified tokens would each get a bucket); `RateLimit-Limit/Remaining/Reset` on every response, `429` + `Retry-After` when empty (`ratelimit.MiddlewareWith(limiter, key, ratelimit.Options{OnLimit: ...})` writes the denial body yourself, e.g. your own error envelope); a failing store denies (503) |
 | Versioning | URL prefix (`/api/v1`) by default; route groups make `/api/v2` side-by-side trivial; `api.Deprecate(since, sunset, link)` sets `Deprecation`, `Sunset` and `Link: rel="deprecation"` |
 | Caching | `web.ETagOf(v)` builds a strong ETag; `c.NotModified(etag, lastModified)` sets `ETag`/`Last-Modified` and answers 304 to a matching `If-None-Match` / `If-Modified-Since` |
 | Concurrency control | `c.CheckIfMatch(etag)` returns a 412 error when `If-Match` does not match |

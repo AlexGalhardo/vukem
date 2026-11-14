@@ -62,7 +62,7 @@ Applies to **every** task:
 | --- | --- | --- | --- |
 | **Prototype** | `v0.1.x` | Smallest end-to-end framework: `vukem new blog` → CRUD with HTMX on SQLite, plus JSON endpoints with problem+json errors, tested | [P exit](#prototype-exit-criteria) |
 | **ALPHA** | `v0.2`–`v0.x` | REST API starter, auth, authorization, relations, Postgres, mail, cache, storage, events | [A exit](#alpha-exit-criteria) |
-| **BETA** | `v1.0.0-beta.N` → `rc.N` | OpenAPI, queue, scheduler, Inertia + React, Vite, Redis, Mongo, i18n, SSE, encryption | [B exit](#beta-exit-criteria) |
+| **BETA** | `v0.N.0` per group, then `v1.0.0` (no release candidates) | OpenAPI, queue, scheduler, Inertia + React, Vite, Redis, Mongo, i18n, SSE, encryption | [B exit](#beta-exit-criteria) |
 | **1.0 Stable** | `v1.0.0` | API freeze, docs site, stability policy, LTS | [S exit](#10-stable-exit-criteria) |
 
 ---
