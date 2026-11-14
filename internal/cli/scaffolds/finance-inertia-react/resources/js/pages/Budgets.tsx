@@ -2,6 +2,7 @@ import { useFinanceI18n } from "../lib/i18n";
 import { Head, Link, useForm, usePage } from "@inertiajs/react";
 import type { FormEvent } from "react";
 
+import ConfirmDelete from "../components/ConfirmDelete";
 import Field from "../components/Field";
 import { Card, Select, danger, primary } from "../components/ui";
 import type { Page, SharedProps } from "../page-props";
@@ -40,9 +41,15 @@ export default function Budgets({ budgets, categories, month, enabled }: Page<"B
                 <span>
                   {b.category}: {formatMoney(b.spentCents, currency)} {t("of")} {formatMoney(b.limitCents, currency)} ({b.percent}%)
                 </span>
-                <Link href={`/budgets/${b.id}`} method="delete" as="button" className={danger}>
-                  Remove
-                </Link>
+                <ConfirmDelete
+                  href={`/budgets/${b.id}`}
+                  name={b.category}
+                  trigger={
+                    <button type="button" className={danger}>
+                      {t("delete")}
+                    </button>
+                  }
+                />
               </li>
             ))}
           </ul>
