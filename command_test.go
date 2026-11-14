@@ -1419,7 +1419,8 @@ func (p bootProbe) Boot(context.Context, *App) error { *p.boots++; return nil }
 func (p bootProbe) Shutdown(context.Context, *App) error { *p.shutdowns++; return nil }
 
 type noBootCommand struct {
-	CommandFunc
+	Command
+
 	noBoot bool
 }
 
@@ -1446,7 +1447,7 @@ func TestCommandNoBoot(t *testing.T) {
 
 			var boots, shutdowns int
 
-			cmd := noBootCommand{noBoot: tt.noBoot, CommandFunc: CommandFunc{
+			cmd := noBootCommand{noBoot: tt.noBoot, Command: CommandFunc{
 				CommandName: "test:noboot",
 				Fn: func(ctx context.Context, app *App, _ []string) error {
 					if tt.bootsInCommand {
@@ -1472,32 +1473,41 @@ func TestCommandNoBoot(t *testing.T) {
 func TestRunMainDefaultCommand(t *testing.T) {
 	t.Parallel()
 
-	var out bytes.Buffer
+	run := func(t *testing.T, args []string, opts ...Option) (string, error) {
+		t.Helper()
 
-	build := func(opts ...Option) (*App, error) {
-		return New(append(opts, WithLogger(discardLogger()), WithStdout(&out))...)
+		var out bytes.Buffer
+
+		build := func(opts ...Option) (*App, error) {
+			return New(append(opts, WithLogger(discardLogger()), WithStdout(&out))...)
+		}
+
+		err := RunMain(t.Context(), args, testSource(nil).Lookup, build, opts...)
+
+		return out.String(), err
 	}
 
 	t.Run("configured command runs without arguments", func(t *testing.T) {
-		out.Reset()
+		t.Parallel()
 
-		err := RunMain(t.Context(), []string{"app"}, testSource(nil).Lookup, build, WithDefaultCommand("help"))
-		if err != nil || !strings.Contains(out.String(), "Available commands:") {
-			t.Fatalf("RunMain(no args, WithDefaultCommand(help)) = %v, output %q, want the command list", err, out.String())
+		out, err := run(t, []string{"app"}, WithDefaultCommand("help"))
+		if err != nil || !strings.Contains(out, "Available commands:") {
+			t.Fatalf("RunMain(no args, WithDefaultCommand(help)) = %v, output %q, want the list", err, out)
 		}
 	})
 
 	t.Run("explicit arguments win", func(t *testing.T) {
-		out.Reset()
+		t.Parallel()
 
-		err := RunMain(t.Context(), []string{"app", "--version"}, testSource(nil).Lookup, build,
-			WithDefaultCommand("help"), WithVersion("v1.0.0"))
-		if err != nil || out.String() != "v1.0.0\n" {
-			t.Fatalf("RunMain(--version) = %v, output %q, want v1.0.0", err, out.String())
+		out, err := run(t, []string{"app", "--version"}, WithDefaultCommand("help"), WithVersion("v1.0.0"))
+		if err != nil || out != "v1.0.0\n" {
+			t.Fatalf("RunMain(--version) = %v, output %q, want v1.0.0", err, out)
 		}
 	})
 
 	t.Run("serve stays the default", func(t *testing.T) {
+		t.Parallel()
+
 		if got := defaultCommandOf(nil); got != "serve" {
 			t.Errorf("defaultCommandOf(nil) = %q, want serve", got)
 		}

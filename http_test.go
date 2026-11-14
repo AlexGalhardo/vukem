@@ -335,12 +335,22 @@ func TestCommands(t *testing.T) {
 
 	if err := run("nope"); !errors.Is(err, ErrUsage) || !strings.Contains(errOut.String(), `unknown command "nope"`) ||
 		out.Len() != 0 {
-		t.Fatalf("unknown = %v stdout %q stderr %q, want the message on stderr only", err, out.String(), errOut.String())
+		t.Fatalf(
+			"unknown = %v stdout %q stderr %q, want the message on stderr only",
+			err,
+			out.String(),
+			errOut.String(),
+		)
 	}
 
 	if err := run("reports:send", "-bad"); !errors.Is(err, ErrUsage) ||
 		!strings.Contains(errOut.String(), "flag provided but not defined: -bad") || out.Len() != 0 {
-		t.Fatalf("bad flag = %v stdout %q stderr %q, want the message on stderr only", err, out.String(), errOut.String())
+		t.Fatalf(
+			"bad flag = %v stdout %q stderr %q, want the message on stderr only",
+			err,
+			out.String(),
+			errOut.String(),
+		)
 	}
 
 	if err := run("reports:send", "-h"); err != nil || !strings.Contains(out.String(), "Usage") || errOut.Len() != 0 {
