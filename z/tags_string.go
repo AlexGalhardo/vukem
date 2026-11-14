@@ -154,7 +154,7 @@ func (c convertedString) optional() bool       { return c.s.optional() }
 
 func (c convertedString) asOptional() AnySchema { c.s = c.s.Optional(); return c }
 
-func (c convertedString) parseAny(p *pctx, path string, in any, present bool) (any, bool, bool) {
+func (c convertedString) parseAny(p *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	if rv := reflect.ValueOf(in); rv.IsValid() && rv.Kind() == reflect.String {
 		in = rv.String()
 	}

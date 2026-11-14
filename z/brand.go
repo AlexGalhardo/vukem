@@ -39,7 +39,7 @@ func (s BrandSchema[B, T]) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s BrandSchema[B, T]) asOptional() AnySchema { return s.Optional() }
 
-func (s BrandSchema[B, T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s BrandSchema[B, T]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (B, bool) {
 		var zero B
 

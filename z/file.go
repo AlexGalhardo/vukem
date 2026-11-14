@@ -36,7 +36,7 @@ func (s FileSchema) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s FileSchema) asOptional() AnySchema { return s.Optional() }
 
-func (s FileSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s FileSchema) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true,
 		func(c *pctx, path string, in any) (*multipart.FileHeader, bool) {
 			fh, isFile := in.(*multipart.FileHeader)

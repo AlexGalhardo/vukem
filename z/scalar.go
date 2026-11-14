@@ -23,7 +23,7 @@ func (s BoolSchema) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s BoolSchema) asOptional() AnySchema { return s.Optional() }
 
-func (s BoolSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s BoolSchema) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, func(c *pctx, path string, in any) (bool, bool) {
 		switch x := in.(type) {
 		case bool:
@@ -120,7 +120,7 @@ func (s TimeSchema) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s TimeSchema) asOptional() AnySchema { return s.Optional() }
 
-func (s TimeSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s TimeSchema) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, func(c *pctx, path string, in any) (time.Time, bool) {
 		var t time.Time
 
@@ -336,7 +336,7 @@ func (s EnumSchema[T]) asOptional() AnySchema { return s.Optional() }
 // Values returns the allowed values.
 func (s EnumSchema[T]) Values() []T { return slices.Clone(s.values) }
 
-func (s EnumSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s EnumSchema[T]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, func(c *pctx, path string, in any) (T, bool) {
 		str, isStr := in.(string)
 		if !isStr {

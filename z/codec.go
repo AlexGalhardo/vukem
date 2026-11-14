@@ -52,7 +52,7 @@ func (s CodecSchema[In, Out]) optional() bool { return s.o.optional || s.o.hasDe
 
 func (s CodecSchema[In, Out]) asOptional() AnySchema { return s.Optional() }
 
-func (s CodecSchema[In, Out]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s CodecSchema[In, Out]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (Out, bool) {
 		var zero Out
 

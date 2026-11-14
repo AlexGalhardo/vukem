@@ -101,7 +101,7 @@ func (n numberAny) optional() bool       { return n.opt }
 
 func (n numberAny) asOptional() AnySchema { n.opt = true; return n }
 
-func (n numberAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (n numberAny) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	var s AnySchema
 
 	switch n.t.Kind() {

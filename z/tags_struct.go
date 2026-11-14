@@ -15,7 +15,7 @@ func (s structAny) optional() bool       { return s.core.o.optional }
 
 func (s structAny) asOptional() AnySchema { s.core.o.optional = true; return s }
 
-func (s structAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s structAny) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	o := s.core.o
 
 	return parse(&o, c, path, in, present, false, func(c *pctx, path string, in any) (any, bool) {
@@ -40,7 +40,7 @@ func (s sliceAny) optional() bool       { return s.core.o.optional }
 
 func (s sliceAny) asOptional() AnySchema { s.core.o.optional = true; return s }
 
-func (s sliceAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s sliceAny) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	o := s.core.o
 
 	return parse(&o, c, path, in, present, false, func(c *pctx, path string, in any) (any, bool) {
@@ -63,7 +63,7 @@ func (s mapAny) optional() bool       { return s.core.o.optional }
 
 func (s mapAny) asOptional() AnySchema { s.core.o.optional = true; return s }
 
-func (s mapAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s mapAny) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	o := s.core.o
 
 	return parse(&o, c, path, in, present, false, func(c *pctx, path string, in any) (any, bool) {
