@@ -273,6 +273,38 @@ Every starter ships Vite 8 + Tailwind CSS v4 (`@tailwindcss/vite`) preconfigured
 - `/build/*` served with immutable cache headers.
 - `vukem serve` starts the Go app with reload and, if `vite.config.*` exists, `npm run dev` alongside.
 
+### Single-page app fallback (outside Inertia)
+
+A client-routed SPA (for example an editor under `/editor`) needs every sub-route to answer with the Vite build's `index.html`, while real files keep their own cache headers. Vukem has no dedicated helper: `middleware.StaticFS` already serves the build files and passes everything else on, so the fallback is one `net/http` handler on a catch-all pattern.
+
+```go
+dist, err := fs.Sub(distFS, "dist") // embed.FS holding the `vite build` output
+if err != nil {
+	return err
+}
+
+index, err := fs.ReadFile(dist, "index.html")
+if err != nil {
+	return err
+}
+
+r.UseServer(middleware.StaticFS(dist, middleware.StaticConfig{
+	ImmutablePrefixes: []string{"/assets/"}, // Vite's hashed output
+}))
+
+r.Handle("GET /editor/{path...}", http.HandlerFunc(
+	func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(index)
+	}))
+```
+
+- Real files win: `StaticFS` runs first, so `/assets/index-BkS3pZ8_.js` is served with a one-year immutable cache and never reaches the fallback. A missing asset under `/assets/` should answer 404, not HTML: keep the catch-all on the app prefix (`/editor/`), not `/{path...}`.
+- `index.html` must not be cached for long (`no-cache`): it names the hashed assets of the current build.
+- The default CSP (`script-src 'self' 'nonce-…'`) allows the build's external module scripts without a nonce. An inline script or style in `index.html` needs the request nonce: write a placeholder in the file and replace it per request with `middleware.CSPNonce(r.Context())`.
+- Authentication belongs to the API the SPA calls, not to the HTML shell: the shell holds no data.
+
 ## Inertia v3 (BETA)
 
 Own adapter in `inertia/` with React, Vue and Svelte starters (B.3.6).
