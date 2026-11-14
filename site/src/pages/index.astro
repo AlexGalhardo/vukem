@@ -40,7 +40,7 @@ const panels = await Promise.all(
 					<ul class="py-1">
 						{commands.map((cmd) => (
 							<li class="flex items-center justify-between gap-2 py-0.5 pl-3 pr-1">
-								<code class="min-w-0 whitespace-pre-wrap break-all py-1 pl-[2ch] -indent-[2ch]"><span class="select-none text-[#28c840]" aria-hidden="true">$ </span>{cmd}</code>
+								<code class="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] py-1 pl-[2ch] -indent-[2ch]"><span class="select-none text-[#28c840]" aria-hidden="true">$ </span>{cmd.split("/").map((part, i, all) => (i < all.length - 1 ? <>{part}/<wbr /></> : part))}</code>
 								<CopyButton client:visible text={cmd} className="terminal-copy" />
 							</li>
 						))}
