@@ -407,6 +407,7 @@ func readConfigFile(name string) ([]byte, error) {
 type Option func(*options) error
 
 type options struct {
+	defaultCommand string
 	source         *config.Source
 	fsys           fs.FS
 	getenv         func(string) (string, bool)

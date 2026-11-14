@@ -38,7 +38,7 @@ Generator output has one format: each line starts with a prefix, and an indented
 
 The `install:*` commands and `vukem new` print their own summaries and keep their format. The app binary suggests the closest command when one is mistyped (`./app migrte` prints `unknown command "migrte" (did you mean "migrate"?)`); with no close match it prints the full command list.
 
-Exit codes: `0` success, `1` failure, `2` usage error. A usage error (unknown command, unknown flag, bad argument) prints its reason and the usage to stderr, never to stdout, so a caller that reads stdout as data gets nothing; `-h`, `help` and `list` print to stdout. The error is exported as `vukem.ErrUsage`: an app that runs `vukem.RunMain` itself maps it with `errors.Is(err, vukem.ErrUsage)`.
+The app binary runs `serve` when it gets no arguments; `vukem.WithDefaultCommand("help")` (an option of `vukem.MainWith` or `RunMain`) changes that, for a product CLI that must not start a server by mistake. Exit codes: `0` success, `1` failure, `2` usage error. A usage error (unknown command, unknown flag, bad argument) prints its reason and the usage to stderr, never to stdout, so a caller that reads stdout as data gets nothing; `-h`, `help` and `list` print to stdout. The error is exported as `vukem.ErrUsage`: an app that runs `vukem.RunMain` itself maps it with `errors.Is(err, vukem.ErrUsage)`.
 
 ## Commands by phase
 
