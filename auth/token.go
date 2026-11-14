@@ -144,12 +144,53 @@ func (t *Tokens) Create(
 	abilities []string,
 	ttl time.Duration,
 ) (string, Token, error) {
+	return t.create(ctx, rand.Text(), userID, name, abilities, ttl)
+}
+
+// CreateWithID is Create with an id chosen by the caller, for an app that
+// already names its keys. The id is 1 to 64 ASCII letters, digits or
+// hyphens: Find splits a token at "." and drops everything up to the last
+// "_" as the prefix, so neither character can be part of an id. An id that
+// is already stored fails on the primary key. The id is public (it is part
+// of the token), so it must not hold anything secret.
+func (t *Tokens) CreateWithID(
+	ctx context.Context,
+	id, userID, name string,
+	abilities []string,
+	ttl time.Duration,
+) (string, Token, error) {
+	if !validTokenID(id) {
+		return "", Token{}, fmt.Errorf(
+			"auth: token id %q: want 1 to %d ASCII letters, digits or hyphens",
+			id,
+			maxTokenID,
+		)
+	}
+
+	return t.create(ctx, id, userID, name, abilities, ttl)
+}
+
+// maxTokenID bounds a caller-chosen token id.
+const maxTokenID = 64
+
+func validTokenID(id string) bool {
+	return id != "" && len(id) <= maxTokenID && !strings.ContainsFunc(id, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-'
+	})
+}
+
+func (t *Tokens) create(
+	ctx context.Context,
+	id, userID, name string,
+	abilities []string,
+	ttl time.Duration,
+) (string, Token, error) {
 	if err := validPrefix(t.Prefix); err != nil {
 		return "", Token{}, err
 	}
 
 	now := t.now().UTC()
-	tok := Token{ID: rand.Text(), UserID: userID, Name: name, Abilities: abilities}
+	tok := Token{ID: id, UserID: userID, Name: name, Abilities: abilities}
 
 	if ttl > 0 {
 		exp := now.Add(ttl)
