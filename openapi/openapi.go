@@ -438,7 +438,12 @@ func addProblemExtensions(s *Schemas, ref Schema, extensions map[string]Schema) 
 		return
 	}
 
-	props := maps.Clone(def["properties"].(map[string]any)) //nolint:forcetypeassert // built by structSchema
+	existing, ok := def["properties"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	props := maps.Clone(existing)
 
 	for k, v := range extensions {
 		if _, standard := props[k]; !standard {

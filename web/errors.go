@@ -285,14 +285,7 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	switch {
 	case c.WantsJSON():
 		p := &Problem{Status: status, Title: title, Detail: detail}
-		if he != nil && (status < 500 || he.ExtensionsOn5xx) {
-			// A clone: the decorator may edit it and he can be a shared sentinel.
-			p.Extensions = maps.Clone(he.Extensions)
-		}
-
-		if he != nil && status < 500 {
-			p.Type = he.Type
-		}
+		applyErrorMembers(p, he)
 
 		if verr != nil {
 			p.Errors = verr.Fields
@@ -311,6 +304,23 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	case c.s.ErrorPage != nil && !c.IsHTMX() && c.s.ErrorPage(c, safeErrorPage(status, title, detail, verr)):
 	default:
 		c.renderErrorPage(status, title, detail, verr, original)
+	}
+}
+
+// applyErrorMembers copies the members an app chose on he into p: the
+// extensions of a 4xx, or of a 5xx that opted in, and the type of a 4xx.
+func applyErrorMembers(p *Problem, he *errs.HTTPError) {
+	if he == nil {
+		return
+	}
+
+	if p.Status < http.StatusInternalServerError || he.ExtensionsOn5xx {
+		// A clone: the decorator may edit it and he can be a shared sentinel.
+		p.Extensions = maps.Clone(he.Extensions)
+	}
+
+	if p.Status < http.StatusInternalServerError {
+		p.Type = he.Type
 	}
 }
 
