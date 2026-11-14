@@ -194,7 +194,7 @@ func typesInSource(t *testing.T) []string {
 	})
 
 	if len(out) < 20 {
-		t.Fatalf("found %d types in the source, expected the whole table", len(out))
+		t.Fatalf("len(types in the source) = %d, want at least 20 (the whole table)", len(out))
 	}
 
 	return out
