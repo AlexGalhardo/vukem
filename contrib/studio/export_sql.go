@@ -174,6 +174,11 @@ func writeRow(w http.ResponseWriter, cw *csv.Writer, cols []Column, row []Cell) 
 			continue
 		}
 
+		if row[i].Literal {
+			b.WriteString(row[i].Text)
+			continue
+		}
+
 		text, _ := json.Marshal(row[i].Text) //nolint:errchkjson // a string always marshals
 		b.Write(text)
 	}
