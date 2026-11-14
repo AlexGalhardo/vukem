@@ -251,7 +251,7 @@ func TestRunMainServesH2COutsideProduction(t *testing.T) {
 func TestCommands(t *testing.T) {
 	t.Parallel()
 
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 
 	getenv := func(k string) (string, bool) {
 		v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": "test"}[k]
@@ -267,6 +267,7 @@ func TestCommands(t *testing.T) {
 				opts,
 				WithLogger(discardLogger()),
 				WithStdout(&out),
+				WithStderr(&errOut),
 				WithRoutes(func(r *router.Router, _ *App) error {
 					r.Get("/posts", func(*web.Ctx) error { return nil }).Name("posts.index")
 					return nil
@@ -294,6 +295,7 @@ func TestCommands(t *testing.T) {
 
 	run := func(args ...string) error {
 		out.Reset()
+		errOut.Reset()
 		return RunMain(t.Context(), append([]string{"app"}, args...), getenv, build)
 	}
 
@@ -331,16 +333,18 @@ func TestCommands(t *testing.T) {
 		t.Fatalf("about -json = %v %q", err, out.String())
 	}
 
-	if err := run("nope"); !errors.Is(err, errUsage) || !strings.Contains(out.String(), `unknown command "nope"`) {
-		t.Fatalf("unknown = %v %q", err, out.String())
+	if err := run("nope"); !errors.Is(err, ErrUsage) || !strings.Contains(errOut.String(), `unknown command "nope"`) ||
+		out.Len() != 0 {
+		t.Fatalf("unknown = %v stdout %q stderr %q, want the message on stderr only", err, out.String(), errOut.String())
 	}
 
-	if err := run("reports:send", "-bad"); !errors.Is(err, errUsage) {
-		t.Fatalf("bad flag = %v", err)
+	if err := run("reports:send", "-bad"); !errors.Is(err, ErrUsage) ||
+		!strings.Contains(errOut.String(), "flag provided but not defined: -bad") || out.Len() != 0 {
+		t.Fatalf("bad flag = %v stdout %q stderr %q, want the message on stderr only", err, out.String(), errOut.String())
 	}
 
-	if err := run("reports:send", "-h"); err != nil {
-		t.Fatalf("-h = %v", err)
+	if err := run("reports:send", "-h"); err != nil || !strings.Contains(out.String(), "Usage") || errOut.Len() != 0 {
+		t.Fatalf("-h = %v stdout %q stderr %q, want the usage on stdout", err, out.String(), errOut.String())
 	}
 }
 

@@ -453,7 +453,7 @@ func TestRunCommandSuggestsClosest(t *testing.T) {
 
 			var out bytes.Buffer
 
-			app := newTestApp(t, WithStdout(&out))
+			app := newTestApp(t, WithStderr(&out))
 
 			err := runCommand(t.Context(), app, tt.name, nil)
 			if !errors.Is(err, errUsage) {
@@ -950,7 +950,7 @@ func TestRunMainVersionFlag(t *testing.T) {
 			var out bytes.Buffer
 
 			build := func(opts ...Option) (*App, error) {
-				return New(append(opts, WithLogger(discardLogger()), WithStdout(&out))...)
+				return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithStderr(&out))...)
 			}
 
 			err := RunMain(t.Context(), []string{"app", "--version"}, testSource(nil).Lookup, build, tt.opts...)
