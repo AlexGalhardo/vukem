@@ -315,6 +315,38 @@ func (e *Engine) RenderBlock(ctx context.Context, w io.Writer, name, block strin
 	return e.execute(ctx, w, t, block, data)
 }
 
+// RenderBlocks renders several blocks of the page, in order, with the same
+// data, parsing the template once: use it to compose out-of-band slices
+// (htmx) instead of one RenderBlock per slice. A name that is not a block of
+// the page fails before anything is written.
+func (e *Engine) RenderBlocks(ctx context.Context, w io.Writer, name string, data any, blocks ...string) error {
+	t, err := e.lookup(name)
+	if err != nil {
+		return err
+	}
+
+	for _, block := range blocks {
+		if t.Lookup(block) == nil {
+			return fmt.Errorf("view: %q has no block %q", name, block)
+		}
+	}
+
+	clone, err := t.Clone()
+	if err != nil {
+		return fmt.Errorf("view: clone: %w", err)
+	}
+
+	clone.Funcs(e.funcs(ctx))
+
+	for _, block := range blocks {
+		if err := clone.ExecuteTemplate(w, block, data); err != nil {
+			return fmt.Errorf("view: render %s: %w", block, err)
+		}
+	}
+
+	return nil
+}
+
 func (e *Engine) execute(ctx context.Context, w io.Writer, t *template.Template, name string, data any) error {
 	clone, err := t.Clone()
 	if err != nil {
