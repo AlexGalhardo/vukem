@@ -25,7 +25,7 @@ go vet ./pkg/...
 
 For an audit, run `golangci-lint run ./...` at the root and in each nested module (`contrib/*`, `drivers/*`). Zero issues is the bar; never add `//nolint` to pass (see `.claude/rules/go.md`).
 
-Covered by the linter (do not re-check by hand): MixedCaps and initialisms (`ID`, `URL`), a doc comment on every exported name that starts with the name and ends with a period, lowercase error strings without punctuation, `context.Context` first, short consistent receiver names, import groups, no naked returns in long functions, `errors.Is`/`errors.As` instead of `==`, early return and no `else` after `return`, no import shadowing, no dot imports, `any` instead of `interface{}`, named results when a function returns two or more values of the same type.
+Covered by the linter (do not re-check by hand): MixedCaps and initialisms (`ID`, `URL`), a doc comment on every exported name that starts with the name and ends with a period, lowercase error strings without punctuation, `context.Context` first, short consistent receiver names, import groups, no naked returns in long functions, `errors.Is`/`errors.As` instead of `==`, early return and no `else` after `return`, no import shadowing, no dot imports, `any` instead of `interface{}`, named results when a function returns two or more values of the same type (`confusing-results`), and a parameter that shadows an import (`import-shadowing`, e.g. `fs` next to `io/fs`). Two revive rules stay off on purpose: `struct-tag` (the `validate` tags) and `modifies-value-receiver` (the immutable `orm.Query` builders).
 
 ## 2. Manual checklist (what a linter cannot judge)
 
@@ -46,7 +46,7 @@ Go through each item for the diff (or the whole tree in an audit) and report fin
    - Do not add new ones without updating the exception list in the docs.
 4. **Interfaces**: define them where they are consumed, keep them small, return concrete types, and do not create an interface before a second implementation needs it.
 5. **Tests**
-   - Failure messages read `Func(args) = got, want want` or `got %v, want %v`; never "expected".
+   - Failure messages read `Func(%v) = %v, want %v` or `got %v, want %v`; never "expected" (a stray-event message such as "unexpected message %v" is fine).
    - Diffs use `cmp.Diff(want, got)` with the `(-want +got)` legend.
    - Table-driven where cases repeat.
    - Helpers call `t.Helper()`.
