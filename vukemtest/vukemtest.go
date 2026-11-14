@@ -147,6 +147,12 @@ func Build(tb testing.TB, build vukem.BuildFunc, opts ...Options) (*App, error) 
 	return &App{App: app, t: tb, handler: h, logs: logs}, nil
 }
 
+// Logs returns the app's log output so far, as text. It keeps only the last
+// 64 KiB, so assert on a specific message rather than on the whole log.
+func (a *App) Logs() string {
+	return a.logs.String()
+}
+
 // Mails returns the in-memory mail transport (MAIL_MAILER=array, the
 // default in tests) to assert on sent messages.
 func (a *App) Mails() *mail.Array {
