@@ -563,7 +563,7 @@ var levelInfo = map[slog.Level][2]string{ //nolint:gochecknoglobals // read-only
 	LevelFatal:      {"💀", "FATAL"},
 }
 
-func label(l slog.Level) (string, string) {
+func label(l slog.Level) (emoji, name string) {
 	if v, ok := levelInfo[l]; ok {
 		return v[0], v[1]
 	}
