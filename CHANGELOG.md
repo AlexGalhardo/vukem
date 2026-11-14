@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **cli:** Add `vukem.MainWith(build, opts...)`, `Main` with `Option`s such as `WithVersion` and `WithReady`, so a `main` no longer needs `RunMain` for them. With `PORT=0` the server now logs `http server listening` with the bound address.
 - **web:** Add `MiddlewareOptions.MaxBody` to set the router-wide request body limit (default 10 MiB). A `UseServer(middleware.BodyLimit(n))` is replaced by the router default on routes (innermost limit wins); the order is now documented.
 - **ci:** Upload the Ubuntu coverage profile to [Codecov](https://app.codecov.io/gh/AlexGalhardo/vukem).
 - **cli:** Refactor the generated personal-finance SaaS: green viewport landing, shadcn/ui sidebar, transaction modals, light/dark theme, English/pt-BR/es, Google sign-in, idempotent local admin and demo seeds, `vukem new --example finance --seed`, and generated Docker setup.

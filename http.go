@@ -876,6 +876,11 @@ func (a *App) httpServer(h http.Handler) *HTTPServer {
 	srv.Server.MaxHeaderBytes = a.Config.MaxHeaderBytes
 	srv.Ready = a.ready
 
+	// PORT=0 asks the kernel for a port: the "starting" line only knows ":0".
+	if a.Config.Port == 0 {
+		srv.onListen = func(addr string) { a.Log.Info("http server listening", "addr", addr) }
+	}
+
 	return srv
 }
 

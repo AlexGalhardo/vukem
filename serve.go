@@ -195,6 +195,9 @@ type HTTPServer struct {
 	Listener net.Listener
 	// Ready, when set, receives the bound address once listening.
 	Ready chan<- string
+
+	// onListen runs with the bound address once listening, before Ready.
+	onListen func(addr string)
 }
 
 // NewHTTPServer returns an HTTPServer for handler on addr with secure
@@ -235,6 +238,10 @@ func (s *HTTPServer) Run(ctx context.Context) error {
 
 	base := sse.WithShutdown(context.WithoutCancel(ctx), stopping)
 	s.Server.BaseContext = func(net.Listener) context.Context { return base }
+
+	if s.onListen != nil {
+		s.onListen(ln.Addr().String())
+	}
 
 	if s.Ready != nil {
 		s.Ready <- ln.Addr().String()
@@ -330,10 +337,18 @@ func RunMain(ctx context.Context, args []string, getenv func(string) (string, bo
 // Main runs the application from os.Args and the process environment and
 // returns the exit code. Use it as: func main() { os.Exit(vukem.Main(bootstrap.New)) }.
 func Main(build BuildFunc) int {
+	return MainWith(build)
+}
+
+// MainWith is Main with Options passed to build (which must forward them to
+// New), e.g. WithVersion or WithReady:
+//
+//	func main() { os.Exit(vukem.MainWith(bootstrap.New, vukem.WithVersion(version))) }
+func MainWith(build BuildFunc, opts ...Option) int {
 	ctx, stop := signalContext()
 	defer stop()
 
-	err := RunMain(ctx, osArgs(), lookupEnv, build)
+	err := RunMain(ctx, osArgs(), lookupEnv, build, opts...)
 	if err != nil && !errors.Is(err, errUsage) {
 		fmt.Fprintln(stderr(), err)
 	}
