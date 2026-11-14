@@ -145,7 +145,7 @@ func (s SliceSchema[E]) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s SliceSchema[E]) asOptional() AnySchema { return s.Optional() }
 
-func (s SliceSchema[E]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s SliceSchema[E]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) ([]E, bool) {
 		rv, ok := s.core.parse(c, path, in)
 		if !ok {
@@ -302,7 +302,7 @@ func (s MapSchema[V]) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s MapSchema[V]) asOptional() AnySchema { return s.Optional() }
 
-func (s MapSchema[V]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s MapSchema[V]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (map[string]V, bool) {
 		rv, ok := s.core.parse(c, path, in)
 		if !ok {
@@ -650,7 +650,7 @@ func (s StructSchema[T]) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s StructSchema[T]) asOptional() AnySchema { return s.Optional() }
 
-func (s StructSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s StructSchema[T]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (T, bool) {
 		fromTyped := false
 		if t, isT := in.(T); isT {
@@ -838,7 +838,7 @@ func (s CustomSchema[T]) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s CustomSchema[T]) asOptional() AnySchema { return s.Optional() }
 
-func (s CustomSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s CustomSchema[T]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, func(c *pctx, path string, in any) (T, bool) {
 		v, err := s.fn(in)
 		if err != nil {

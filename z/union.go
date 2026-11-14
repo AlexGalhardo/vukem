@@ -64,7 +64,7 @@ func (s UnionSchema[T]) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s UnionSchema[T]) asOptional() AnySchema { return s.Optional() }
 
-func (s UnionSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s UnionSchema[T]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (T, bool) {
 		var zero T
 
@@ -235,7 +235,7 @@ func (s DiscriminatedUnionSchema[T]) optional() bool { return s.o.optional || s.
 
 func (s DiscriminatedUnionSchema[T]) asOptional() AnySchema { return s.Optional() }
 
-func (s DiscriminatedUnionSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s DiscriminatedUnionSchema[T]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (T, bool) {
 		var zero T
 

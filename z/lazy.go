@@ -68,7 +68,7 @@ func (s LazySchema[T]) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s LazySchema[T]) asOptional() AnySchema { return s.Optional() }
 
-func (s LazySchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s LazySchema[T]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (T, bool) {
 		var zero T
 

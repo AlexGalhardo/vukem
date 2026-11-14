@@ -16,7 +16,7 @@ import (
 type AnySchema interface {
 	// GoType is the Go type the schema produces.
 	GoType() reflect.Type
-	parseAny(c *pctx, path string, in any, present bool) (v any, set, ok bool)
+	parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool)
 	optional() bool
 	// asOptional returns a copy of the schema that accepts an absent key; it
 	// lets Partial relax the schemas of a struct without knowing their types.
@@ -241,7 +241,7 @@ func useMessage(c *pctx, from int, path, msg string) {
 // defaults, the type-specific core, transforms and refinements.
 func parse[T any](o *opts[T], c *pctx, path string, in any, present bool, emptyIsAbsent bool,
 	core func(c *pctx, path string, in any) (T, bool),
-) (T, bool, bool) {
+) (val T, isSet, ok bool) {
 	var zero T
 
 	if s, isStr := in.(string); isStr && s == "" && emptyIsAbsent {

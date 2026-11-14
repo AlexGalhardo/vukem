@@ -87,7 +87,7 @@ func (s NumberSchema[N]) optional() bool { return s.o.optional || s.o.hasDef }
 
 func (s NumberSchema[N]) asOptional() AnySchema { return s.Optional() }
 
-func (s NumberSchema[N]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s NumberSchema[N]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, s.core)
 	return v, set, ok
 }

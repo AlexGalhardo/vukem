@@ -41,7 +41,7 @@ func (s LiteralSchema[T]) asOptional() AnySchema { return s.Optional() }
 // Values returns the accepted values.
 func (s LiteralSchema[T]) Values() []T { return slices.Clone(s.values) }
 
-func (s LiteralSchema[T]) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
+func (s LiteralSchema[T]) parseAny(c *pctx, path string, in any, present bool) (val any, isSet, ok bool) {
 	v, set, ok := parse(&s.o, c, path, in, present, true, func(c *pctx, path string, in any) (T, bool) {
 		if v, ok := readLiteral[T](in, c.coerce); ok && slices.Contains(s.values, v) {
 			return v, true
@@ -120,7 +120,7 @@ func readLiteral[T LiteralValue](in any, coerce bool) (T, bool) {
 }
 
 // readBool is the boolean reading of [BoolSchema].
-func readBool(in any, coerce bool) (bool, bool) {
+func readBool(in any, coerce bool) (v, ok bool) {
 	switch x := in.(type) {
 	case bool:
 		return x, true
