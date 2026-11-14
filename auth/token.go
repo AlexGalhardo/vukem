@@ -221,7 +221,7 @@ func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 	}
 
 	if !ok || id == "" || secret == "" {
-		return Token{}, errBadToken
+		return Token{}, ErrInvalidToken
 	}
 
 	var (
@@ -254,11 +254,11 @@ func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 			return Token{}, fmt.Errorf("auth: find token: %w", err)
 		}
 
-		return Token{}, errBadToken
+		return Token{}, ErrInvalidToken
 	}
 
 	if err := json.Unmarshal([]byte(abil), &tok.Abilities); err != nil {
-		return Token{}, errBadToken
+		return Token{}, ErrInvalidToken
 	}
 
 	if tok.LastUsedAt == nil || now.Sub(*tok.LastUsedAt) > time.Minute {
@@ -607,7 +607,7 @@ func (g *TokenGuard[U]) User(c *web.Ctx) (U, error) {
 
 	switch {
 	case err == nil:
-	case errors.Is(err, errBadToken):
+	case errors.Is(err, ErrInvalidToken):
 		web.SecurityEvent(c.Request(), "token.rejected", "guard", g.name)
 		return zero, ErrUnauthenticated
 	default:
