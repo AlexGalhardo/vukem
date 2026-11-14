@@ -47,6 +47,23 @@ func TestStartersCompressStaticAndHTML(t *testing.T) {
 	}
 }
 
+// TestNewScaffoldsPrefixedQueueTables guards that a new app names its database
+// queue tables so they cannot collide with a domain "jobs" table.
+func TestNewScaffoldsPrefixedQueueTables(t *testing.T) {
+	t.Parallel()
+
+	b, err := starterFS.ReadFile("starter/.env.example.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{"\nQUEUE_TABLE=queue_jobs\n", "\nQUEUE_FAILED_TABLE=queue_failed_jobs\n"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf(".env.example.tmpl lacks %q", strings.TrimSpace(want))
+		}
+	}
+}
+
 func TestVendoredHTMX(t *testing.T) {
 	t.Parallel()
 

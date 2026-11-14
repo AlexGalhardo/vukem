@@ -585,6 +585,7 @@ Five tables belong to vukem's own database-backed stores, not to the app. Check 
 Plus `migrations(id, batch, checksum, ran_at)`, the migrator's own tracking table.
 
 - The defaults keep their names: `jobs` and `failed_jobs` are not prefixed, because renaming them would break every app that already has those tables (the queue would find an empty `vukem_jobs` and the jobs in flight would never run). `QUEUE_TABLE` and `QUEUE_FAILED_TABLE` exist for collision avoidance, not as a customisation knob: an app that wants its own `jobs` table sets them (`QUEUE_TABLE=vukem_jobs`, `QUEUE_FAILED_TABLE=vukem_failed_jobs`) **before the first boot**, since moving them later leaves the pending jobs behind in the old table. `stores.Options` then needs the same names, so the migration manages the tables the stores read.
+- `vukem new` writes `QUEUE_TABLE=queue_jobs` and `QUEUE_FAILED_TABLE=queue_failed_jobs` into the starter's `.env.example` (and so into `.env`), so a new app never meets the clash; the starter registers no `stores.Migrations`, so `Boot` creates the tables under those names. Existing apps are unchanged: the framework defaults stay `jobs` and `failed_jobs` (`TestNewScaffoldsPrefixedQueueTables`). An app that registers `stores.Migrations` passes the same names in `stores.Options{Jobs: "queue_jobs", FailedJobs: "queue_failed_jobs"}`.
 - `stores.Tables(stores.Options{})` returns the list above at run time, and `go doc github.com/AlexGalhardo/vukem/schema/stores` prints it.
 
 ### Managing them with migrate
