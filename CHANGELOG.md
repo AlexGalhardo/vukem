@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **site:** Rebuild the landing: copyable install commands in the hero (with the Finance scaffold) and feature tabs with real Go samples, in the docs code block with its copy button, that switch in place through the View Transitions API. No vertical scroll from 768px wide; below that the tabs become a swipeable chip row.
+- **site:** Restyle the landing install commands as a macOS terminal window (title bar, traffic lights, `$` prompt) and move the feature examples to the right column with their explanation under the code. The landing mascot is gone; the Gopher stays in the header logo, with its credit.
 - **site:** Use one static Go Gopher SVG (`site/src/assets/gopher.svg`) for the logo and the landing, with credit to Renee French (CC BY 4.0).
 - **site:** Move the landing background sphere into the open left side. The code panel on the right was covering it.
 - **site:** Simplify the landing. Drop the eyebrow, the sample command, the edition line and the footer. The subtitle names web applications and APIs, and the feature panel shows larger examples from the docs.

@@ -85,4 +85,4 @@ The root page (`src/pages/index.astro`) is a standalone composition. From 768px 
 
 The feature tabs (Routing, DB / ORM, Auth, Jobs, Admin, CLI) switch in place with the View Transitions API, with no URL change. Each code sample is trimmed from the docs page listed in the `tabs` array of the page; keep them in sync with the docs.
 
-The mascot is one static SVG, `src/assets/gopher.svg`, inlined by the landing page and the header logo. Credit: Go Gopher by Renee French, CC BY 4.0.
+The mascot is one static SVG, `src/assets/gopher.svg`, inlined by the header logo. Credit: Go Gopher by Renee French, CC BY 4.0.
