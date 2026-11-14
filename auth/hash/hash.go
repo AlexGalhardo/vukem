@@ -192,11 +192,8 @@ func verify(hash, password string) (bool, error) {
 	}
 }
 
-func parseArgon(hash string) (Argon2Params, []byte, []byte, error) {
-	var (
-		p       Argon2Params
-		version int
-	)
+func parseArgon(hash string) (p Argon2Params, salt, key []byte, err error) {
+	var version int
 
 	parts := strings.Split(hash, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
@@ -213,12 +210,12 @@ func parseArgon(hash string) (Argon2Params, []byte, []byte, error) {
 
 	enc := base64.RawStdEncoding
 
-	salt, err := enc.DecodeString(parts[4])
+	salt, err = enc.DecodeString(parts[4])
 	if err != nil {
 		return p, nil, nil, fmt.Errorf("hash: bad argon2 salt: %w", err)
 	}
 
-	key, err := enc.DecodeString(parts[5])
+	key, err = enc.DecodeString(parts[5])
 	if err != nil {
 		return p, nil, nil, fmt.Errorf("hash: bad argon2 key: %w", err)
 	}
