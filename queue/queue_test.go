@@ -280,7 +280,10 @@ func TestWorkQueueLimitsCapPerQueueConcurrency(t *testing.T) {
 
 		track := func(n *atomic.Int32, peak *atomic.Int32) {
 			v := n.Add(1)
-			for p := peak.Load(); v > p && !peak.CompareAndSwap(p, v); p = peak.Load() {
+			for p := peak.Load(); v > p; p = peak.Load() {
+				if peak.CompareAndSwap(p, v) {
+					break
+				}
 			}
 
 			time.Sleep(10 * time.Second)
