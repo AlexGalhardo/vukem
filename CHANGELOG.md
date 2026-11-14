@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **view:** Add `Engine.RenderBlocks(ctx, w, name, data, blocks...)` to render several blocks (such as out-of-band htmx slices) of a page with one template clone.
 - **cli:** Add `vukem.MainWith(build, opts...)`, `Main` with `Option`s such as `WithVersion` and `WithReady`, so a `main` no longer needs `RunMain` for them. With `PORT=0` the server now logs `http server listening` with the bound address.
 - **web:** Add `MiddlewareOptions.MaxBody` to set the router-wide request body limit (default 10 MiB). A `UseServer(middleware.BodyLimit(n))` is replaced by the router default on routes (innermost limit wins); the order is now documented.
 - **ci:** Upload the Ubuntu coverage profile to [Codecov](https://app.codecov.io/gh/AlexGalhardo/vukem).

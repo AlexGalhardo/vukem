@@ -102,6 +102,33 @@ func TestLayoutsBlocksPartials(t *testing.T) {
 	}
 }
 
+func TestRenderBlocks(t *testing.T) {
+	t.Parallel()
+
+	e := newEngine(t, views, false)
+	data := map[string]any{"User": "ana", "Posts": []string{"a"}}
+
+	var b bytes.Buffer
+	if err := e.RenderBlocks(t.Context(), &b, "posts/index", data, "post-list", "title"); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := `<ul><li>a</li></ul>Posts`; b.String() != want {
+		t.Fatalf("blocks = %q, want %q", b.String(), want)
+	}
+
+	// A missing block fails before anything is written.
+	b.Reset()
+
+	if err := e.RenderBlocks(t.Context(), &b, "posts/index", data, "post-list", "nope"); err == nil || b.Len() != 0 {
+		t.Fatalf("missing block: err = %v, wrote %q, want an error and no output", err, b.String())
+	}
+
+	if err := e.RenderBlocks(t.Context(), &b, "missing", data, "post-list"); err == nil {
+		t.Fatal("missing view rendered")
+	}
+}
+
 type fakeSession map[string]any
 
 func (f fakeSession) Get(k string) any    { return f[k] }
