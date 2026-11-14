@@ -73,10 +73,19 @@ func newStubData(env *Env, name string) (stubData, error) {
 
 var moduleLine = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 
+// modulePath is the import path of the application's directory: the module
+// path of the nearest go.mod, at the project folder or above it, followed by
+// the folder's path from that go.mod. An app in web/ of a module at the
+// repository root gets "<module>/web", as the go command resolves it.
 func modulePath(env *Env) (string, error) {
-	b, err := os.ReadFile(env.path("go.mod"))
+	dir, err := filepath.Abs(env.Dir)
 	if err != nil {
-		return "", fmt.Errorf("no go.mod here: run vukem inside a project (%w)", err)
+		return "", err
+	}
+
+	root, b, err := findGoMod(dir)
+	if err != nil {
+		return "", fmt.Errorf("no go.mod here or in a parent folder: run vukem inside a project (%w)", err)
 	}
 
 	m := moduleLine.FindSubmatch(b)
@@ -84,7 +93,38 @@ func modulePath(env *Env) (string, error) {
 		return "", errors.New("go.mod has no module line")
 	}
 
-	return string(m[1]), nil
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return "", err
+	}
+
+	if rel == "." {
+		return string(m[1]), nil
+	}
+
+	return string(m[1]) + "/" + filepath.ToSlash(rel), nil
+}
+
+// findGoMod walks up from dir to the nearest go.mod and returns the folder
+// that holds it and its text.
+func findGoMod(dir string) (root string, text []byte, err error) {
+	for cur := dir; ; {
+		b, rerr := os.ReadFile(filepath.Join(cur, "go.mod"))
+		if rerr == nil {
+			return cur, b, nil
+		}
+
+		if !errors.Is(rerr, fs.ErrNotExist) {
+			return "", nil, rerr
+		}
+
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", nil, rerr
+		}
+
+		cur = parent
+	}
 }
 
 // renderStub executes a stub, preferring the project's stubs/<name> over
