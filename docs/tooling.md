@@ -26,7 +26,7 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 ## Formatting and linting
 
 - `golangci-lint fmt` — formatters: **gofumpt**, **gci** (std / third-party / `github.com/AlexGalhardo/vukem`), **golines** (120 cols, tab-len 4).
-- `golangci-lint run ./...` — `default: standard` plus correctness (errorlint, bodyclose, sqlclosecheck, rowserrcheck, contextcheck, noctx, nilerr, exhaustive, forcetypeassert, musttag), security (gosec), style (revive, gocritic, misspell, unconvert, unparam, usestdlibvars, intrange, perfsprint, nolintlint, godot, sloglint, modernize, copyloopvar), tests (usetesting, thelper, tparallel), and **depguard** (core must not import drivers or non-allowlisted modules).
+- `golangci-lint run ./...` — `default: standard` plus correctness (errorlint, bodyclose, sqlclosecheck, rowserrcheck, contextcheck, noctx, nilerr, exhaustive, forcetypeassert, musttag), security (gosec), style (revive with the Google Go Style rules in `.golangci.yml`, gocritic, misspell, unconvert, unparam, usestdlibvars, intrange, perfsprint, nolintlint, godot, sloglint, modernize, copyloopvar), tests (usetesting, thelper, tparallel), and **depguard** (core must not import drivers or non-allowlisted modules).
 - `nolint` requires a specific linter and an explanation.
 - revive's `exported` and `package-comments` rules are enforced (no `comments` exclusion preset): every exported identifier needs a doc comment starting with its name.
 - `go vet ./...` and `go fix -diff ./...` (modernizers) run in CI.
