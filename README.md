@@ -15,7 +15,7 @@
 <a href="LICENSE"><img src="https://img.shields.io/github/license/AlexGalhardo/vukem" alt="License"></a>
 <a href="https://scorecard.dev/viewer/?uri=github.com/AlexGalhardo/vukem"><img src="https://api.scorecard.dev/projects/github.com/AlexGalhardo/vukem/badge" alt="OpenSSF Scorecard"></a>
 
-### Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `net/http` and the standard library to build APIs and FullStack Web Applications.
+### Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `net/http` and the standard library to build APIs and FullStack Web Applications
 
 <br/>
 
