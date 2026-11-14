@@ -177,3 +177,24 @@ func grandchildPID(t *testing.T, stderr string) uint32 {
 
 	return uint32(pid)
 }
+
+func TestJobObjectProcessLimitHoldsFromTheFirstInstruction(t *testing.T) {
+	t.Parallel()
+
+	bin := faketool(t)
+	tool := find(t, engine.Config{Path: bin, Name: "faketool", Limits: engine.Limits{Processes: 1}})
+
+	// A child started before the process joined its job would escape the
+	// limit; many runs make a race visible.
+	for i := range 50 {
+		res, err := tool.Run(t.Context(), t.TempDir(), "orphan")
+
+		if !errors.Is(err, engine.ErrRun) {
+			t.Fatalf("run %d: Run(orphan) = %v, want ErrRun (the grandchild must not start)", i, err)
+		}
+
+		if grandchildRE.MatchString(res.Stderr) {
+			t.Fatalf("run %d: a grandchild started under Processes=1: %q", i, res.Stderr)
+		}
+	}
+}
