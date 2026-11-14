@@ -250,8 +250,27 @@ func sqliteDSN(rawURL string, write bool) (dsn string, memory bool) {
 	memory = path == ":memory:" || strings.Contains(query, "mode=memory")
 
 	vals, _ := url.ParseQuery(query)
+
+	// A pragma the URL already sets wins: the driver runs them in order, so
+	// adding ours after it would silently undo the caller (for example
+	// _pragma=synchronous(FULL), or the synchronous=FULL form).
+	set := make(map[string]bool)
+	for _, p := range vals["_pragma"] {
+		name := p
+		if i := strings.IndexAny(p, "(="); i >= 0 {
+			name = p[:i]
+		}
+
+		set[strings.ToLower(strings.TrimSpace(name))] = true
+	}
+
 	for _, p := range sqlitePragmas {
-		if memory && strings.HasPrefix(p, "journal_mode") {
+		name, _, _ := strings.Cut(p, "(")
+		if set[name] {
+			continue
+		}
+
+		if memory && name == "journal_mode" {
 			continue // WAL does not apply to in-memory databases
 		}
 
