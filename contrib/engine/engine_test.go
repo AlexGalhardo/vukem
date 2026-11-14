@@ -492,3 +492,37 @@ func TestSanitized(t *testing.T) {
 		}
 	}
 }
+
+// The version probe runs in a private directory under Config.ProbeDir, not
+// in the shared system temp directory, and leaves nothing behind.
+func TestVersionProbeRunsInItsOwnDirectory(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	tool := find(t, engine.Config{Name: "faketool", VersionArgs: []string{"cwd"}, ProbeDir: parent})
+
+	probe := tool.Version()
+
+	pi, err := os.Stat(filepath.Dir(probe))
+	if err != nil {
+		t.Fatalf("probe ran in %q, which cannot be read: %v", probe, err)
+	}
+
+	want, err := os.Stat(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !os.SameFile(pi, want) {
+		t.Errorf("probe ran in %q, want a directory inside %q", probe, parent)
+	}
+
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 0 {
+		t.Errorf("probe left %d entries in %q, want none", len(entries), parent)
+	}
+}
