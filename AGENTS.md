@@ -4,6 +4,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 
 ## Start here
 
+0. At the start of every work session, load the `google-go-style` skill ([.claude/skills/google-go-style/SKILL.md](.claude/skills/google-go-style/SKILL.md)): the Google Go Style Guide rules vukem follows, its documented exceptions and the check to run before finishing any Go change. Agents without a skills tool read that file.
 1. Read [PLAN.md](docs/PLAN.md): pick the first unchecked task of the current phase, then the docs it touches (index in [docs/README.md](docs/README.md)).
 2. Decisions are final unless [docs/brainstorming.md](docs/brainstorming.md) is updated first.
 
