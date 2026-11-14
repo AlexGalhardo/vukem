@@ -446,7 +446,12 @@ func (s *Studio) changeRow(w http.ResponseWriter, r *http.Request) {
 	case "delete":
 		if !confirmed(r, confirmKey(key)) {
 			s.audit(r.Context(), src, "delete", table, inputError("confirmation did not match"), "key", confirmKey(key))
-			s.failForm(w, r, inputError("type the primary key to confirm the deletion"), rowLink(src.Name(), table, key))
+			s.failForm(
+				w,
+				r,
+				inputError("type the primary key to confirm the deletion"),
+				rowLink(src.Name(), table, key),
+			)
 
 			return
 		}

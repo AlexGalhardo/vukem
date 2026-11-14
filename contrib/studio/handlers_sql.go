@@ -296,9 +296,19 @@ func (s *Studio) rowPage(w http.ResponseWriter, r *http.Request) {
 		out = append(out, o)
 	}
 
+	// Encode already escapes every byte; the template would escape it again and
+	// turn the form action into ?k%3d1.
+	rowKey := template.URL(url.Values{"k": key}.Encode()) //nolint:gosec // G203: see above
+
 	s.page(w, r, http.StatusOK, "row", map[string]any{
-		"Source": src.Name(), "Table": t, "Fields": fields, "Incoming": in, "Outgoing": out, "CanWrite": canWrite,
-		"Key": template.URL(url.Values{"k": key}.Encode()), "Confirm": confirmKey(key),
+		"Source":   src.Name(),
+		"Table":    t,
+		"Fields":   fields,
+		"Incoming": in,
+		"Outgoing": out,
+		"CanWrite": canWrite,
+		"Key":      rowKey,
+		"Confirm":  confirmKey(key),
 	})
 }
 
