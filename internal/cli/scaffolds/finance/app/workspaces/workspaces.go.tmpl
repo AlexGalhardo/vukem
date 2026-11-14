@@ -12,7 +12,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,11 +30,9 @@ import (
 // DefaultCurrency is the currency of a new workspace (ISO 4217).
 const DefaultCurrency = "USD"
 
-var currencyRe = regexp.MustCompile(`^[A-Z]{3}$`)
-
 var (
 	errBadRole     = errs.New(http.StatusUnprocessableEntity, "The role must be admin or member.")
-	errBadCurrency = errs.New(http.StatusUnprocessableEntity, "The currency must be a three-letter ISO 4217 code.")
+	errBadCurrency = errs.New(http.StatusUnprocessableEntity, "The currency must be an ISO 4217 code, such as USD.")
 	errOwner       = errs.New(http.StatusConflict, "The owner cannot be removed.")
 )
 
@@ -140,7 +137,7 @@ func (s *Service) Ensure(ctx context.Context, u models.User) (models.Workspace, 
 // categories so the first transaction takes seconds.
 func (s *Service) Create(ctx context.Context, u models.User, name, currency string) (models.Workspace, error) {
 	currency = strings.ToUpper(strings.TrimSpace(currency))
-	if !currencyRe.MatchString(currency) {
+	if !validCurrency(currency) {
 		return models.Workspace{}, errBadCurrency
 	}
 
@@ -381,7 +378,7 @@ func (s *Service) RemoveMember(ctx context.Context, userID int64) error {
 // Rename changes the name and currency of the workspace of ctx.
 func (s *Service) Rename(ctx context.Context, name, currency string) error {
 	currency = strings.ToUpper(strings.TrimSpace(currency))
-	if !currencyRe.MatchString(currency) {
+	if !validCurrency(currency) {
 		return errBadCurrency
 	}
 

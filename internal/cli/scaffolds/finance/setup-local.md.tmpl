@@ -6,14 +6,14 @@ the application log (or Mailpit with Docker).
 
 ## Create and run
 
-Install the Go version required by go.mod, Node.js and npm, and the Vukem CLI.
+Install the Go version required by go.mod, {{.PM}} (and Node.js where it needs it), and the Vukem CLI.
 To generate this application with its optional initial data:
 
 ```sh
 vukem new money --example finance --seed
 cd money
-npm install
-npm run build:emails
+{{.PM}} install
+{{.PM}} run build:emails
 vukem serve
 ```
 
@@ -72,8 +72,7 @@ instances must share their OAuth state cache (database or Redis).
 ## Docker
 
 Every finance app includes `Dockerfile`, `.dockerignore` and `compose.yaml`.
-The image needs the JavaScript lockfile from `npm install` (or the package
-manager you generated with). Compose publishes the app on 127.0.0.1:3000,
+The image needs the JavaScript lockfile from `{{.PM}} install`. Compose publishes the app on 127.0.0.1:3000,
 keeps storage in the `storage` volume, and starts Mailpit at
 http://localhost:8025. PostgreSQL is defined for an optional switch; the
 default database is the SQLite file in that storage volume.
@@ -82,8 +81,8 @@ Run these commands in the generated project. Keep the generated `.env` and
 APP_KEY; use a separate ignored `app.env` for runtime configuration:
 
 ```sh
-npm install
-npm run build:emails
+{{.PM}} install
+{{.PM}} run build:emails
 cp .env app.env
 chmod 600 app.env
 ```
@@ -114,5 +113,7 @@ Open http://localhost:3000. `docker compose up --build` is also available when
 compose.yaml was generated: it reads `.env`, migrates automatically and provides
 Mailpit at http://localhost:8025. Seed that stack with
 `docker compose exec app /app/app db:seed FinanceAdminSeeder FinanceDemoSeeder`.
-Compose does not seed automatically. Never reuse local administrator credentials
+Compose does not seed automatically; read the generated password with
+`docker compose exec app sh -c "cat storage/finance-admin-*.txt"`, then sign in
+as `admin@example.test`. Never reuse local administrator credentials
 or APP_ENV=development for production.

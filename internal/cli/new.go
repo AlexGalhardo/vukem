@@ -41,6 +41,7 @@ var projectName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
 type starterData struct {
 	Name   string // directory and APP_NAME
 	Module string // Go module path
+	PM     string // JavaScript package manager the docs name (npm, bun, ...)
 }
 
 func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
@@ -161,7 +162,7 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 		return err
 	}
 
-	data := starterData{Name: name, Module: o.module}
+	data := starterData{Name: name, Module: o.module, PM: pm.name}
 	if data.Module == "" {
 		data.Module = name
 	}

@@ -318,3 +318,53 @@ func TestFinanceDropsOnlyWhatTheStarterHas(t *testing.T) {
 		}
 	}
 }
+
+// The docs, layout and head of a generated finance app match how it is run:
+// the package manager it was generated with, one <main>, an icon and a Compose
+// file that says how to switch to PostgreSQL.
+func TestFinanceOnboardingDetails(t *testing.T) {
+	t.Parallel()
+	requireGo(t)
+
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(repo, "tenancy", "tenancy.go")); err != nil {
+		t.Skip("the finance example needs the tenancy package: ", err)
+	}
+
+	dir := t.TempDir()
+
+	code, out, errOut := vukem(t, dir, "new", "app", "--example", "finance", "--module", "example.com/app",
+		"--framework", repo, "--no-install", "--pm", "bun")
+	if code != 0 {
+		t.Fatalf("vukem new --example finance --pm bun = %d\n%s%s", code, out, errOut)
+	}
+
+	project := filepath.Join(dir, "app")
+
+	for _, doc := range []string{"README.md", "setup-local.md"} {
+		text := read(t, project, doc)
+		if !strings.Contains(text, "bun install") || strings.Contains(text, "npm ") {
+			t.Errorf("%s does not name bun only:\n%s", doc, text)
+		}
+	}
+
+	if !strings.Contains(read(t, project, "setup-local.md"), "docker compose exec app sh -c") {
+		t.Error("setup-local.md does not say how to read the seeded admin password in Compose")
+	}
+
+	if layout := read(t, project, "resources/js/layouts/AppLayout.tsx"); strings.Contains(layout, "</header><main") {
+		t.Error("AppLayout nests a <main> inside the SidebarInset <main>")
+	}
+
+	if !strings.Contains(read(t, project, "resources/views/app.html"), `rel="icon"`) {
+		t.Error("app.html has no icon: the browser asks for /favicon.ico and gets a 404")
+	}
+
+	if !strings.Contains(read(t, project, "compose.yaml"), "go mod tidy") {
+		t.Error("compose.yaml does not say to run go mod tidy after switching to PostgreSQL")
+	}
+}

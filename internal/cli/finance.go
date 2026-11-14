@@ -68,6 +68,7 @@ func financeEdits() []exampleEdit {
 			"app/controllers/account/account.go",
 			`return c.Redirect("/register/check-email")`,
 			"if !h.a.RequireEmailVerification {\n" +
+				"\t\tinertia.Flash(c, \"success\", h.a.T(c.Context(), \"auth.account_created\"))\n\n" +
 				"\t\treturn c.Redirect(\"/login\")\n" +
 				"\t}\n\n" +
 				"\treturn c.Redirect(\"/register/check-email\")",
@@ -169,7 +170,11 @@ func financeEdits() []exampleEdit {
 			"<meta property=\"csp-nonce\" nonce=\"{{cspNonce}}\">\n" +
 				"\t<script nonce=\"{{cspNonce}}\">try{var t=localStorage.getItem(\"theme\");" +
 				"document.documentElement.classList.toggle(\"dark\",t?t===\"dark\":matchMedia(\"(prefers-color-scheme: dark)\").matches)}" +
-				"catch(e){}</script>\n",
+				"catch(e){}</script>\n" +
+				// A data URL keeps /favicon.ico from being a 404 and needs no route or file (the CSP allows data: images).
+				"\t<link rel=\"icon\" href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E" +
+				"%3Crect width='32' height='32' rx='8' fill='%23bdfb6b'/%3E%3Cpath d='M10 22 22 10M12 10h10v10' " +
+				"stroke='%23111' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\">\n",
 		},
 		{
 			".env.example",
@@ -210,7 +215,7 @@ FINANCE_ADMIN_PASSWORD=
 // the accounts, transactions, budgets, dashboard and CSV import. It runs
 // before the Go module is resolved, so it only writes files and registers
 // code; go mod tidy and vukem codegen:pages run after it.
-func scaffoldFinance(_ context.Context, env *Env, _ string, _ starterData) error {
+func scaffoldFinance(_ context.Context, env *Env, _ string, sd starterData) error {
 	if inertiaFramework(env) != financeFramework {
 		return usagef("the finance example needs the Inertia + React stack")
 	}
@@ -224,6 +229,12 @@ func scaffoldFinance(_ context.Context, env *Env, _ string, _ starterData) error
 	data, err := authData(env, "")
 	if err != nil {
 		return err
+	}
+
+	// The docs name the package manager the project was generated with.
+	data["PM"] = sd.PM
+	if data["PM"] == "" {
+		data["PM"] = "bun"
 	}
 
 	// The overlay first: it replaces the starter's pages.go, routes and

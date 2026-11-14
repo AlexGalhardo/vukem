@@ -61,7 +61,8 @@ func TestSecurity_A07_RegistrationWithoutVerificationMail(t *testing.T) {
 		"name": "Alexandra", "email": "alexandra@example.com",
 		"password": testPassword, "password_confirmation": testPassword,
 	}
-	c.PostJSON("/register", form).AssertRedirect("/login")
+	c.PostJSON("/register", form).AssertRedirect("/login").
+		AssertFlash("success", "Account created. Log in to continue.")
 	if sent := app.Mails().SentTo("alexandra@example.com"); len(sent) != 0 {
 		t.Fatalf("registration sent %d mails, want none", len(sent))
 	}
@@ -509,16 +510,14 @@ func TestWorkspaceSettingsRejectABadCurrency(t *testing.T) {
 		map[string]any{"id": ana.Workspace.ID, "currency": "EUR", "name": "Home"},
 	)
 
-	putForm(
-		ana.Client,
-		"/workspace",
-		url.Values{"name": {"Other"}, "currency": {"EURO"}},
-	).AssertStatus(http.StatusSeeOther)
-	putForm(
-		ana.Client,
-		"/workspace",
-		url.Values{"name": {"Other"}, "currency": {"E1R"}},
-	).AssertStatus(http.StatusSeeOther)
+	// Three letters are not enough: the code has to be in ISO 4217.
+	for _, bad := range []string{"EURO", "E1R", "ZZZ"} {
+		putForm(
+			ana.Client,
+			"/workspace",
+			url.Values{"name": {"Other"}, "currency": {bad}},
+		).AssertStatus(http.StatusSeeOther)
+	}
 	vukemtest.AssertDatabaseHas(
 		t,
 		app,
