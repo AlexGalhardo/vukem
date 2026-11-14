@@ -1,6 +1,6 @@
 ---
 title: Best practices
-description: Eight rules for structuring a Vukem app so services run in jobs, commands and tests, and the request code stays thin.
+description: Eight rules for structuring a Vukem app so services run in jobs, commands and tests, and the request code stays thin, plus the Go style it follows.
 ---
 
 Vukem gives each kind of file a home ([Directory structure](/docs/directory-structure)). This page adds the rules that keep those files independent of each other. Each rule has a reason, a short example from the example apps in the repository, and, where it helps, the mistake it prevents.
@@ -127,6 +127,32 @@ api.GetJSON("/api/v1/me").AssertOK().AssertJSONPath("email", "dev@example.com")
 ```
 
 See [Testing](/docs/testing/overview).
+
+## Go style (Google Go Style Guide)
+
+Vukem follows the [Google Go Style Guide](https://google.github.io/styleguide/go/) ([guide](https://google.github.io/styleguide/go/guide), [decisions](https://google.github.io/styleguide/go/decisions), [best practices](https://google.github.io/styleguide/go/best-practices)). The rules below are the ones that shape the code. Agents working in the repository load the `google-go-style` skill at the start of every session.
+
+What the project follows:
+
+- Names are MixedCaps with initialisms in one case (`ID`, `URL`). A package is named for what it provides: there is no `util` or `common` package, and a getter is `Name()`, not `GetName()`.
+- Every exported identifier has a doc comment that starts with its name and ends with a period. Comments say why, not what.
+- Receivers are short and consistent, never `this` or `self`. Accept small interfaces defined by the consumer and return concrete types.
+- Error strings are lowercase with no trailing punctuation. Wrap with `%w` and inspect with `errors.Is` and `errors.AsType`.
+- A function that returns two or more values of the same type names its results, so the call site reads without the signature (`func splitSubject(s string) (pkg, name string)`). Returns stay explicit; there are no naked returns.
+- `context.Context` is the first parameter and is not stored in a long-lived struct.
+- A function returns early instead of nesting an `else` after a `return`, and a parameter does not shadow an imported package (`flags`, not `fs`, next to `io/fs`).
+- Tests report `got` and `want`: `Func(args) = %v, want %v`, with `cmp.Diff(want, got)` for structures.
+- `panic` is for programmer errors and invariants, at registration or boot (a bad schema, a bad model tag, a duplicate route), in `Must*` helpers, and to re-raise a recovered panic. Anything driven by a request, a file or user data returns an `error`.
+
+What the linter enforces (`.golangci.yml`, `revive` plus the other enabled linters): MixedCaps and initialisms, doc comments on exported names, error strings, `context` first, receiver names, import order, `nakedret`, `errorlint`, `use-any`, and the style rules `indent-error-flow`, `superfluous-else`, `early-return`, `if-return`, `import-shadowing`, `dot-imports`, `blank-imports`, `error-naming`, `time-naming`, `redefines-builtin-id`, `increment-decrement`, `var-declaration`, `range`, `errorf`, `empty-block`, `unreachable-code`, `unexported-naming`, `unnecessary-stmt`, `identical-branches` and `confusing-results`. Two revive rules stay off because they are wrong for Vukem: `struct-tag` rejects the framework's own `validate` tags (`positive`, `regex`, `same`, `default`), and `modifies-value-receiver` flags the immutable by-value builders of `orm.Query`, which are intentional.
+
+Documented exceptions, kept on purpose:
+
+| Guide says | Vukem does | Why |
+| --- | --- | --- |
+| Do not store a `context.Context` in a struct | Per-request or short-lived state keeps one: `serverRequest` in `drivers/otel`, the props resolver in `inertia`, `sse.Stream` and the `sse` hub's lifetime context | The struct lives for one request or one connection and is never reused after the context ends |
+| Same rule | `schema.Schema` is bound to the context passed to `schema.New` | It is a short-lived DDL runner built per migration, and its constructor is exported API, so changing it breaks callers |
+| Wrap an error with `%w` at the end of the message | Sentinel errors read `fmt.Errorf("%w: detail", ErrSentinel)` | It is the house "category: detail" convention, and callers match the messages; changing it would alter them |
 
 ## Common mistakes
 
