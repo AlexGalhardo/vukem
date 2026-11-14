@@ -225,6 +225,10 @@ func printCommandsTo(w io.Writer, app *App) {
 	fmt.Fprintln(tw, "Available commands:")
 
 	for _, c := range app.Commands() {
+		if app.hiddenCommands[c.Name()] {
+			continue
+		}
+
 		fmt.Fprintf(tw, "  %s\t%s\n", c.Name(), c.Description())
 	}
 
