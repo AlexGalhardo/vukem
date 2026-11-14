@@ -1,6 +1,9 @@
 <div align="center">
   <br/>
 
+  <img src="site/src/assets/gopher.svg" alt="Vukem gopher" width="120">
+  <p>Go Gopher by Renee French, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</p>
+
   <a href="https://vukem.dev"><img src=".github/logo-wordmark.svg" width="320" alt="Vukem"></a>
 
   <br/>
