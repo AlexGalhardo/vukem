@@ -3,10 +3,12 @@ package studio
 import (
 	"bytes"
 	"encoding/csv"
+	"html"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -557,5 +559,41 @@ func TestSQLExport(t *testing.T) {
 		if code, _ := get(s, c, target); code != want {
 			t.Errorf("GET %s = %d, want %d", target, code, want)
 		}
+	}
+}
+
+// TestSQLRowPageFormsSubmitToTheirOwnRow renders the row page and posts to the
+// action attribute exactly as the browser would: an action that html/template
+// escaped a second time ("?k%3d1") reaches the handler without its key.
+func TestSQLRowPageFormsSubmitToTheirOwnRow(t *testing.T) {
+	t.Parallel()
+
+	h, s, _, c := writeStudio(t, true)
+
+	_, body := get(s, c, "/s/db/t/items/r?k=1")
+
+	actions := regexp.MustCompile(`<form method="post" action="([^"]+)"`).FindAllStringSubmatch(body, -1)
+	if len(actions) != 2 {
+		t.Fatalf("row page has %d forms, want 2 (save and delete):\n%s", len(actions), body)
+	}
+
+	for _, m := range actions {
+		if want := "/s/db/t/items/r?k=1"; html.UnescapeString(m[1]) != want {
+			t.Errorf("form action = %q, want %q", m[1], want)
+		}
+	}
+
+	rec := postForm(s, c, html.UnescapeString(actions[0][1]), url.Values{"action": {"update"}, "col.qty": {"9"}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save through the rendered form = %d %s", rec.Code, rec.Body.String())
+	}
+
+	if n := h.count1(t, `SELECT qty FROM items WHERE id = 1`); n != 9 {
+		t.Errorf("qty after save = %d, want 9", n)
+	}
+
+	rec = postForm(s, c, html.UnescapeString(actions[1][1]), url.Values{"action": {"delete"}, "confirm": {"1"}})
+	if rec.Code != http.StatusSeeOther || h.count1(t, `SELECT COUNT(*) FROM items WHERE id = 1`) != 0 {
+		t.Errorf("delete through the rendered form = %d", rec.Code)
 	}
 }
