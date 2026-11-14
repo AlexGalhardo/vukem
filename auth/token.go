@@ -73,19 +73,17 @@ type Tokens struct {
 	outdatedLogged atomic.Bool
 	// revokedAtSeen skips the column probe once revoked_at was found.
 	revokedAtSeen atomic.Bool
-	// resourceCol caches whether the resource column exists: 0 unknown,
-	// 1 yes, 2 no (decided once per Tokens, so a migration that adds the
-	// column takes effect on the next start).
-	resourceCol atomic.Int32
+	// resourceSeen skips the column probe once resource was found. A missing
+	// column is never cached: a migration that adds it (possibly run by
+	// another process) must show at once, or a token with a resource would
+	// read as unrestricted.
+	resourceSeen atomic.Bool
 }
 
 // hasResource reports whether access_tokens has the resource column.
 func (t *Tokens) hasResource(ctx context.Context) (bool, error) {
-	switch t.resourceCol.Load() {
-	case 1:
+	if t.resourceSeen.Load() {
 		return true, nil
-	case 2:
-		return false, nil
 	}
 
 	has, err := schema.New(ctx, t.ex).HasColumn(t.table, "resource")
@@ -94,9 +92,7 @@ func (t *Tokens) hasResource(ctx context.Context) (bool, error) {
 	}
 
 	if has {
-		t.resourceCol.Store(1)
-	} else {
-		t.resourceCol.Store(2)
+		t.resourceSeen.Store(true)
 	}
 
 	return has, nil
