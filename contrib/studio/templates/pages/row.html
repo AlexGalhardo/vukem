@@ -27,8 +27,8 @@
 	{{range .Fields}}<dt class="text-sm font-medium">{{.Name}} <span class="text-xs text-muted-foreground">{{.Type}}</span></dt>
 	<dd class="text-sm break-words">{{if .Null}}<span class="null-cell">NULL</span>{{else}}<pre class="whitespace-pre-wrap">{{.Text}}</pre>{{end}}</dd>{{end}}
 </dl>{{end}}
-{{if .Table.ForeignKeys}}<h2 class="mt-6 mb-2 text-lg font-semibold">References</h2>
-<ul class="text-sm">{{range .Table.ForeignKeys}}<li>{{range .Columns}}{{.}} {{end}}to <a class="underline" href="/s/{{path $.Source}}/t/{{path .RefTable}}">{{.RefTable}}</a></li>{{end}}</ul>{{end}}
+{{if .Outgoing}}<h2 class="mt-6 mb-2 text-lg font-semibold">References</h2>
+<ul class="text-sm">{{range .Outgoing}}<li>{{.Columns}} to <a class="underline" data-fk="{{.Table}}" href="{{.Link}}">{{.Table}}</a></li>{{end}}</ul>{{end}}
 {{if .Incoming}}<h2 class="mt-6 mb-2 text-lg font-semibold">Referenced by</h2>
 <ul class="text-sm">{{range .Incoming}}<li><a class="underline" href="{{.Link}}">{{.Table}}</a></li>{{end}}</ul>{{end}}
 {{end}}

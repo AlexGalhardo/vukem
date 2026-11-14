@@ -396,7 +396,7 @@ func (s *Studio) insertRow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		s.fail(w, r, err)
+		s.failForm(w, r, err, s.rowsBack(src, table)+"/new")
 		return
 	}
 
@@ -446,7 +446,7 @@ func (s *Studio) changeRow(w http.ResponseWriter, r *http.Request) {
 	case "delete":
 		if !confirmed(r, confirmKey(key)) {
 			s.audit(r.Context(), src, "delete", table, inputError("confirmation did not match"), "key", confirmKey(key))
-			s.fail(w, r, inputError("type the primary key to confirm the deletion"))
+			s.failForm(w, r, inputError("type the primary key to confirm the deletion"), rowLink(src.Name(), table, key))
 
 			return
 		}
@@ -458,7 +458,7 @@ func (s *Studio) changeRow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		s.fail(w, r, err)
+		s.failForm(w, r, err, rowLink(src.Name(), table, key))
 		return
 	}
 

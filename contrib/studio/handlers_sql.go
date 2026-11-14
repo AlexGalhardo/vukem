@@ -57,8 +57,15 @@ func (s *Studio) rowsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+
+	filters, err := filtersFrom(q)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
 	query := RowQuery{
-		Table: r.PathValue("table"), Filters: filtersFrom(q), Sort: q.Get("sort"), Desc: q.Get("desc") == "1",
+		Table: r.PathValue("table"), Filters: filters, Sort: q.Get("sort"), Desc: q.Get("desc") == "1",
 		After: q["after"], Page: intParam(q, "page"), PerPage: intParam(q, "per"),
 	}
 
@@ -75,8 +82,11 @@ func (s *Studio) rowsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	head := make([]string, len(pg.Columns))
+	sorts := make([]sortHead, len(pg.Columns))
+
 	for i, c := range pg.Columns {
 		head[i] = c.Name
+		sorts[i] = sortLink(r.URL.Path, q, c.Name)
 	}
 
 	rows := gridCells(pg.Rows)
@@ -92,6 +102,7 @@ func (s *Studio) rowsPage(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case pg.Next != nil:
 		v := cloneValues(q)
+		v.Add("back", encodeCursor(q["after"]))
 		v.Del("after")
 		v["after"] = pg.Next
 		next = r.URL.Path + "?" + v.Encode()
@@ -99,16 +110,93 @@ func (s *Studio) rowsPage(w http.ResponseWriter, r *http.Request) {
 		next = pageLink(r.URL.Path, q, max(query.Page, 1)+1)
 	}
 
-	if query.Sort != "" || len(t.PrimaryKey) == 0 {
+	switch {
+	case query.Sort != "" || len(t.PrimaryKey) == 0:
 		if p := max(query.Page, 1); p > 1 {
 			prev = pageLink(r.URL.Path, q, p-1)
 		}
+	case len(q["back"]) > 0:
+		prev = keysetPrev(r.URL.Path, q)
 	}
 
 	s.page(w, r, http.StatusOK, "rows", map[string]any{
-		"Source": src.Name(), "Table": t, "Head": head, "Rows": rows, "Next": next, "Prev": prev,
+		"Source": src.Name(), "Table": t, "Head": head, "Sorts": sorts, "Rows": rows, "Next": next, "Prev": prev,
 		"Query": q.Encode(), "Filters": q["f"],
 	})
+}
+
+// sortHead is the header link of one column: Dir is the aria-sort value of the
+// current order ("" when the grid is not sorted by it).
+type sortHead struct{ Link, Dir string }
+
+// sortLink sorts by col ascending, then descending, and restarts the paging.
+func sortLink(path string, q url.Values, col string) sortHead {
+	v := cloneValues(q)
+	v.Del("after")
+	v.Del("back")
+	v.Del("page")
+	v.Set("sort", col)
+	v.Del("desc")
+
+	h := sortHead{}
+
+	if q.Get("sort") == col {
+		h.Dir = "ascending"
+
+		if q.Get("desc") == "1" {
+			h.Dir = "descending"
+		} else {
+			v.Set("desc", "1")
+		}
+	}
+
+	h.Link = path + "?" + v.Encode()
+
+	return h
+}
+
+// encodeCursor packs a keyset cursor into one query value; the first page has
+// no cursor and packs to "".
+func encodeCursor(key []string) string {
+	parts := make([]string, len(key))
+	for i, k := range key {
+		parts[i] = url.QueryEscape(k)
+	}
+
+	return strings.Join(parts, ",")
+}
+
+func decodeCursor(s string) []string {
+	if s == "" {
+		return nil
+	}
+
+	parts := strings.Split(s, ",")
+	for i, p := range parts {
+		parts[i], _ = url.QueryUnescape(p)
+	}
+
+	return parts
+}
+
+// keysetPrev links to the page before this one. A keyset page only knows the
+// cursor after its own last row, so each Next link carries the cursor it left
+// from in back (a stack) and Previous pops it.
+func keysetPrev(path string, q url.Values) string {
+	back := q["back"]
+	v := cloneValues(q)
+	v.Del("after")
+	v.Del("back")
+
+	if cur := decodeCursor(back[len(back)-1]); cur != nil {
+		v["after"] = cur
+	}
+
+	for _, b := range back[:len(back)-1] {
+		v.Add("back", b)
+	}
+
+	return path + "?" + v.Encode()
 }
 
 func cloneValues(v url.Values) url.Values {
@@ -198,10 +286,53 @@ func (s *Studio) rowPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	type outgoing struct{ Table, Columns, Link string }
+
+	var out []outgoing
+
+	for _, fk := range t.ForeignKeys {
+		o := outgoing{Table: fk.RefTable, Columns: strings.Join(fk.Columns, ", ")}
+		o.Link = s.referencedLink(r, src, d, fk)
+		out = append(out, o)
+	}
+
 	s.page(w, r, http.StatusOK, "row", map[string]any{
-		"Source": src.Name(), "Table": t, "Fields": fields, "Incoming": in, "CanWrite": canWrite,
+		"Source": src.Name(), "Table": t, "Fields": fields, "Incoming": in, "Outgoing": out, "CanWrite": canWrite,
 		"Key": template.URL(url.Values{"k": key}.Encode()), "Confirm": confirmKey(key),
 	})
+}
+
+// referencedLink is where a foreign key of the row points: the referenced row
+// when the key is the primary key of that table, otherwise the referenced
+// table filtered to the matching rows; the table itself when a value is NULL.
+func (s *Studio) referencedLink(r *http.Request, src SQLSource, d RowDetail, fk ForeignKey) string {
+	base := "/s/" + url.PathEscape(src.Name()) + "/t/" + url.PathEscape(fk.RefTable)
+	vals := make([]string, len(fk.Columns))
+
+	for i, col := range fk.Columns {
+		found := false
+
+		for j, c := range d.Columns {
+			if c.Name == col && !d.Cells[j].Null && !d.Cells[j].Truncated {
+				vals[i], found = d.Cells[j].Text, true
+			}
+		}
+
+		if !found {
+			return base
+		}
+	}
+
+	if ref, err := src.Table(r.Context(), fk.RefTable); err == nil && slices.Equal(ref.PrimaryKey, fk.RefColumns) {
+		return rowLink(src.Name(), fk.RefTable, vals)
+	}
+
+	v := url.Values{}
+	for i, col := range fk.RefColumns {
+		v.Add("f", col+":eq:"+vals[i])
+	}
+
+	return base + "?" + v.Encode()
 }
 
 func (s *Studio) sqlConsole(w http.ResponseWriter, r *http.Request) {
