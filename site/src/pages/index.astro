@@ -1,56 +1,219 @@
 ---
 import Base from "../layouts/Base.astro";
+import { CopyButton } from "@/components/copy-button";
+import { highlight } from "@/lib/highlight";
+import gopher from "../assets/gopher.svg?raw";
 
-const features = [
-  { number: "01", title: "Go all the way", description: "Build on net/http with familiar Go handlers, middleware, and packages. Keep the control you expect from Go." },
-  { number: "02", title: "Start with a real app", description: "Generate a working starter with routes, migrations, views, tests, and the pieces you need to ship." },
-  { number: "03", title: "Pick your stack", description: "Use HTMX, templ, Inertia with React, Vue or Svelte, or create a JSON API. One framework, your choice." },
+// Every snippet is trimmed from the docs page named in `source`; keep them in sync.
+const tabs = [
+	{
+		id: "routing",
+		label: "Routing",
+		source: "basics/routing.mdx",
+		code: `r.Get("/", controllers.Home).Name("home")
+
+r.Group("/admin", func(g *router.Group) {
+	g.Use(appmw.RequireAdmin(app.Source.Get("ADMIN_TOKEN")))
+
+	g.Get("/stats", admin.Stats).Name("stats")
+}).Name("admin.")`,
+		title: "Plain net/http routing, with names and groups.",
+		text: "Routes sit on Go's own ServeMux, so handlers stay ordinary functions. Vukem adds the parts it lacks.",
+		points: ["Named routes and URL generation", "Groups share a prefix, a name and middleware", "Route mistakes fail at boot, not in production"],
+	},
+	{
+		id: "orm",
+		label: "DB / ORM",
+		source: "database/orm.mdx",
+		code: `posts, err := orm.QueryOf[models.Post](h.db).
+	Where("views", ">=", 100).
+	OrderBy("id", orm.Desc).
+	Limit(20).
+	Get(c.Context())`,
+		title: "Typed queries, no Active Record.",
+		text: "Generics give you a []models.Post back, and the same code runs against a database or a transaction.",
+		points: ["Executor passed in: db or tx, same call", "Relations, soft deletes and encrypted columns", "Migrations, factories and seeders included"],
+	},
+	{
+		id: "auth",
+		label: "Auth",
+		source: "security/authentication.mdx",
+		code: `r.Group("/app", func(g *router.Group) {
+	g.Use(auth.Required(webGuard), auth.Verified(webGuard))
+
+	g.Get("/me", func(c *web.Ctx) error {
+		user, err := auth.User[models.User](c, "web")
+		...
+	})
+})`,
+		title: "Sign-in that you own.",
+		text: "vukem install:auth writes the flow into your project as code you can read and change.",
+		points: ["Sessions, API tokens and JWT", "Two-factor, passkeys and social login", "Gates and policies for authorization"],
+	},
+	{
+		id: "queue",
+		label: "Jobs",
+		source: "digging-deeper/queue.mdx",
+		code: `err = q.Dispatch(c.Context(), jobs.SendInvoice{OrderID: id},
+	queue.OnQueue("billing"),
+	queue.Delay(5*time.Minute),
+)`,
+		title: "Background work with a struct.",
+		text: "A job is a Go struct and its handler a typed function. Stored as JSON, so a deploy can pick up yesterday's jobs.",
+		points: ["Memory, SQL and Redis drivers", "Retries with backoff and a failed-jobs bin", "Delays and named queues per dispatch"],
+	},
+	{
+		id: "admin",
+		label: "Admin",
+		source: "digging-deeper/admin.mdx",
+		code: `func Post() *vadmin.Resource[models.Post] {
+	return vadmin.NewResource[models.Post](requests.PostSchema).
+		Search("title", "body").
+		Filter("status", "draft", "published").
+		List("id", "title", "status", "created_at")
+}`,
+		title: "An admin panel from your models.",
+		text: "One resource per model, validated by the same schema your forms use.",
+		points: ["vukem install:admin wires the panel", "Search, filters and list columns in code", "Audit log and its own authorization gate"],
+	},
+	{
+		id: "cli",
+		label: "CLI",
+		source: "cli/overview.mdx, cli/reference-new.mdx",
+		code: `vukem new shop --example finance --seed
+cd shop
+vukem make:job SendInvoice
+vukem serve`,
+		title: "One binary, from scaffold to live reload.",
+		text: "Create a project, generate code and run it with rebuilds on every save.",
+		points: ["Starters: HTMX, templ, Inertia, JSON API", "Generators for models, jobs, resources and more", "Finance SaaS example with auth, billing and admin"],
+	},
 ];
+
+const highlighted = await Promise.all(tabs.map((tab) => highlight(tab.code, tab.id === "cli" ? "bash" : "go")));
 ---
 
 <Base title="Vukem — Web apps, the Go way" description="Build web apps and APIs in Go with a working starter, familiar net/http foundations, and your choice of frontend." canonical="/">
-  <main id="content" class="home overflow-hidden">
-    <section class="relative mx-auto grid max-w-[90rem] gap-8 px-5 pb-16 pt-16 sm:px-8 sm:pt-20 lg:min-h-[min(43rem,calc(100dvh-3.5rem))] lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,.75fr)] lg:items-center lg:gap-4 lg:px-16 lg:pb-20 lg:pt-12">
-      <div class="relative z-10 max-w-[48rem]">
-        <a href="/docs/introduction" class="mb-8 inline-flex items-center gap-2 rounded-full border border-border-strong bg-bg px-3 py-1.5 text-xs font-semibold tracking-wide text-muted transition hover:border-brand hover:text-fg">
-          <span class="size-1.5 rounded-full bg-brand"></span>
-          The Go framework for getting things done
-          <span aria-hidden="true" class="text-brand">↗</span>
-        </a>
-        <h1 class="max-w-[12ch] text-[clamp(3.25rem,7.5vw,6.7rem)] font-semibold leading-[.97] tracking-[-.075em] text-fg">
-          Make more.<br /><span class="text-brand">Wire less.</span>
-        </h1>
-        <p class="mt-7 max-w-[35rem] text-[1.05rem] leading-[1.7] text-muted sm:text-[1.16rem]">
-          Build full-stack web apps and APIs in Go. Start with a working project, choose the frontend you like, and get back to building.
-        </p>
-        <div class="mt-9 flex flex-wrap items-center gap-3">
-          <a href="/docs/quick-start" class="inline-flex min-h-11 items-center gap-3 rounded-lg bg-fg px-5 py-2.5 text-sm font-semibold text-bg transition hover:opacity-80">Get started <span aria-hidden="true">↗</span></a>
-          <a href="/docs/introduction" class="inline-flex min-h-11 items-center gap-3 rounded-lg border border-border-strong bg-bg px-5 py-2.5 text-sm font-semibold text-fg transition hover:bg-hover">Explore the docs <span aria-hidden="true">→</span></a>
-        </div>
-        <div class="mt-12 max-w-[38rem] overflow-hidden rounded-xl border border-border-strong bg-code-bg shadow-[0_20px_60px_-30px_rgba(0,0,0,.2)]">
-          <div class="flex h-9 items-center gap-1.5 border-b border-border px-4"><span class="size-2 rounded-full bg-[#ff6b6b]"></span><span class="size-2 rounded-full bg-[#f3c35a]"></span><span class="size-2 rounded-full bg-[#64c584]"></span><span class="ml-auto font-mono text-[.625rem] text-faint">terminal</span></div>
-          <div class="flex items-center justify-between gap-3 px-4 py-4 sm:px-5"><code class="min-w-0 overflow-x-auto whitespace-nowrap font-mono text-[.75rem] text-fg sm:text-[.82rem]"><span class="mr-3 text-brand">$</span>vukem new myapp --example todo</code><button type="button" data-copy="vukem new myapp --example todo" aria-label="Copy starter command" class="shrink-0 rounded-md border border-border px-2.5 py-1.5 text-[.65rem] font-medium text-muted transition hover:border-border-strong hover:text-fg">Copy</button></div>
-        </div>
-      </div>
-      <div class="relative flex min-h-[24rem] items-center justify-center lg:min-h-[33rem]" aria-label="Go gopher mascot">
-        <div class="absolute size-[min(80vw,31rem)] rounded-full border border-brand/15 bg-[radial-gradient(circle,var(--accent-soft)_0%,transparent_70%)]"></div>
-        <div class="absolute size-[min(68vw,26rem)] rounded-full border border-brand/20"></div>
-        <div class="absolute size-[min(50vw,19rem)] rounded-full border border-brand/15"></div>
-        <span class="absolute right-[6%] top-[18%] rounded-lg border border-border-strong bg-bg px-3 py-2 font-mono text-[.75rem] text-brand shadow-sm rotate-6">net/http</span>
-        <span class="absolute bottom-[19%] left-[4%] rounded-lg border border-border-strong bg-bg px-3 py-2 font-mono text-[.75rem] text-brand shadow-sm -rotate-6">go run .</span>
-        <img src="/gopher.svg" alt="Friendly blue Go gopher waving" class="relative z-10 w-[min(67vw,24rem)] drop-shadow-[0_25px_35px_rgba(0,100,140,.18)]" width="440" height="450" />
-      </div>
-    </section>
+	<main id="content" class="home flex flex-col gap-5 px-5 pb-6 pt-6 md:h-[calc(100dvh-var(--header-h))] md:gap-3 md:overflow-hidden md:px-8 md:pb-3 md:pt-6 lg:px-16 [@media(max-height:360px)]:h-auto [@media(max-height:360px)]:overflow-visible">
+		<section class="mx-auto grid w-full max-w-[90rem] grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+			<div class="min-w-0">
+				<h1 class="text-[clamp(2rem,min(5vw,6.5vh),3.5rem)] font-semibold leading-[1.02] tracking-[-.06em] text-fg">
+					Make more. <span class="text-brand">Wire less.</span>
+				</h1>
+				<p class="mt-2 max-w-[38rem] [@media(min-width:768px)_and_(max-height:800px)]:hidden text-[.9rem] leading-[1.5] text-muted">
+					Build full-stack web apps and APIs in Go. Start from a working project, pick your frontend, get back to building.
+				</p>
+				<div class="mt-2 max-w-[40rem] divide-y divide-border overflow-hidden rounded-lg border border-border-strong bg-code-bg font-mono text-[.7rem] text-fg">
+					<div class="flex items-center justify-between gap-2 py-0.5 pl-3 pr-1"><code class="min-w-0 overflow-x-auto whitespace-nowrap"><span class="mr-2 text-brand">$</span>go install github.com/AlexGalhardo/vukem/cmd/vukem@latest</code><CopyButton client:visible text="go install github.com/AlexGalhardo/vukem/cmd/vukem@latest" /></div>
+					<div class="flex items-center justify-between gap-2 py-0.5 pl-3 pr-1"><code class="min-w-0 overflow-x-auto whitespace-nowrap"><span class="mr-2 text-brand">$</span>vukem new myapp</code><CopyButton client:visible text="vukem new myapp" /></div>
+					<div class="flex items-center justify-between gap-2 py-0.5 pl-3 pr-1"><code class="min-w-0 overflow-x-auto whitespace-nowrap"><span class="mr-2 text-brand">$</span>vukem new shop --example finance --seed</code><CopyButton client:visible text="vukem new shop --example finance --seed" /></div>
+				</div>
+				<div class="mt-2 flex flex-wrap items-center gap-2">
+					<a href="/docs/quick-start" class="inline-flex min-h-9 items-center gap-2 rounded-lg bg-fg px-4 py-1.5 text-sm font-semibold text-bg transition hover:opacity-80">Read the quick start <span aria-hidden="true">→</span></a>
+					<button type="button" data-film-open class="inline-flex min-h-9 items-center gap-2 rounded-lg border border-border-strong bg-bg px-4 py-1.5 text-sm font-semibold text-fg transition hover:bg-hover">Watch the film <span aria-hidden="true">▶</span></button>
+				</div>
+			</div>
+			<div class="gopher gopher-anim h-[clamp(5rem,22vh,13rem)] aspect-[200/230] drop-shadow-[0_14px_18px_rgba(0,100,140,.18)] max-md:h-24" set:html={gopher} aria-hidden="true" />
+		</section>
 
-    <div class="border-y border-border bg-subtle"><div class="mx-auto flex max-w-[90rem] flex-wrap items-center justify-between gap-4 px-5 py-5 text-[.7rem] font-medium uppercase tracking-[.18em] text-faint sm:px-8 lg:px-16"><span>Built on Go</span><span>Web apps</span><span>JSON APIs</span><span>Real starters</span><span>Your frontend</span></div></div>
+		<section data-feature-tabs class="mx-auto flex w-full min-h-0 max-w-[90rem] flex-1 flex-col gap-2" aria-label="Framework features">
+			<div role="tablist" aria-label="Framework features" class="tablist -mx-5 flex shrink-0 snap-x snap-proximity gap-2 overflow-x-auto px-5 pb-1 md:mx-0 md:px-0">
+				{tabs.map((tab, i) => (
+					<button type="button" role="tab" id={`tab-${tab.id}`} aria-selected={i === 0 ? "true" : "false"} aria-controls={`panel-${tab.id}`} tabindex={i === 0 ? 0 : -1} class="shrink-0 snap-start rounded-full border border-border-strong px-4 py-1.5 text-sm font-medium text-muted transition-colors hover:text-fg aria-selected:border-fg aria-selected:bg-fg aria-selected:text-bg">{tab.label}</button>
+				))}
+			</div>
+			<div class="tab-panels min-h-0 flex-1">
+				{tabs.map((tab, i) => (
+					<div role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} tabindex="0" hidden={i !== 0} data-source={tab.source} class="grid h-full min-h-0 gap-4 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] md:gap-8">
+						<div class="landing-code min-h-0 overflow-auto rounded-xl border border-border-strong bg-code-bg" set:html={highlighted[i]} />
+						<div class="min-h-0 md:self-center">
+							<h2 class="text-lg font-semibold leading-snug tracking-[-.03em]">{tab.title}</h2>
+							<p class="mt-1 text-sm leading-6 text-muted">{tab.text}</p>
+							<ul class="mt-2 space-y-1 text-sm text-fg">
+								{tab.points.map((point) => <li class="flex gap-2"><span aria-hidden="true" class="text-brand">✓</span>{point}</li>)}
+							</ul>
+						</div>
+					</div>
+				))}
+			</div>
+		</section>
 
-    <section class="mx-auto max-w-[90rem] px-5 py-20 sm:px-8 lg:px-16 lg:py-28">
-      <div class="mb-11 max-w-[42rem]"><p class="mb-4 text-xs font-semibold uppercase tracking-[.2em] text-brand">From idea to running app</p><h2 class="text-[clamp(2.4rem,4.5vw,4rem)] font-semibold leading-[1.05] tracking-[-.06em]">Everything in place.<br />Room to make it yours.</h2><p class="mt-5 text-[.98rem] leading-7 text-muted">Vukem gives you a useful starting point and stays close to the Go you already know.</p></div>
-      <div class="grid gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-3">
-        {features.map((feature) => <article class="bg-bg p-7 sm:p-9"><span class="font-mono text-xs text-brand">/{feature.number}</span><h3 class="mt-9 text-xl font-semibold tracking-[-.035em]">{feature.title}</h3><p class="mt-3 text-sm leading-7 text-muted">{feature.description}</p></article>)}
-      </div>
-      <div class="mt-12 flex flex-wrap items-center justify-between gap-5 rounded-xl border border-border bg-subtle px-7 py-8 sm:px-9"><div><h2 class="text-xl font-semibold tracking-[-.035em]">Ready to make something?</h2><p class="mt-1 text-sm text-muted">The quick start takes you from installation to a running app. <a href="https://github.com/AlexGalhardo/vukem/issues/new/choose" class="underline decoration-border-strong underline-offset-2 hover:text-fg">Report a bug</a> or read the <a href="https://github.com/AlexGalhardo/vukem/blob/main/.github/CONTRIBUTING.md" class="underline decoration-border-strong underline-offset-2 hover:text-fg">contribution guide</a> before you send a change.</p></div><a href="/docs/quick-start" class="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-85">Read the quick start <span aria-hidden="true">↗</span></a></div>
-    </section>
-  </main>
-  <footer class="border-t border-border"><div class="mx-auto flex max-w-[90rem] flex-wrap items-center justify-between gap-3 px-5 py-8 text-xs text-faint sm:px-8 lg:px-16"><span>© {new Date().getFullYear()} Vukem</span><div class="flex gap-5"><a href="/docs/quick-start" class="hover:text-fg">Install</a><a href="https://github.com/AlexGalhardo/vukem/issues/new/choose" class="hover:text-fg">Report a bug</a><a href="https://github.com/AlexGalhardo/vukem/blob/main/.github/CONTRIBUTING.md" class="hover:text-fg">Contribute</a><a href="/docs/introduction" class="hover:text-fg">Documentation</a><a href="/changelog" class="hover:text-fg">Changelog</a><a href="https://github.com/AlexGalhardo/vukem" target="_blank" rel="noreferrer" class="hover:text-fg">GitHub</a></div></div></footer>
+		<footer class="mx-auto flex w-full max-w-[90rem] shrink-0 flex-wrap items-center justify-between gap-x-5 gap-y-1 text-[.7rem] text-faint">
+			<span>© {new Date().getFullYear()} Vukem. Go Gopher by Renee French, <a href="https://creativecommons.org/licenses/by/4.0/" class="underline underline-offset-2 hover:text-fg">CC BY 4.0</a>.</span>
+			<nav class="flex gap-4" aria-label="Footer"><a href="/docs/introduction" class="hover:text-fg">Documentation</a><a href="/changelog" class="hover:text-fg">Changelog</a><a href="https://github.com/AlexGalhardo/vukem/issues/new/choose" class="hover:text-fg">Report a bug</a><a href="https://github.com/AlexGalhardo/vukem/blob/main/.github/CONTRIBUTING.md" class="hover:text-fg">Contribute</a><a href="https://github.com/AlexGalhardo/vukem" target="_blank" rel="noreferrer" class="hover:text-fg">GitHub</a></nav>
+		</footer>
+	</main>
+
+	<dialog id="film" closedby="any" aria-label="Vukem launch film" class="m-auto w-[min(60rem,92vw)] rounded-xl border border-border-strong bg-bg p-0 text-fg backdrop:bg-black/70">
+		<form method="dialog" class="flex justify-end p-2"><button class="rounded-md px-3 py-1 text-sm text-muted hover:bg-hover hover:text-fg">Close</button></form>
+		<video id="film-video" controls playsinline preload="none" class="block aspect-video w-full bg-black"></video>
+	</dialog>
 </Base>
+
+<style is:global>
+	/* The code panel replaces the docs block's own spacing so every tab fits the viewport. */
+	.landing-code .shiki {
+		padding: 0.75rem 1rem;
+		font-size: 0.75rem;
+		line-height: 1.55;
+	}
+
+	body:has(dialog[open]) {
+		overflow: hidden;
+	}
+
+	.tab-panels {
+		view-transition-name: landing-panels;
+	}
+</style>
+
+<script>
+	const root = document.querySelector<HTMLElement>("[data-feature-tabs]");
+	if (root) {
+		const tabs = [...root.querySelectorAll<HTMLElement>("[role=tab]")];
+		const panels = [...root.querySelectorAll<HTMLElement>("[role=tabpanel]")];
+		const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+
+		const select = (tab: HTMLElement) => {
+			const apply = () => {
+				tabs.forEach((t, i) => {
+					const on = t === tab;
+					t.setAttribute("aria-selected", String(on));
+					t.tabIndex = on ? 0 : -1;
+					panels[i].hidden = !on;
+				});
+			};
+			if (typeof document.startViewTransition === "function" && !reduced.matches) document.startViewTransition(apply);
+			else apply();
+			tab.focus();
+			tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+		};
+
+		tabs.forEach((tab) => tab.addEventListener("click", () => select(tab)));
+		root.querySelector("[role=tablist]")?.addEventListener("keydown", (event) => {
+			const key = (event as KeyboardEvent).key;
+			const i = tabs.indexOf(document.activeElement as HTMLElement);
+			if (i < 0) return;
+			const next = { ArrowRight: (i + 1) % tabs.length, ArrowLeft: (i - 1 + tabs.length) % tabs.length, Home: 0, End: tabs.length - 1 }[key];
+			if (next === undefined) return;
+			event.preventDefault();
+			select(tabs[next]);
+		});
+	}
+
+	const dialog = document.querySelector<HTMLDialogElement>("#film");
+	const video = document.querySelector<HTMLVideoElement>("#film-video");
+	document.querySelector("[data-film-open]")?.addEventListener("click", () => {
+		if (!dialog || !video) return;
+		// The film is fetched only now: it stays out of the page load.
+		if (!video.src) {
+			video.poster = "/media/vukem-launch-poster.jpg";
+			video.src = "/media/vukem-launch-horizontal.mp4";
+			const track = document.createElement("track");
+			Object.assign(track, { kind: "captions", src: "/media/vukem-launch.vtt", srclang: "en", label: "English on-screen text" });
+			video.append(track);
+		}
+		dialog.showModal();
+	});
+	dialog?.addEventListener("close", () => video?.pause());
+</script>

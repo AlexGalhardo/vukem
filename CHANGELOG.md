@@ -15,8 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **site:** Rebuild the landing: copyable install commands in the hero (with the Finance scaffold), feature tabs with real Go samples that switch in place through the View Transitions API, and a native dialog for the launch film. No vertical scroll from 768px wide; below that the tabs become a swipeable chip row.
+- **site:** Use one animated Go Gopher SVG (`site/src/assets/gopher.svg`) for the logo and the landing, with credit to Renee French (CC BY 4.0). The animation respects `prefers-reduced-motion`.
 - **site:** Move the landing background sphere into the open left side. The code panel on the right was covering it.
 - **site:** Simplify the landing. Drop the eyebrow, the sample command, the edition line and the footer. The subtitle names web applications and APIs, and the feature panel shows larger examples from the docs.
+
+### Removed
+
+- **site:** Remove the Three.js scene and the `three` dependency.
 
 ### Fixed
 
