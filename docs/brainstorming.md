@@ -22,7 +22,7 @@ Status legend: ✅ decided · ⏳ open
 | --- | --- | --- | --- | --- |
 | P1 | Go version | **1.27 minimum** (`go 1.27.0`) | 1.26 | Generic methods make the query builder ergonomic (`Query[T].Pluck[V]`); by 1.0, 1.28/1.29 will exist |
 | P2 | Repo layout | **Monorepo: core module + one module per heavy driver** (`drivers/postgres`, `drivers/redis`, `drivers/mongo`) | single module | `go get` of core never pulls pgx/redis/mongo; precedents: aws-sdk-go-v2, otel-go, gofiber/storage |
-| P3 | Versioning | **v0.x until 1.0**; BETA ships `v1.0.0-beta.N` → `-rc.N` → `v1.0.0`. Never move a tag; use `retract` | pre-releases from day one | Go modules: v0 has no compat promise; v2+ needs `/v2` path, so v1 must be durable |
+| P3 | Versioning | **v0.x until 1.0**; BETA ships `v0.N.0` per group and then `v1.0.0` directly, with no release candidates (Q14). Never move a tag; use `retract` | pre-releases from day one | Go modules: v0 has no compat promise; v2+ needs `/v2` path, so v1 must be durable |
 | P5 | Platforms | **Windows 11/10 first-class** alongside Linux and macOS; no cgo by default; Windows rules in [architecture.md](architecture.md#platform-support) | Unix-first with best-effort Windows | Maintainer requirement (2026-10-16) |
 | P4 | Git flow | **Trunk-based + squash merge**; PR title = Conventional Commit; initial scaffolding committed straight to `main` | direct commits forever | Clean linear history feeds git-cliff |
 
@@ -129,7 +129,7 @@ blog/
 | --- | --- | --- |
 | Prototype | v0.1.x | JSON binding/responses + problem+json, router, config/env, App+providers, CLI (`new`, `serve`, `make:controller/model/migration`), ORM core + migrations on SQLite, validation, sessions + flash, CSRF, `html/template` + HTMX helpers, error handler, test client, health `/up`, graceful shutdown |
 | ALPHA | v0.2–v0.x | API starter (`new --api`, `install:api`, resources, query conventions, pagination envelopes, CORS), full auth (session + token guards, `install:auth`), gates/policies, relations, factories/seeders, mail, cache, storage (`os.Root`), events, Postgres driver |
-| BETA | v1.0.0-beta.N → rc.N | OpenAPI 3.1 generation, idempotency keys, queue (sync/database/redis), scheduler, Inertia v3 + React starter, Vite, Redis and Mongo drivers, i18n, SSE, encryption with key rotation, rate limiting; plus (maintainer requirement, 2026-10-16): GraphQL, WebSockets/broadcasting, embedded admin panel, local dev dashboard, JWT guard, TOTP 2FA, Apple/LinkedIn/X social providers, S3 storage driver, MySQL dialect, Vue/Svelte Inertia starters, templ-first starter, typed RPC client generation, Stripe payments, advanced file uploads, Scalar API docs, gRPC (connect-go) |
+| BETA | v0.N.0 per group, then v1.0.0 | OpenAPI 3.1 generation, idempotency keys, queue (sync/database/redis), scheduler, Inertia v3 + React starter, Vite, Redis and Mongo drivers, i18n, SSE, encryption with key rotation, rate limiting; plus (maintainer requirement, 2026-10-16): GraphQL, WebSockets/broadcasting, embedded admin panel, local dev dashboard, JWT guard, TOTP 2FA, Apple/LinkedIn/X social providers, S3 storage driver, MySQL dialect, Vue/Svelte Inertia starters, templ-first starter, typed RPC client generation, Stripe payments, advanced file uploads, Scalar API docs, gRPC (connect-go) |
 | 1.0 Stable | v1.0.0 | API freeze, docs complete, stability policy, LTS line |
 | Post-1.0 | v1.x | Whatever the 1.0 users ask for; nothing scheduled |
 
