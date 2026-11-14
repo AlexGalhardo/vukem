@@ -14,8 +14,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime/debug"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"time"
 
