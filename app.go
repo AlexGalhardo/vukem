@@ -273,6 +273,9 @@ type App struct {
 	tlsConfig *tls.Config
 	noHTTP    bool
 
+	// keyOptional is WithKeyOptional: DeriveKey names the option in its error.
+	keyOptional bool
+
 	// bootRoutes run at the end of Boot (WithRoutesAfterBoot).
 	bootRoutes []func(r *router.Router, app *App) error
 
@@ -464,6 +467,7 @@ type options struct {
 	ready          chan<- string
 	noHTTP         bool
 	devtools       bool
+	keyOptional    bool
 	telegram       []func(*telegram.Config)
 	flags          []flags.AnyFlag
 }
@@ -542,28 +546,29 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	app := &App{
-		Config:    cfg,
-		Source:    src,
-		Key:       key,
-		Crypt:     enc,
-		previous:  previous,
-		Log:       logger,
-		Kind:      o.kind,
-		Version:   o.version,
-		fuzzAuth:  o.fuzzAuth,
-		providers: o.providers,
-		runners:   o.runners,
-		stdout:    cmp.Or(o.stdout, io.Writer(os.Stdout)),
-		stderr:    cmp.Or(o.stderr, io.Writer(os.Stderr)),
-		stdin:     cmp.Or(o.stdin, io.Reader(os.Stdin)),
-		ready:     o.ready,
-		tlsConfig: o.tlsConfig,
-		noHTTP:    o.noHTTP,
-		drivers:   o.drivers,
-		queryObs:  o.queryObs,
-		modelList: o.modelList,
-		now:       now,
-		proxies:   proxies,
+		Config:      cfg,
+		Source:      src,
+		Key:         key,
+		Crypt:       enc,
+		previous:    previous,
+		Log:         logger,
+		Kind:        o.kind,
+		Version:     o.version,
+		fuzzAuth:    o.fuzzAuth,
+		providers:   o.providers,
+		runners:     o.runners,
+		stdout:      cmp.Or(o.stdout, io.Writer(os.Stdout)),
+		stderr:      cmp.Or(o.stderr, io.Writer(os.Stderr)),
+		stdin:       cmp.Or(o.stdin, io.Reader(os.Stdin)),
+		ready:       o.ready,
+		tlsConfig:   o.tlsConfig,
+		noHTTP:      o.noHTTP,
+		keyOptional: o.keyOptional,
+		drivers:     o.drivers,
+		queryObs:    o.queryObs,
+		modelList:   o.modelList,
+		now:         now,
+		proxies:     proxies,
 
 		migrations:     o.migrations,
 		seeders:        o.seeders,
@@ -585,7 +590,7 @@ func New(opts ...Option) (*App, error) {
 		mail:            mailState{transport: o.mailTransport},
 		flagDefs:        o.flags,
 	}
-	if key.IsZero() && cfg.Env == config.Development {
+	if key.IsZero() && cfg.Env == config.Development && !o.keyOptional {
 		app.Log.Warn("APP_KEY is not set: sessions, encryption and signed URLs fail until you run `vukem key:generate`",
 			"env", string(cfg.Env))
 	}
@@ -961,6 +966,14 @@ func (a *App) Stdin() io.Reader { return a.stdin }
 // booted without APP_KEY, so a key-derived feature fails closed.
 func (a *App) DeriveKey(purpose string, n int) ([]byte, error) {
 	if a.Key.IsZero() {
+		if a.keyOptional {
+			return nil, fmt.Errorf(
+				"vukem: %s: %w (the app was built with WithKeyOptional; set APP_KEY to use this feature)",
+				purpose,
+				config.ErrKeyMissing,
+			)
+		}
+
 		return nil, fmt.Errorf("vukem: %s: %w", purpose, config.ErrKeyMissing)
 	}
 
