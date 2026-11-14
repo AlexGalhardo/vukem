@@ -20,6 +20,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/loadtest"
@@ -1533,5 +1535,39 @@ func TestHiddenCommands(t *testing.T) {
 
 	if !found {
 		t.Error("App.Commands() lacks the hidden route:list")
+	}
+}
+
+type rawArgsTestCommand struct{ got *[]string }
+
+func (rawArgsTestCommand) Name() string        { return "test:raw" }
+func (rawArgsTestCommand) Description() string { return "raw args" }
+func (rawArgsTestCommand) Flags(fs *flag.FlagSet) {
+	fs.Bool("v", false, "never parsed")
+}
+func (rawArgsTestCommand) RawArgs() {}
+func (c rawArgsTestCommand) Run(_ context.Context, _ *App, args []string) error {
+	*c.got = args
+
+	return nil
+}
+
+func TestRawArgsCommand(t *testing.T) {
+	t.Parallel()
+
+	var got []string
+
+	app := newTestApp(t, WithProviders(ProviderFunc(func(app *App) error {
+		app.AddCommand(rawArgsTestCommand{&got})
+		return nil
+	})))
+
+	want := []string{"-v", "--unknown", "-h", "x"}
+	if err := runCommand(t.Context(), app, "test:raw", want); err != nil {
+		t.Fatalf("runCommand = %v, want nil: no flag is parsed", err)
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Run args mismatch (-want +got):\n%s", diff)
 	}
 }

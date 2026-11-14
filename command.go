@@ -71,9 +71,15 @@ var ErrUsage = errors.New("usage error")
 
 var errUsage = ErrUsage
 
-// rawArgsCommand is a built-in command that parses its own arguments
-// (db:seed: the seeder flags depend on the seeders its names pick).
-type rawArgsCommand interface{ rawArgs() }
+// RawArgsCommand is a [Command] that parses its own arguments: the framework
+// skips its flag parser and every argument reaches Run as is, flags included
+// (nothing is parsed, so "-h" and unknown flags are not intercepted). Use it for a command
+// that forwards its arguments or whose flags depend on its positional values
+// (db:seed does). RawArgs only marks the command and is never called.
+type RawArgsCommand interface {
+	Command
+	RawArgs()
+}
 
 // AddCommand registers commands. Call it from a provider's Register.
 func (a *App) AddCommand(cmds ...Command) {
@@ -156,7 +162,7 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 	fset.SetOutput(&flagOut)
 	cmd.Flags(fset)
 
-	if _, raw := cmd.(rawArgsCommand); raw {
+	if _, raw := cmd.(RawArgsCommand); raw {
 		// "--" ends flag parsing, so every argument reaches Run as is.
 		args = append([]string{"--"}, args...)
 	}
