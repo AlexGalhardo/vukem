@@ -273,14 +273,14 @@ func (r Rules) normalized() (Rules, error) {
 
 // match checks the detected type and the client's extension against the
 // rules and returns the type and the extension to store the file with.
-func (r Rules) match(field, name string, head []byte) (string, string, error) {
+func (r Rules) match(field, name string, head []byte) (contentType, storedExt string, err error) {
 	typ := mediaType(http.DetectContentType(head))
 	ext := strings.ToLower(path.Ext(name))
 
 	return r.matchType(field, typ, ext)
 }
 
-func (r Rules) matchType(field, typ, ext string) (string, string, error) {
+func (r Rules) matchType(field, typ, ext string) (contentType, storedExt string, err error) {
 	if !slices.Contains(r.Types, typ) {
 		return "", "", errs.NewValidation().Add(field, "This file type is not allowed.")
 	}
