@@ -112,11 +112,12 @@ func releaseNotes(changelog, version string) string {
 	}
 
 	rest := changelog[start:]
-	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
-		rest = rest[nl+1:]
-	} else {
+	nl := strings.IndexByte(rest, '\n')
+	if nl < 0 {
 		return ""
 	}
+
+	rest = rest[nl+1:]
 
 	end := len(rest)
 	if i := strings.Index(rest, "\n## ["); i >= 0 {
