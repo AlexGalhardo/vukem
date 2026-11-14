@@ -7,70 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-11-14
+
 ### Added
 
-- **auth:** Export `auth.ErrInvalidToken`, returned by `Tokens.Find` for a malformed, unknown, wrong, expired or revoked token, so an app can answer 401 for it and 503 for a failing store without matching the error text.
-- **vukemtest:** Add `App.Logs()` to assert on the log output of the test app.
-- **view:** Add `Engine.RenderBlocks(ctx, w, name, data, blocks...)` to render several blocks (such as out-of-band htmx slices) of a page with one template clone.
-- **cli:** Add `vukem.MainWith(build, opts...)`, `Main` with `Option`s such as `WithVersion` and `WithReady`, so a `main` no longer needs `RunMain` for them. With `PORT=0` the server now logs `http server listening` with the bound address.
-- **web:** Add `MiddlewareOptions.MaxBody` to set the router-wide request body limit (default 10 MiB). A `UseServer(middleware.BodyLimit(n))` is replaced by the router default on routes (innermost limit wins); the order is now documented.
-- **ci:** Upload the Ubuntu coverage profile to [Codecov](https://app.codecov.io/gh/AlexGalhardo/vukem).
-- **cli:** Refactor the generated personal-finance SaaS: green viewport landing, shadcn/ui sidebar, transaction modals, light/dark theme, English/pt-BR/es, Google sign-in, idempotent local admin and demo seeds, `vukem new --example finance --seed`, and generated Docker setup.
-
-- **cli:** Add `vukem new --prebuilt` and a terminal prompt (*Develop locally (full source)* or *Run ready-made in Docker*): a folder with only `compose.yaml`, `.env` and `README.md` that runs the published example image. It is a usage error with `--example none`, `--no-example`, `--minimal`, `--seed`, `--docker` and the stack, package-manager and standards flags.
-- **ci:** Publish `vukem-example-todo` and `vukem-example-finance` images next to `vukem`, to GHCR and Docker Hub with `X.Y.Z`, `X.Y` and `latest` tags, cosign signatures and attestations. Each image passes an HTTP 200 smoke test before it is pushed.
+- **site:** Add animated viewport landing with launch trailer ([22897f9](https://github.com/AlexGalhardo/vukem/commit/22897f97b24a30e290102e002b776b63f0872b03))
+- **site:** Show framework code instead of the trailer ([8700518](https://github.com/AlexGalhardo/vukem/commit/87005183da21c828f93b1de5a15ffc874d8023d9))
+- **cli:** Generate the finance scaffold UI ([7aa134f](https://github.com/AlexGalhardo/vukem/commit/7aa134f29f81d802e979c4d623de81fa3f459a94))
+- **cli:** Let the finance example skip email verification ([b0ef654](https://github.com/AlexGalhardo/vukem/commit/b0ef6546aef55b45ecfab69897cc1b4bc5516114))
+- **site:** Add a homepage at the docs root ([e8360ae](https://github.com/AlexGalhardo/vukem/commit/e8360ae3cf431df6fb1330c0526e04be8128058f))
+- **site:** Rebuild the landing with install commands, feature tabs and film dialog ([32b8f72](https://github.com/AlexGalhardo/vukem/commit/32b8f72fdd7db38a8bfe84de896b940924adc2c9))
+- **site:** Static larger gopher, docs code blocks in tabs, drop the launch film ([0d9fb13](https://github.com/AlexGalhardo/vukem/commit/0d9fb1391f86824f3c4cc197761f52fc2e86d0bf))
+- **site:** MacOS terminal install block and code examples in the right column ([c523510](https://github.com/AlexGalhardo/vukem/commit/c5235105553988511ed2fe1bb10bd2e6c8a176bd))
+- **cli:** Add vukem new --prebuilt to run the example images ([515fca4](https://github.com/AlexGalhardo/vukem/commit/515fca40ccdcc3e485228594375ff67e12b3ba67))
+- **site:** Add the landing feature samples and tooltip text helper ([99a30d3](https://github.com/AlexGalhardo/vukem/commit/99a30d33ed4e1ff0dd679f90169d547215992e2f))
+- **site:** Fixed-height scrolling code and tooltips on the landing ([e29e1ae](https://github.com/AlexGalhardo/vukem/commit/e29e1aeb0aa8052536125ad62d9e82076235d4e1))
+- **web:** Add MiddlewareOptions.MaxBody and document the body limit order ([e70a956](https://github.com/AlexGalhardo/vukem/commit/e70a95670bfa9f9868d0156c81a93128fa4c575a))
+- **cli:** Add MainWith and log the bound address when PORT=0 ([1826e75](https://github.com/AlexGalhardo/vukem/commit/1826e75c5ac48d3b73f7952e9d216230b2fffc15))
+- **view:** Add Engine.RenderBlocks to render several blocks with one clone ([311f3ee](https://github.com/AlexGalhardo/vukem/commit/311f3ee03c9188cd0dd8d05c1790dfd8668d6285))
+- **vukemtest:** Expose the test app log with App.Logs ([bbccc76](https://github.com/AlexGalhardo/vukem/commit/bbccc76c5b370f1de0d7df004169eb366f7e40bb))
+- **auth:** Export ErrInvalidToken so apps can split 401 from store failures ([0851ac4](https://github.com/AlexGalhardo/vukem/commit/0851ac49b91fbb8a8c24da1fce51b78f2261e55d))
+- **engine:** Report when Run captured output was truncated ([faffef0](https://github.com/AlexGalhardo/vukem/commit/faffef0bdac6d19f76895464408998cb05e7fa4d))
+- **engine:** Run the version probe in its own directory ([79c1027](https://github.com/AlexGalhardo/vukem/commit/79c1027d33aa231cde966514004be3dc6bc171a7))
+- **engine:** Add Config.Prepare to configure the child command ([1ec896c](https://github.com/AlexGalhardo/vukem/commit/1ec896ce1e947f47ebfb1182e3cca81e0a4e13d3))
+- **auth:** Add Tokens.CreateWithID for caller-chosen token ids ([4f20511](https://github.com/AlexGalhardo/vukem/commit/4f2051136890ca8fc84511d3852857133c55f682))
+- **ratelimit:** Add MiddlewareWith and Options.OnLimit for the 429 body ([268f9c8](https://github.com/AlexGalhardo/vukem/commit/268f9c8b0f30b5525ad2c9d192e6bee0e86c06cc))
+- **queue:** Add WithQueueWork to set the serve worker in code ([7652d97](https://github.com/AlexGalhardo/vukem/commit/7652d97d7c655ebc9f28dc636811014bc570386c))
+- **schema:** Add Index.Name, Column.References and sse.Buffer ([3393e83](https://github.com/AlexGalhardo/vukem/commit/3393e83433f860ad52dd3b4fd93de2692b10cb9d))
+- **site:** Highlight protobuf code ([fb4c470](https://github.com/AlexGalhardo/vukem/commit/fb4c4702337e83f73d53afb831dd98f57604f919))
+- **site:** Widen the landing code column to 3/5 and label example groups ([0a15346](https://github.com/AlexGalhardo/vukem/commit/0a15346c628e66cf8f9ac26e3e396042b86a07fc))
+- **site:** Add htmx 4 and Inertia React to the Views tab and an API tab ([09b5248](https://github.com/AlexGalhardo/vukem/commit/09b5248d24f3a1adbf301e7d32ea21decb006461))
+- **cli:** Let a command skip the app Boot with NoBootCommand ([b34b60c](https://github.com/AlexGalhardo/vukem/commit/b34b60c8142a3f4d016a527eee5d9a0a5b96d186))
+- **cli:** Add WithDefaultCommand to change the no-argument command ([168e039](https://github.com/AlexGalhardo/vukem/commit/168e0396760f7927187c842bea8473ae0b2fd46a))
+- **cli:** Add WithHiddenCommands to leave commands out of list ([3bda345](https://github.com/AlexGalhardo/vukem/commit/3bda345c45b53ed2b5fd5aca343288950c219d4d))
+- **cli:** Export RawArgsCommand for commands that parse their own args ([80f0406](https://github.com/AlexGalhardo/vukem/commit/80f04065783c6e17841c8134dd049af0a338a3ae))
+- **engine:** Add RunStreams to deliver stderr while the tool runs ([f015b79](https://github.com/AlexGalhardo/vukem/commit/f015b79f74efda7ca06b7f1101d871e75bea0904))
+- **sse:** Add HeartbeatEvent and WriteTimeout options to Serve ([645ce59](https://github.com/AlexGalhardo/vukem/commit/645ce596275d09efc717d9c186def565dfa2c56f))
+- **errs:** Let an app opt a 5xx into extension members and document them ([d626000](https://github.com/AlexGalhardo/vukem/commit/d626000ce4fc245e2f5b4535afb98c6c26dca624))
+- **openapi:** Describe a z.DiscriminatedUnion nested in a slice ([d93cc15](https://github.com/AlexGalhardo/vukem/commit/d93cc15ba80072739c216fb2e0d483671ee79b2f))
+- **site:** Use the gopher as the favicon ([7b387e7](https://github.com/AlexGalhardo/vukem/commit/7b387e71f0ccbf494113c0d0644976d5a1682c9c))
+- **queue:** Add job progress, DispatchID and Cancel for running jobs ([1fbe3d0](https://github.com/AlexGalhardo/vukem/commit/1fbe3d0e2bea2e6160830e7de85af5ef312578ad))
+- **engine:** Apply resource limits on Windows with a Job Object ([d27ead8](https://github.com/AlexGalhardo/vukem/commit/d27ead879529e6556cb16f78c5469dc023a5b1b9))
+- **engine:** Feed a per-run standard input to the tool ([a234a6d](https://github.com/AlexGalhardo/vukem/commit/a234a6d1e8476eff1f82d9295dbc3cda45682e0f))
 
 ### Changed
 
-- **lint:** Enable the `revive` style rules of the Google Go Style Guide (`indent-error-flow`, `superfluous-else`, `early-return`, `if-return`, `import-shadowing`, `dot-imports`, `blank-imports`, `error-naming`, `time-naming`, `redefines-builtin-id`, `increment-decrement`, `var-declaration`, `range`, `errorf`, `empty-block`, `unreachable-code`, `unexported-naming`, `unnecessary-stmt`, `identical-branches`, `confusing-results`); `struct-tag` and `modifies-value-receiver` stay off for the `validate` tags and the immutable `orm.Query` builders.
-- **z, auth, upload, logging, contrib, drivers:** Name the results of functions that return several values of the same type (no signature or behavior change).
-- **vukem:** The parameter of `Command.Flags` is now `flags`, so it no longer shadows `io/fs` (no API change).
-- **site:** Add a "Go style (Google Go Style Guide)" section to the best-practices page: the rules Vukem follows, what the linter enforces, and the documented exceptions.
-- **site:** Use the Go Gopher (cropped to the head) as the vukem.dev favicon.
-- **cli:** The README of a `vukem new --prebuilt` project generated by a development CLI now says that its `compose.yaml` runs the moving `latest` image and must be pinned to a release. (No stable tag can stand in: example images are published from the next release on.)
-- **config:** Document how a stateless or standalone app boots in production without a persistent `APP_KEY` (an ephemeral key per process); the key requirement stays fail-closed (docs/security.md).
-- **site:** Rebuild the landing: copyable install commands in the hero (with the Finance scaffold) and feature tabs with real Go samples, in the docs code block with its copy button, that switch in place through the View Transitions API. No vertical scroll from 768px wide; below that the tabs become a swipeable chip row.
-- **site:** Restyle the landing install commands as a macOS terminal window (title bar, traffic lights, `$` prompt) and move the feature examples to the right column with their explanation under the code. The landing mascot is gone; the Gopher stays in the header logo, with its credit.
-- **site:** Expand the landing. The feature tabs go from 6 to 13 (adds Validation, Views, Mail, Cache, Realtime, Testing and Docker) with end-to-end samples (imports, model, handler and route) taken from the docs and the blog example. The code block has a fixed height and scrolls inside (thin scrollbar, keyboard focus ring); the page still does not scroll from 768px wide. The left column gains a short pitch and four highlights, and terms in both columns have tooltips that open on hover and keyboard focus, are linked with `aria-describedby` and close with Esc.
-- **site:** Use one static Go Gopher SVG (`site/src/assets/gopher.svg`) for the logo and the landing, with credit to Renee French (CC BY 4.0).
-- **site:** Landing v3. The Views tab now also shows an htmx 4 example (vendored htmx 4.0.1, `htmx.Partial` and `htmx.OOB`) and an Inertia + React example (controller, `useForm` page). A new API tab shows REST (JSON routes, validation, problem+json), GraphQL (`contrib/graphql`) and gRPC (`contrib/grpc`), with a heading above each example. The right column is 3/5 of the width from 1024px wide, and the highlights hide on short screens so the page still does not scroll.
-- **site:** Move the landing background sphere into the open left side. The code panel on the right was covering it.
-- **site:** Simplify the landing. Drop the eyebrow, the sample command, the edition line and the footer. The subtitle names web applications and APIs, and the feature panel shows larger examples from the docs.
+- **site:** Use one animated gopher svg for the logo and landing ([33f1a63](https://github.com/AlexGalhardo/vukem/commit/33f1a6393e3ab27089cd97a530c86b1bd92c2806))
+- **cli:** Split the prebuilt branches out of runNewProject ([a7aa2d1](https://github.com/AlexGalhardo/vukem/commit/a7aa2d1ba467d3c041dfdd82817d21a75d99be96))
+- **z:** Name the results of parseAny and its helpers ([7959d25](https://github.com/AlexGalhardo/vukem/commit/7959d254233b0176406ff733f0c6dc6999b1fc0e))
+- **auth/hash:** Name the results of parseArgon ([9eab356](https://github.com/AlexGalhardo/vukem/commit/9eab3566d0d725ca08d1ae1fdab2ee9c86f4989f))
+- **upload:** Name the results of match and matchType ([e0173fe](https://github.com/AlexGalhardo/vukem/commit/e0173fe6c06872ff98be2277f7416cf662ff6391))
+- **logging/telegram:** Name the results of label ([46202b4](https://github.com/AlexGalhardo/vukem/commit/46202b4d251f64dbe2dd14f953b10c678db5804d))
+- **internal:** Name same-typed results in tools and test helpers ([8e61d0f](https://github.com/AlexGalhardo/vukem/commit/8e61d0f567b40f9895e267478bafdf5510fff3ff))
+- **vukem:** Rename Command.Flags parameter so it no longer shadows io/fs ([bc94cd0](https://github.com/AlexGalhardo/vukem/commit/bc94cd08c929a5ee0b3df8d1d475a039630ef745))
+- **release:** Return early in releaseNotes ([7031046](https://github.com/AlexGalhardo/vukem/commit/7031046e7a8bf3aab55d3d9c13e058f85b4980c7))
+- **contrib/grpc:** Early-return in WrapStreamingHandler ([61f53fe](https://github.com/AlexGalhardo/vukem/commit/61f53fe71dba9b68c8ba6f3572347da772a0aaca))
+- **contrib:** Name same-typed results in imaging and qrcode ([1aa34c9](https://github.com/AlexGalhardo/vukem/commit/1aa34c95c4bf305de40b662676336d4713b4e269))
+- **drivers/otel:** Name the results of signalValue ([23726a9](https://github.com/AlexGalhardo/vukem/commit/23726a91a7aff6e476b9b6bb69a44e2c00229aec))
 
 ### Removed
 
-- **site:** Remove the Three.js scene, the `three` dependency and the launch film (button, dialog and video) from the landing.
+- **studio:** Drop the Copilot autofix that broke the build ([1ef6c31](https://github.com/AlexGalhardo/vukem/commit/1ef6c3168ccc7a00e7aca199fdb813628f8c0589))
 
 ### Fixed
 
-- **cli:** `vukem new` no longer prompts when stdin is the null device (`< /dev/null`, `NUL`): only a real terminal is asked. The finance app: the docs and setup guide name the package manager it was generated with (`bun`, not `npm`) and how to read the seeded admin password inside Compose; sign-up without email verification flashes "Account created" on the login page; the dashboard layout has one `<main>`; the page has an icon, so `/favicon.ico` is no longer a 404; the workspace currency must be an ISO 4217 code (`ZZZ` is refused); and the Compose comment for PostgreSQL says to `go get` the driver and run `go mod tidy`.
-- **studio:** The start-URL token is now single use (a second request with it gets 401, so a copied URL opens no other browser). JSON Lines export writes numbers and booleans unquoted, the console reports `N rows affected` for a write that returns no rows, `vukem-studio --version` reads the module version from the build info of a `go install` (`v0.0.0-dev` only for a local build), and the refusal for an unset `APP_ENV` says it is unset instead of naming `APP_ENV=production`.
-- **studio:** The SQL grid sorts when a column header is clicked (toggling ascending and descending), has a Previous link next to Next on keyset pages, lists the filter operators on the page and refuses a filter that is not `column:op:value` with a 422 instead of ignoring it. The row page links each foreign key to the referenced row, and a refused write shows what was typed with a link back to the form.
-- **cli:** The finance app asks for confirmation (a dialog, in English, Portuguese and Spanish) before it deletes a transaction, an account or a budget; it used to delete on the first click.
-- **cli:** The finance app hands the CSP nonce to the Radix scroll lock (`__webpack_nonce__`), so opening a dialog no longer logs a `style-src` violation.
-- **cli:** The generated finance app passes `biome lint` on its first commit (type-only imports, `===`, template string, button types, list keys, stable hook dependencies). The few intentional exceptions (a `div` that must stay a `role="group"`, the sidebar cookie, the static CSV preview keys, the Safari list role) carry a `biome-ignore` with the reason.
-- **cli:** The finance app's `/admin` lists users, workspaces and subscriptions (read-only, behind the admin policies; `/admin/users` was a 404) and its screens no longer sit inside the visitor layout, which showed a second header and a "Log in" button to a signed-in admin.
-- **studio:** The row page saves and deletes again. Its form `action` was escaped twice (`?k%3d1`), so every edit or delete answered 422 "the key does not match the primary key"; a handler test now submits the rendered forms.
-- **schema:** Stop `vukem migrate` in production from refusing `DROP CONSTRAINT`, `ALTER COLUMN ... DROP DEFAULT` and `DROP NOT NULL` (and MySQL `DROP INDEX`, `DROP PRIMARY KEY`, `DROP FOREIGN KEY`) as if they were `DROP COLUMN`: they no longer need `--allow-destructive`.
-- **database:** A SQLite URL whose directory does not exist now fails with an error that names the directory, instead of "unable to open database file (14)".
-- **cli:** `app --version` prints the version given by `WithVersion` instead of failing as an unknown command; without `WithVersion` it stays an unknown command.
-- **web:** Add `web.BodyError(r)`: a handler that reads an urlencoded form with `r.FormValue` can now tell an oversized body (`errs.ErrRequestTooLarge`, remembered by `MethodOverride`) from an empty form and answer 413.
-- **ci:** Document the macOS test job that ends `cancelled` when GitHub never assigns a runner (no steps, no log), and that a re-run is the fix (docs/maintenance.md, Known CI issues).
-- **ci:** Keep the Ubuntu test job green when Codecov has not registered the repository. The coverage gate still fails the job. The same OIDC upload succeeds once the Codecov GitHub App includes this repository.
+- **cli:** Preserve empty finance dashboard arrays ([a84cafe](https://github.com/AlexGalhardo/vukem/commit/a84cafe5eb70059b7eb982ea7e667830a4088d38))
+- **cli:** Separate finance workspace page props ([dd39990](https://github.com/AlexGalhardo/vukem/commit/dd399907b5ca225c4151b69c4e58bccbbf33dd22))
+- **cli:** Retain all finance dashboard monthly totals ([c8fadd0](https://github.com/AlexGalhardo/vukem/commit/c8fadd0fe1915b3b4dde65cdeef378cebc23c40b))
+- **site:** Normalize changelog and caption whitespace ([3a7e63b](https://github.com/AlexGalhardo/vukem/commit/3a7e63bd70fc8277a3723ecc263b1b9274039fb6))
+- **site:** Drop the step prefix and speed up the background ([01e66cf](https://github.com/AlexGalhardo/vukem/commit/01e66cf4ae272da14639aaeeda4491997f19c1c3))
+- **site:** Make the docs action orange and name the framework ([5d1da3d](https://github.com/AlexGalhardo/vukem/commit/5d1da3d23ac4ad9bee4ca7eab8934e14ed478f1c))
+- **cli:** Keep the finance scaffold clear of the secret scan ([346bd82](https://github.com/AlexGalhardo/vukem/commit/346bd8206cc399f6a83539fdd6856cf24f2303e1))
+- **cli:** Accept the Windows mode of the finance credential file ([391d0a6](https://github.com/AlexGalhardo/vukem/commit/391d0a6fd37c766d7bcde0dea35098b026dc01da))
+- **cli:** Retarget reviewed finance secret-scan fingerprints ([20cb203](https://github.com/AlexGalhardo/vukem/commit/20cb203bc64325c2c313f1939b8337eedb2b2c0e))
+- **site:** Simplify the landing and enlarge the samples ([da6f4b8](https://github.com/AlexGalhardo/vukem/commit/da6f4b8db82afd2212eb282a47c63ea0efcba3f0))
+- **ci:** Retarget finance secret fingerprints and retry otel downloads ([b4f9340](https://github.com/AlexGalhardo/vukem/commit/b4f9340f87f692095e64f00f1e6b50c1866c4dfd))
+- **site:** Scroll the landing on very short viewports ([f213479](https://github.com/AlexGalhardo/vukem/commit/f213479ea43bd35931ea4235d13766be307a4540))
+- **site:** Move the landing sphere to the left ([3b0eeb4](https://github.com/AlexGalhardo/vukem/commit/3b0eeb4b7d0f5e78899e35333b2653f6a75c7d21))
+- **site:** Show the full install command and fit the example panel to its code ([915d5c1](https://github.com/AlexGalhardo/vukem/commit/915d5c1d58fecb3d9c19d587b964a29a7ff122fd))
+- **schema:** Do not read DROP CONSTRAINT, DROP DEFAULT or DROP NOT NULL as DROP COLUMN ([8359677](https://github.com/AlexGalhardo/vukem/commit/8359677098efd7bd4ab75a86cfa6d0d409a8bb8b))
+- **web:** Expose the remembered body error with web.BodyError ([6c20a4f](https://github.com/AlexGalhardo/vukem/commit/6c20a4f0ddbfcf07ff1c2f1623db419b6681d37f))
+- **cli:** Print the version for --version when WithVersion is set ([779e9ab](https://github.com/AlexGalhardo/vukem/commit/779e9abf57c6c0b8240d05477ac3cdd001db103e))
+- **database:** Name the missing directory when a SQLite file cannot be opened ([5afbbf9](https://github.com/AlexGalhardo/vukem/commit/5afbbf917720066a4f89332534d3e0f92647138b))
+- **release:** Mark only suffixed tags as pre-release ([263a727](https://github.com/AlexGalhardo/vukem/commit/263a7273272115316b3d45079f0fa2d936954f3a))
+- **database:** Let a _pragma in the SQLite URL override the default ([ab83c78](https://github.com/AlexGalhardo/vukem/commit/ab83c78bbc1bcbaf52fad0d25bd096ba5a2ddbb3))
+- **site:** Wrap the install command after slashes, not inside words ([f3575c4](https://github.com/AlexGalhardo/vukem/commit/f3575c4cbc17414272dc0e0c2775f770fabd84a4))
+- **cli:** Print usage errors to stderr and export ErrUsage ([981a0ba](https://github.com/AlexGalhardo/vukem/commit/981a0ba1d75969caafdc7ccc0896e19af9f5a04c))
+- **studio:** Keep the row key unescaped in the save and delete form actions ([5e9e1f8](https://github.com/AlexGalhardo/vukem/commit/5e9e1f8aba80f0889043b60adf1e382229802a72))
+- **cli:** Register users, workspaces and subscriptions in the finance admin ([0f31421](https://github.com/AlexGalhardo/vukem/commit/0f31421fe2b65c91710cc8f8011d33c2ca9f134d))
+- **cli:** Make the generated finance app pass biome lint ([c6e7235](https://github.com/AlexGalhardo/vukem/commit/c6e7235d13883e261a771aee67806575c748d52e))
+- **cli:** Give the finance dialogs' scroll lock the CSP nonce ([ee99067](https://github.com/AlexGalhardo/vukem/commit/ee99067bf6ce0f98f0cdb4d72789fe4e5903cac4))
+- **cli:** Confirm before deleting in the finance app ([f6608c5](https://github.com/AlexGalhardo/vukem/commit/f6608c5076c8df75bf6e0d188a3a5f2a9d3b0509))
+- **studio:** Sortable grid headers, Previous page, filter help and errors that keep the edit ([5fb25df](https://github.com/AlexGalhardo/vukem/commit/5fb25dffd5def0c99fc27c9b3c0458cb808d313e))
+- **cli:** Tell a prebuilt project from a dev CLI that it runs the latest image ([a3846af](https://github.com/AlexGalhardo/vukem/commit/a3846af7ac53e71fd65ce5e165ed6273474a2f3f))
+- **cli:** Finance onboarding docs, layout, favicon, currency and null-device prompts ([cd49e90](https://github.com/AlexGalhardo/vukem/commit/cd49e90ac850da966d456267c5d50e9eb970d60c))
+- **engine:** Start the child suspended so the Job Object applies before it runs ([2556964](https://github.com/AlexGalhardo/vukem/commit/2556964d3d1fa7112631dddcfcfc0dd618bad545))
 
-- **site:** Let a landing viewport that is 360px tall or shorter scroll, so the headline and Read Docs link can both be brought fully into view. Taller screens stay one viewport.
+### Security
 
-- **ci:** Retry the OpenTelemetry module download when the Go proxy drops the HTTP/2 stream, and point the reviewed finance secret-scan fingerprints at the commit that landed on main.
-
-- **cli:** Keep the finance scaffold clear of the secret scan. The admin display name is assigned apart from the password hash, the local sample passwords contain `example`, and password-field labels stay allowlisted.
-
-- **cli:** Accept that Windows does not report the Unix 0600 mode of the generated local admin credential file. Unix still requires 0600.
-
-- **cli:** Preserve every month's finance chart totals by allocating the complete history before indexing it (ST-3).
-
-- **cli:** Keep workspace settings props separate from the shared workspace switcher (ST-2).
-
-- **cli:** Keep empty finance-dashboard chart collections as JSON arrays so a new workspace renders before its first transaction (ST-1).
+- **site:** Pin minimatch 11.0.8 ([e451f90](https://github.com/AlexGalhardo/vukem/commit/e451f9052acc7f4961d5fa3e4e3faace223b5cf5))
+- **deps:** Bump golang.org/x/crypto to v0.59.0 ([1af144c](https://github.com/AlexGalhardo/vukem/commit/1af144c9f4acc11e2faf3ce152ff7af1fdc80f12))
+- **middleware:** Add LoopbackOnly, an exact local-server guard ([16cdad5](https://github.com/AlexGalhardo/vukem/commit/16cdad5a6baf93213f3ec662517fcd1b931a6ae6))
+- **studio:** Spend the start token once and fix export, console and version details ([adb4765](https://github.com/AlexGalhardo/vukem/commit/adb4765a17355af18d490fdd820b3c7ec1089f9f))
 
 ## [0.43.0] - 2026-11-12
 
@@ -1626,7 +1664,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/AlexGalhardo/vukem/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/AlexGalhardo/vukem/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/AlexGalhardo/vukem/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/AlexGalhardo/vukem/compare/v0.40.0...v0.41.0
