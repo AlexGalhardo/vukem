@@ -48,6 +48,10 @@ func prebuiltImage(example, cliVersion string) string {
 	return exampleImageRepo + "-" + example + ":" + tag
 }
 
+// Floating reports whether Image is the moving latest tag, used when this CLI
+// is a development build with no published image of its own.
+func (d prebuiltData) Floating() bool { return strings.HasSuffix(d.Image, ":latest") }
+
 // prebuiltConflict returns the first flag of o that a prebuilt project cannot
 // honor, or "". A prebuilt project has no source: stack, standards and
 // seeding options have nothing to act on.
