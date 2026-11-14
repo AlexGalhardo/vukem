@@ -7,8 +7,8 @@ It has sign-up, password reset and optional two-factor authentication, workspace
 ## Run it
 
 ```sh
-npm install        # once, unless vukem new already did
-npm run build:emails
+{{.PM}} install        # once, unless vukem new already did
+{{.PM}} run build:emails
 vukem migrate
 vukem serve        # http://localhost:3000, with reload
 go test ./...
@@ -42,7 +42,7 @@ Access is granted by webhooks only, never by the page Checkout returns to. The w
 
 Production sends with Resend: set `MAIL_MAILER=resend`, `MAIL_FROM` (a verified domain) and `RESEND_API_KEY`. In the Resend dashboard add a webhook for `email.bounced` and `email.complained` pointing at `https://your-app/webhooks/resend`, and put its signing secret in `RESEND_WEBHOOK_SECRET`: bounced and complaining addresses stop receiving mail.
 
-The templates are React Email components in `resources/js/emails`. Run `npm run build:emails` after you change one: it writes `resources/emails`, which the app embeds and fills with Go values when it sends.
+The templates are React Email components in `resources/js/emails`. Run `{{.PM}} run build:emails` after you change one: it writes `resources/emails`, which the app embeds and fills with Go values when it sends.
 
 ## PostgreSQL
 

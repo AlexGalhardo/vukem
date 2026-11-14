@@ -46,7 +46,9 @@ services:
 
   # The app starts on SQLite, so this service is here to be switched to:
   # uncomment DATABASE_URL in .env, then register the driver in
-  # bootstrap/app.go with vukem.WithDatabaseDrivers(postgres.Driver())
+  # bootstrap/app.go with vukem.WithDatabaseDrivers(postgres.Driver()),
+  # importing github.com/AlexGalhardo/vukem/drivers/postgres, and run
+  # go get github.com/AlexGalhardo/vukem/drivers/postgres && go mod tidy
   # (https://vukem.dev/docs/database/overview).
   postgres:
     image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b

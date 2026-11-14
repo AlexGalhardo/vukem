@@ -14,10 +14,8 @@ import (
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	info, err := os.Stdin.Stat()
-
 	code := cli.Run(ctx, os.Args[1:], cli.Env{
-		Interactive: err == nil && info.Mode()&os.ModeCharDevice != 0,
+		Interactive: isTerminal(os.Stdin),
 		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,
