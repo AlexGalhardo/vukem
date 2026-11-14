@@ -1,8 +1,9 @@
 name: image
 
-# Builds the toolchain image on pull requests that change what goes into it,
-# so a broken Dockerfile or a CLI that no longer builds there is caught before
-# a release. Nothing is pushed; release.yml publishes the image.
+# Builds the toolchain image and the two example images (`vukem new --prebuilt`)
+# on pull requests that change what goes into them, so a broken Dockerfile, a
+# CLI that no longer builds there or a starter that no longer boots is caught
+# before a release. Nothing is pushed; release.yml publishes the images.
 on:
   pull_request:
     paths:
@@ -11,6 +12,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "cmd/**"
+      - "internal/**"
   workflow_dispatch:
 
 permissions:
@@ -22,8 +24,26 @@ concurrency:
 
 jobs:
   build:
-    name: Image build
+    name: Image build (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: vukem
+            file: .config/docker/vukem.Dockerfile
+            example: ""
+            app-env: ""
+          - name: vukem-example-todo
+            file: .config/docker/vukem-example.Dockerfile
+            example: todo
+            app-env: production
+          - name: vukem-example-finance
+            file: .config/docker/vukem-example.Dockerfile
+            example: finance
+            # Same as release.yml: the finance demo boots without Stripe and a
+            # mail provider only in development.
+            app-env: development
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,10 +52,35 @@ jobs:
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: .config/docker/vukem.Dockerfile
+          file: ${{ matrix.file }}
           load: true
-          tags: vukem:ci
+          tags: smoke:${{ matrix.name }}
+          build-args: |
+            EXAMPLE=${{ matrix.example }}
+            APP_ENV=${{ matrix.app-env }}
+          cache-from: type=gha,scope=${{ matrix.name }}
       - name: Smoke test
+        env:
+          NAME: ${{ matrix.name }}
+          EXAMPLE: ${{ matrix.example }}
         run: |
-          docker run --rm vukem:ci version
-          docker run --rm --entrypoint sh vukem:ci -c 'go version && bun --version && git --version'
+          if [ -z "$EXAMPLE" ]; then
+            docker run --rm "smoke:$NAME" version
+            docker run --rm --entrypoint sh "smoke:$NAME" -c 'go version && bun --version && git --version'
+            exit 0
+          fi
+          docker run -d --name smoke -p 127.0.0.1:3000:3000             -e APP_KEY="base64:$(openssl rand -base64 32)" "smoke:$NAME"
+          for path in /up /; do
+            code=000
+            for _ in $(seq 1 30); do
+              code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000$path" || true)"
+              [ "$code" = 200 ] && break
+              sleep 2
+            done
+            if [ "$code" != 200 ]; then
+              echo "::error::$NAME answered $code on $path"
+              docker logs smoke
+              exit 1
+            fi
+          done
+          docker rm -f smoke
