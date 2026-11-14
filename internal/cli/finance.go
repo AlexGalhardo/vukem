@@ -96,8 +96,6 @@ func financeEdits() []exampleEdit {
 			"\t\tvukem.WithSeeders(seeders.All()...),\n",
 			"\t\tvukem.WithSeeders(seeders.All()...),\n\t\tvukem.WithAppSeeders(seeders.AllApp()...),\n",
 		},
-		// No resource has a policy yet: the parameter would be unused.
-		{"app/admin/registry.go", "func Policies(admins Admins)", "func Policies(_ Admins)"},
 		// The panel's feature flags page needs install:flags, which this app does not use.
 		{"tests/admin_test.go", "\tc.Get(\"/admin-api/_flags\").AssertOK().AssertSee(\"Feature flags\")\n", ""},
 		// /dashboard is the finance dashboard (routes/finance.go, inside a workspace).
@@ -366,6 +364,19 @@ func installFinanceAdmin(env *Env, data map[string]string) ([]registration, erro
 
 	if err := appendEnvExample(env, []string{"ADMIN_EMAILS"}); err != nil {
 		return nil, err
+	}
+
+	// The support panel: users, workspaces and subscriptions, read-only (app/admin/finance.go).
+	for _, name := range []string{"User", "Workspace", "WorkspaceSubscription"} {
+		if err := register(env, "app/admin/registry.go", "Resources", name+"()"); err != nil {
+			return nil, err
+		}
+
+		if err := register(env, "app/admin/registry.go", "Policies",
+			"authz.For[*models."+name+"]("+name+"Policy{Admins: admins})",
+			"github.com/AlexGalhardo/vukem/authz", data["Module"]+"/app/models"); err != nil {
+			return nil, err
+		}
 	}
 
 	regs := []registration{

@@ -177,6 +177,8 @@ func assertFinanceProduct(t *testing.T, project string) {
 		{"resources/js/pages/Home.tsx", "finance-landing"},
 		{"resources/css/finance.css", "#bdfb6b"},
 		{"resources/js/layouts/AppLayout.tsx", "SidebarProvider"},
+		{"resources/js/layouts/AppLayout.tsx", "startsWith('Admin/')"},
+		{"app/admin/registry.go", "WorkspaceSubscription(),"},
 		{"resources/js/pages/Transactions.tsx", "Dialog"},
 		{"resources/js/components/Preferences.tsx", "localStorage"},
 		{"resources/js/lib/i18n.ts", "pt-BR"},
