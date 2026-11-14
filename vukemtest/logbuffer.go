@@ -29,6 +29,13 @@ func (l *logBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.buf.String()
+}
+
 // errors returns the last ERROR lines (at most ten), or "" when there are none.
 func (l *logBuffer) errors() string {
 	l.mu.Lock()

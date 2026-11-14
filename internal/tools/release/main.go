@@ -216,8 +216,14 @@ func bumpNestedModules(out io.Writer, version string) error {
 	return nil
 }
 
-// publish creates the GitHub release with notes; v0.x and pre-releases are
-// marked as pre-release. Empty notes are refused instead of published: a
+// isPrerelease reports whether version carries a SemVer pre-release suffix.
+// v0.x tags are normal releases: published releases have always followed that.
+func isPrerelease(version string) bool {
+	return strings.Contains(version, "-")
+}
+
+// publish creates the GitHub release with notes; only tags with a pre-release
+// suffix (-rc.N, -beta.N) are marked as pre-release. Empty notes are refused instead of published: a
 // release with an empty body looks exactly like a successful release, so a
 // broken extraction would stay invisible for as long as nobody reads the
 // releases page.
@@ -241,7 +247,7 @@ func publish(version, notes string) error {
 	}
 
 	args := []string{"release", "create", version, "--title", version, "--notes-file", f.Name(), "--verify-tag"}
-	if strings.HasPrefix(version, "v0.") || strings.Contains(version, "-") {
+	if isPrerelease(version) {
 		args = append(args, "--prerelease")
 	}
 

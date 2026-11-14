@@ -260,6 +260,26 @@ func TestRunBoundsCapturedOutput(t *testing.T) {
 			t.Errorf("%s is not the tail of the stream: %.120q", name, got)
 		}
 	}
+
+	if !res.StdoutTruncated || !res.StderrTruncated {
+		t.Errorf("Truncated = stdout %v, stderr %v, want both true", res.StdoutTruncated, res.StderrTruncated)
+	}
+}
+
+// A short run is not flagged, so StdoutTruncated is safe to branch on.
+func TestRunDoesNotFlagShortOutput(t *testing.T) {
+	t.Parallel()
+
+	tool := find(t, engine.Config{Name: "faketool", MaxOutput: 64 << 10})
+
+	res, err := tool.Run(t.Context(), t.TempDir(), "spew", "5")
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if res.StdoutTruncated || res.StderrTruncated {
+		t.Errorf("Truncated = stdout %v, stderr %v, want both false", res.StdoutTruncated, res.StderrTruncated)
+	}
 }
 
 // And the streaming form never buffers the product at all.
@@ -470,5 +490,67 @@ func TestSanitized(t *testing.T) {
 		if _, err := engine.Sanitized(dir, name); !errors.Is(err, engine.ErrDir) {
 			t.Errorf("Sanitized(%q) = %v, want ErrDir", name, err)
 		}
+	}
+}
+
+// The version probe runs in a private directory under Config.ProbeDir, not
+// in the shared system temp directory, and leaves nothing behind.
+func TestVersionProbeRunsInItsOwnDirectory(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	tool := find(t, engine.Config{Name: "faketool", VersionArgs: []string{"cwd"}, ProbeDir: parent})
+
+	probe := tool.Version()
+
+	pi, err := os.Stat(filepath.Dir(probe))
+	if err != nil {
+		t.Fatalf("probe ran in %q, which cannot be read: %v", probe, err)
+	}
+
+	want, err := os.Stat(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !os.SameFile(pi, want) {
+		t.Errorf("probe ran in %q, want a directory inside %q", probe, parent)
+	}
+
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 0 {
+		t.Errorf("probe left %d entries in %q, want none", len(entries), parent)
+	}
+}
+
+// Prepare is the caller's hook on the command of every run, for limits this
+// package cannot apply on every system.
+func TestRunCallsPrepareWithTheFinishedCommand(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	var gotDir string
+
+	tool := find(t, engine.Config{Name: "faketool", Prepare: func(cmd *exec.Cmd) {
+		gotDir = cmd.Dir
+		cmd.Env = append(cmd.Env, "PREPARED=yes")
+	}})
+
+	res, err := tool.Run(t.Context(), dir, "env")
+	if err != nil {
+		t.Fatalf("Run() = %v: %s", err, res.Stderr)
+	}
+
+	if gotDir != dir {
+		t.Errorf("Prepare saw Dir %q, want the run directory %q", gotDir, dir)
+	}
+
+	if !strings.Contains(res.Stdout, "PREPARED=yes") {
+		t.Errorf("the tool did not see the variable Prepare added: %s", res.Stdout)
 	}
 }

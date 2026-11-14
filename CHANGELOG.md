@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **auth:** Export `auth.ErrInvalidToken`, returned by `Tokens.Find` for a malformed, unknown, wrong, expired or revoked token, so an app can answer 401 for it and 503 for a failing store without matching the error text.
+- **vukemtest:** Add `App.Logs()` to assert on the log output of the test app.
+- **view:** Add `Engine.RenderBlocks(ctx, w, name, data, blocks...)` to render several blocks (such as out-of-band htmx slices) of a page with one template clone.
+- **cli:** Add `vukem.MainWith(build, opts...)`, `Main` with `Option`s such as `WithVersion` and `WithReady`, so a `main` no longer needs `RunMain` for them. With `PORT=0` the server now logs `http server listening` with the bound address.
+- **web:** Add `MiddlewareOptions.MaxBody` to set the router-wide request body limit (default 10 MiB). A `UseServer(middleware.BodyLimit(n))` is replaced by the router default on routes (innermost limit wins); the order is now documented.
 - **ci:** Upload the Ubuntu coverage profile to [Codecov](https://app.codecov.io/gh/AlexGalhardo/vukem).
 - **cli:** Refactor the generated personal-finance SaaS: green viewport landing, shadcn/ui sidebar, transaction modals, light/dark theme, English/pt-BR/es, Google sign-in, idempotent local admin and demo seeds, `vukem new --example finance --seed`, and generated Docker setup.
 
@@ -17,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **config:** Document how a stateless or standalone app boots in production without a persistent `APP_KEY` (an ephemeral key per process); the key requirement stays fail-closed (docs/security.md).
 - **site:** Rebuild the landing: copyable install commands in the hero (with the Finance scaffold) and feature tabs with real Go samples, in the docs code block with its copy button, that switch in place through the View Transitions API. No vertical scroll from 768px wide; below that the tabs become a swipeable chip row.
 - **site:** Restyle the landing install commands as a macOS terminal window (title bar, traffic lights, `$` prompt) and move the feature examples to the right column with their explanation under the code. The landing mascot is gone; the Gopher stays in the header logo, with its credit.
 - **site:** Expand the landing. The feature tabs go from 6 to 13 (adds Validation, Views, Mail, Cache, Realtime, Testing and Docker) with end-to-end samples (imports, model, handler and route) taken from the docs and the blog example. The code block has a fixed height and scrolls inside (thin scrollbar, keyboard focus ring); the page still does not scroll from 768px wide. The left column gains a short pitch and four highlights, and terms in both columns have tooltips that open on hover and keyboard focus, are linked with `aria-describedby` and close with Esc.
@@ -30,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **schema:** Stop `vukem migrate` in production from refusing `DROP CONSTRAINT`, `ALTER COLUMN ... DROP DEFAULT` and `DROP NOT NULL` (and MySQL `DROP INDEX`, `DROP PRIMARY KEY`, `DROP FOREIGN KEY`) as if they were `DROP COLUMN`: they no longer need `--allow-destructive`.
+- **database:** A SQLite URL whose directory does not exist now fails with an error that names the directory, instead of "unable to open database file (14)".
+- **cli:** `app --version` prints the version given by `WithVersion` instead of failing as an unknown command; without `WithVersion` it stays an unknown command.
+- **web:** Add `web.BodyError(r)`: a handler that reads an urlencoded form with `r.FormValue` can now tell an oversized body (`errs.ErrRequestTooLarge`, remembered by `MethodOverride`) from an empty form and answer 413.
 - **ci:** Document the macOS test job that ends `cancelled` when GitHub never assigns a runner (no steps, no log), and that a re-run is the fix (docs/maintenance.md, Known CI issues).
 - **ci:** Keep the Ubuntu test job green when Codecov has not registered the repository. The coverage gate still fails the job. The same OIDC upload succeeds once the Codecov GitHub App includes this repository.
 

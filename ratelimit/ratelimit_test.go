@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -438,5 +439,37 @@ func TestMemoryPruneBoundsTheMap(t *testing.T) {
 
 	if n := len(m.tat); n >= 1000 {
 		t.Errorf("len(tat) = %d after the keys expired, want < 1000", n)
+	}
+}
+
+func TestMiddlewareWithOnLimitReplacesTheDenialBody(t *testing.T) {
+	t.Parallel()
+
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	h := MiddlewareWith(NewMemory(1, time.Minute), ByIP, Options{
+		OnLimit: func(w http.ResponseWriter, _ *http.Request, res Result) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"code":"rate_limited"}}`)
+
+			if res.Allowed {
+				t.Error("OnLimit got an allowed Result")
+			}
+		},
+	})(ok)
+
+	var last *httptest.ResponseRecorder
+
+	for range 2 {
+		last = httptest.NewRecorder()
+		h.ServeHTTP(last, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+	}
+
+	if last.Code != http.StatusTooManyRequests || last.Body.String() != `{"error":{"code":"rate_limited"}}` {
+		t.Errorf("denied = %d %q, want the custom 429 body", last.Code, last.Body.String())
+	}
+
+	if last.Header().Get("Retry-After") == "" || last.Header().Get("RateLimit-Limit") == "" {
+		t.Errorf("headers = %v, want Retry-After and RateLimit-Limit kept", last.Header())
 	}
 }

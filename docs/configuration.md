@@ -200,6 +200,7 @@ Every exported `With*` option of the root package, grouped in the source by subs
 | `WithQueryObservers` | Database | `database.go` | [database.md](database.md) |
 | `WithQueueDriver` | Queue | `background.go` | [subsystems.md](subsystems.md) |
 | `WithQueueDriverFunc` | Queue | `background.go` | [subsystems.md](subsystems.md) |
+| `WithQueueWork` | Queue | `background.go` | [subsystems.md](subsystems.md) |
 | `WithRateLimiters` | Rate limiting | `http.go` | [subsystems.md](subsystems.md) |
 | `WithReady` | Runtime | `options_runtime.go` | [testing.md](testing.md) |
 | `WithRoutes` | Routing | `options_routes.go` | [http.md](http.md) |

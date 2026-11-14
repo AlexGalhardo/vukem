@@ -78,6 +78,7 @@ Requests run in-process via `httptest` (no ports). Each assertion failure prints
 ### Database
 
 - Default test connection: SQLite in memory, one private database per `vukemtest.New` call (unique `file:<test>_<random>?mode=memory&cache=shared` name), with the registered migrations run on it (`Options.SkipMigrations` turns that off). Isolation comes from the private database, not from transactions.
+- `app.Logs()` returns the log output of the test app as text (the last 64 KiB), for asserting that a message was logged.
 - `app.RefreshDatabase(t)` (a method on `*vukemtest.App`) drops every table and runs the migrations again (`Migrator.Fresh`), for a test that needs a clean database mid-way. There is no per-test transaction wrapper: the app's handlers run their own transactions on the shared pool, and SQLite's single writer connection would deadlock on a held outer transaction.
 - Postgres: `pgtest.Database(t, adminURL)` (module `drivers/postgres`, package `pgtest`) creates an empty `pgtest_<random>` database per test from an admin URL (`TEST_DATABASE_URL`, then `POSTGRES_URL`), returns its URL for `vukemtest.Options.Env["DATABASE_URL"]` and drops it in `t.Cleanup` after terminating its connections. An unreachable server fails the test; apps opt in with `testing.Short`, an env check or a build tag.
 - Assertions: `vukemtest.AssertDatabaseHas(t, app, table, where)`, `AssertDatabaseMissing`, `AssertDatabaseCount(t, app, table, n)`. A soft-deleted row is asserted with `AssertDatabaseMissing(t, app, "posts", map[string]any{"id": id, "deleted_at": nil})`.

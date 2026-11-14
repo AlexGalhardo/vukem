@@ -624,3 +624,14 @@ func TestServerErrorFailureShowsTheLoggedCause(t *testing.T) {
 
 	expectFailure(t, "operator does not exist: ILIKE", func(tb *fakeTB) { app.Client(tb).Get("/boom").AssertOK() })
 }
+
+func TestAppLogs(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, build)
+	app.Log.Warn("marker for the test", "k", "v")
+
+	if got := app.Logs(); !strings.Contains(got, "marker for the test") {
+		t.Fatalf("Logs() = %q, want the app's log output", got)
+	}
+}

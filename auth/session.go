@@ -442,7 +442,7 @@ func (g *SessionGuard[U]) fromRemember(c *web.Ctx) (U, bool, error) {
 	}
 
 	tok, err := g.remember.lookup(c.Context(), raw)
-	if errors.Is(err, errBadToken) {
+	if errors.Is(err, ErrInvalidToken) {
 		return reject()
 	}
 
@@ -525,7 +525,10 @@ func (r *RememberStore) create(ctx context.Context, userID string, version int64
 	return id + "." + secret, nil
 }
 
-var errBadToken = errors.New("auth: invalid token")
+// ErrInvalidToken reports a malformed, unknown, wrong, expired or revoked
+// token. Any other error from a token lookup is a failing store, so callers
+// can answer 401 for this one and 503 for the rest.
+var ErrInvalidToken = errors.New("auth: invalid token")
 
 // rememberHash is the stored hash of a remember-me secret issued under a
 // session version. Version 0 hashes the secret alone, so tokens issued
@@ -559,11 +562,11 @@ func sessionVersion(u any) int64 {
 // lookup reads the token and checks its expiry without consuming it; the
 // caller checks the secret with matches once the user (and so the session
 // version) is known, then takes the token with claim. An unknown, malformed
-// or expired token is errBadToken; any other error is a failing store.
+// or expired token is ErrInvalidToken; any other error is a failing store.
 func (r *RememberStore) lookup(ctx context.Context, raw string) (rememberToken, error) {
 	id, secret, ok := strings.Cut(raw, ".")
 	if !ok || id == "" || secret == "" {
-		return rememberToken{}, errBadToken
+		return rememberToken{}, ErrInvalidToken
 	}
 
 	var (
@@ -574,7 +577,7 @@ func (r *RememberStore) lookup(ctx context.Context, raw string) (rememberToken, 
 	err := r.ex.QueryRowContext(ctx, r.q("SELECT user_id, hash, expires_at FROM {table} WHERE id = ?"), id).
 		Scan(&userID, &stored, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
-		return rememberToken{}, errBadToken
+		return rememberToken{}, ErrInvalidToken
 	}
 
 	if err != nil {
@@ -583,7 +586,7 @@ func (r *RememberStore) lookup(ctx context.Context, raw string) (rememberToken, 
 
 	if !expires.After(r.now()) {
 		_, _ = r.claim(ctx, id)
-		return rememberToken{}, errBadToken
+		return rememberToken{}, ErrInvalidToken
 	}
 
 	return rememberToken{id: id, userID: userID, stored: stored, secret: secret}, nil

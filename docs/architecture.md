@@ -194,7 +194,7 @@ func New(opts ...vukem.Option) (*vukem.App, error) {
 func main() { os.Exit(vukem.Main(bootstrap.New)) }
 ```
 
-`vukem.Main` loads `.env` and the process environment, handles signals and runs `serve` or a command. Its testable body is `vukem.RunMain(ctx, args, getenv, build, opts...)`; tests use `vukemtest.New(t, bootstrap.New)`.
+`vukem.Main` loads `.env` and the process environment, handles signals and runs `serve` or a command. `app --version` prints `App.Version` when `WithVersion` is set (otherwise it is an unknown command). `vukem.MainWith(build, opts...)` passes `Option`s such as `WithVersion` or `WithReady` to `build` (which forwards them to `New`). With `PORT=0` the server logs `http server listening` with the bound address, since the `starting` line only knows `:0`. Its testable body is `vukem.RunMain(ctx, args, getenv, build, opts...)`; tests use `vukemtest.New(t, bootstrap.New)`.
 
 ## Request lifecycle
 

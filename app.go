@@ -315,7 +315,10 @@ type App struct {
 	jobs        []queue.Registration
 	jobFuncs    []func(*App) []queue.Registration
 	queueDriver queue.Driver
-	cacheStore  cache.Store
+	// queueWork overrides the QUEUE_* worker settings of the queue runner
+	// inside serve (WithQueueWork).
+	queueWork  queue.WorkOptions
+	cacheStore cache.Store
 	// Built on first use of Queue() / Cache() (WithQueueDriverFunc,
 	// WithCacheStoreFunc).
 	queueDriverFunc func(*App) (queue.Driver, error)
@@ -438,6 +441,7 @@ type options struct {
 	jobs           []queue.Registration
 	jobFuncs       []func(*App) []queue.Registration
 	queueDriver    queue.Driver
+	queueWork      queue.WorkOptions
 	cacheStore     cache.Store
 	sessionStore   session.Store
 	queueFunc      func(*App) (queue.Driver, error)
@@ -563,6 +567,7 @@ func New(opts ...Option) (*App, error) {
 		jobs:           o.jobs,
 		jobFuncs:       o.jobFuncs,
 		queueDriver:    o.queueDriver,
+		queueWork:      o.queueWork,
 		cacheStore:     o.cacheStore,
 		sessStore:      o.sessionStore,
 
