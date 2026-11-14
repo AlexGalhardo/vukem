@@ -47,15 +47,34 @@ type Stream struct {
 	mu sync.Mutex
 	w  io.Writer
 	rc *http.ResponseController
+	// writeTimeout bounds each write (zero: no bound).
+	writeTimeout time.Duration
 }
 
 // Option configures Serve.
 type Option func(*options)
 
-type options struct{ heartbeat time.Duration }
+type options struct {
+	heartbeat      time.Duration
+	heartbeatEvent string
+	writeTimeout   time.Duration
+}
 
 // Heartbeat sets the keep-alive interval (zero or negative disables it).
 func Heartbeat(d time.Duration) Option { return func(o *options) { o.heartbeat = d } }
+
+// HeartbeatEvent makes the keep-alive a real event named event with empty
+// data, instead of a ": ping" comment. A browser EventSource never shows
+// comments, so a page that must notice a silent connection listens for this
+// event (es.addEventListener(event, ...)). It is opt-in; the default stays the
+// comment. The interval is that of [Heartbeat].
+func HeartbeatEvent(event string) Option { return func(o *options) { o.heartbeatEvent = event } }
+
+// WriteTimeout bounds every write and flush of a stream to d, so a client
+// that stopped reading cannot hold the stream, and its goroutine, forever:
+// the write fails, the stream ends and Stream.Context is done. Without it
+// (the default, zero) a write waits for as long as the connection stays open.
+func WriteTimeout(d time.Duration) Option { return func(o *options) { o.writeTimeout = d } }
 
 type shutdownKey struct{}
 
@@ -108,9 +127,14 @@ func Serve(w http.ResponseWriter, r *http.Request, fn func(*Stream) error, opts 
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	s := &Stream{ctx: ctx, last: r.Header.Get("Last-Event-ID"), w: w, rc: rc}
+	s := &Stream{ctx: ctx, last: r.Header.Get("Last-Event-ID"), w: w, rc: rc, writeTimeout: o.writeTimeout}
 	if err := s.write(""); err != nil {
 		return nil // the client went away before the first byte
+	}
+
+	ping := ": ping\n\n"
+	if o.heartbeatEvent != "" {
+		ping = encode(Event{Event: o.heartbeatEvent})
 	}
 
 	if o.heartbeat > 0 {
@@ -123,7 +147,7 @@ func Serve(w http.ResponseWriter, r *http.Request, fn func(*Stream) error, opts 
 				case <-ctx.Done():
 					return
 				case <-t.C:
-					if s.write(": ping\n\n") != nil {
+					if s.write(ping) != nil {
 						cancel()
 						return
 					}
@@ -169,6 +193,11 @@ func (s *Stream) SendEvent(ev Event) error {
 func (s *Stream) write(payload string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.writeTimeout > 0 {
+		_ = s.rc.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+		defer func() { _ = s.rc.SetWriteDeadline(time.Time{}) }()
+	}
 
 	if payload != "" {
 		if _, err := io.WriteString(s.w, payload); err != nil {

@@ -743,3 +743,101 @@ func TestHubTrySubscribeReportsBrokerFailure(t *testing.T) {
 		t.Error("Subscribe() returned an open stream after a broker failure")
 	}
 }
+
+func TestHeartbeatEvent(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		rec := newRecorder()
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", http.NoBody)
+
+		done := make(chan error, 1)
+		go func() {
+			done <- sse.Serve(rec, r, func(s *sse.Stream) error {
+				<-s.Context().Done()
+				return nil
+			}, sse.Heartbeat(10*time.Second), sse.HeartbeatEvent("ping"))
+		}()
+
+		time.Sleep(25 * time.Second)
+		synctest.Wait()
+
+		if got, want := rec.String(), "event: ping\ndata: \n\nevent: ping\ndata: \n\n"; got != want {
+			t.Errorf("stream after 25s = %q, want two ping events %q and no comment", got, want)
+		}
+
+		cancel()
+
+		if err := <-done; err != nil {
+			t.Errorf("Serve after client disconnect = %v", err)
+		}
+	})
+}
+
+// deadlineRecorder records every write deadline the stream sets.
+type deadlineRecorder struct {
+	*flushRecorder
+
+	mu        sync.Mutex
+	deadlines []time.Time
+	live      []bool // whether a non-zero deadline was set when a write happened
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.deadlines = append(d.deadlines, t)
+
+	return nil
+}
+
+func (d *deadlineRecorder) Write(b []byte) (int, error) {
+	d.mu.Lock()
+	armed := len(d.deadlines) > 0 && !d.deadlines[len(d.deadlines)-1].IsZero()
+	d.live = append(d.live, armed)
+	d.mu.Unlock()
+
+	return d.flushRecorder.Write(b)
+}
+
+func TestWriteTimeoutArmsADeadlinePerEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		opts      []sse.Option
+		wantArmed bool
+	}{
+		{"default lifts the server deadline only", nil, false},
+		{"WriteTimeout arms each write", []sse.Option{sse.WriteTimeout(5 * time.Second)}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := &deadlineRecorder{flushRecorder: newRecorder()}
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+
+			err := sse.Serve(rec, r, func(s *sse.Stream) error {
+				return s.Send("a", "1")
+			}, append([]sse.Option{sse.Heartbeat(0)}, tt.opts...)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+
+			if len(rec.live) != 1 || rec.live[0] != tt.wantArmed {
+				t.Errorf("deadline armed during the writes = %v, want [%v]", rec.live, tt.wantArmed)
+			}
+
+			if last := rec.deadlines[len(rec.deadlines)-1]; !last.IsZero() {
+				t.Errorf("last deadline = %v, want it cleared after the write", last)
+			}
+		})
+	}
+}
