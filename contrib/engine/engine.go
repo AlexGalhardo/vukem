@@ -226,6 +226,14 @@ type Config struct {
 	// MaxOutput is the tail of stdout and stderr Run keeps
 	// (DefaultMaxOutput when zero).
 	MaxOutput int
+	// Prepare, when set, receives every run's finished *exec.Cmd just
+	// before it starts, so a caller can add what this package does not
+	// provide: SysProcAttr fields, or a hook that places the process in a
+	// Windows Job Object or a macOS limit. It sees the command with the
+	// isolation already applied (Dir, Env, process group); changing those
+	// removes the guarantees documented on this package. The version probe
+	// does not call it. Prepare must not start or wait for the command.
+	Prepare func(cmd *exec.Cmd)
 	// ProbeDir is the directory under which Find makes a private, empty
 	// working directory (also HOME and the temp directory) for the version
 	// probe, and removes it afterwards. The system temp directory when empty.
@@ -407,6 +415,10 @@ func (t *Tool) run(ctx context.Context, dir string, stdout io.Writer, args []str
 	cmd.Stdin = nil
 
 	setProcessGroup(cmd)
+
+	if t.cfg.Prepare != nil {
+		t.cfg.Prepare(cmd)
+	}
 
 	// Cancel kills the group, not just the parent: ffmpeg and yt-dlp
 	// spawn children that keep the working directory open. WaitDelay
