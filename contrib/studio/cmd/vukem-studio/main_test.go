@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -315,5 +316,42 @@ func TestRunWithoutAnySourceIsARefusal(t *testing.T) {
 	// that is an error about the database, not a silent empty Studio.
 	if code := run(t.Context(), []string{"--dir", dir, "--no-open"}, io.Discard, io.Discard, noEnv); code == 0 {
 		t.Error("exit 0 with no data source")
+	}
+}
+
+func TestUnsetAppEnvRefusalSaysSo(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+
+	if code := run(t.Context(), []string{"--dir", t.TempDir(), "--no-open"}, io.Discard, &stderr, noEnv); code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+
+	got := stderr.String()
+	if !strings.Contains(got, "APP_ENV is not set") || strings.Contains(got, "APP_ENV=production") ||
+		!strings.Contains(got, "--allow-production") {
+		t.Errorf("stderr = %q, want the unset APP_ENV named, not production", got)
+	}
+}
+
+func TestVersionComesFromTheBuild(t *testing.T) {
+	t.Parallel()
+
+	info := func(v string) *debug.BuildInfo { return &debug.BuildInfo{Main: debug.Module{Version: v}} }
+
+	for name, tc := range map[string]struct {
+		linked string
+		info   *debug.BuildInfo
+		want   string
+	}{
+		"linker flag wins":   {"v1.2.3", info("v9.9.9"), "v1.2.3"},
+		"go install version": {"", info("v0.44.0"), "v0.44.0"},
+		"local build":        {"", info("(devel)"), "v0.0.0-dev"},
+		"no build info":      {"", nil, "v0.0.0-dev"},
+	} {
+		if got := resolveVersion(tc.linked, tc.info); got != tc.want {
+			t.Errorf("%s: resolveVersion(%q) = %q, want %q", name, tc.linked, got, tc.want)
+		}
 	}
 }

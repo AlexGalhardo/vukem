@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,6 +40,7 @@ type Cell struct {
 	Null      bool
 	Truncated bool
 	Binary    bool // shown as "<binary N bytes>"
+	Literal   bool // Text is a JSON number or boolean: an export writes it unquoted
 }
 
 // RowPage is a page of rows.
@@ -60,6 +62,10 @@ type ResultSet struct {
 	Columns  []string
 	Rows     [][]Cell
 	Truncate bool // more than 1000 rows came back
+	// Affected is the row count of a write that returns no rows; HasAffected
+	// tells it from a result of zero rows.
+	Affected    int64
+	HasAffected bool
 	Elapsed  time.Duration
 }
 
@@ -241,7 +247,13 @@ func cellOf(v any, limit int) Cell {
 	case time.Time:
 		s = x.UTC().Format(time.RFC3339Nano)
 	case bool:
-		s = strconv.FormatBool(x)
+		return Cell{Text: strconv.FormatBool(x), Literal: true}
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return Cell{Text: fmt.Sprint(x), Literal: true}
+	case float64:
+		return floatCell(x, 64)
+	case float32:
+		return floatCell(float64(x), 32)
 	default:
 		s = fmt.Sprint(x)
 	}
@@ -251,6 +263,15 @@ func cellOf(v any, limit int) Cell {
 	}
 
 	return Cell{Text: s}
+}
+
+// floatCell is a number cell; NaN and the infinities are not JSON numbers, so
+// they stay text.
+func floatCell(f float64, bits int) Cell {
+	return Cell{
+		Text:    strconv.FormatFloat(f, 'g', -1, bits),
+		Literal: !math.IsNaN(f) && !math.IsInf(f, 0),
+	}
 }
 
 // scanRow reads the current row of rows into cells.

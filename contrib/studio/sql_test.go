@@ -904,3 +904,26 @@ func TestSecurity_A03_StudioEscapesCellHTML(t *testing.T) {
 
 	check("the console result", body)
 }
+
+func TestConsoleWriteReportsRowsAffected(t *testing.T) {
+	t.Parallel()
+
+	h, s, _, c := sqlStudio(t, true)
+
+	code, body := postConsole(s, c, url.Values{
+		"sql": {"UPDATE users SET name = 'x' WHERE id <= 2"}, "write": {"1"},
+	})
+	if code != http.StatusOK || !strings.Contains(body, "2 rows affected") || strings.Contains(body, "0 rows") {
+		t.Errorf("update = %d, want %q:\n%s", code, "2 rows affected", body)
+	}
+
+	if h.users(t) != 5 {
+		t.Errorf("users = %d, the update must not change the count", h.users(t))
+	}
+
+	// A statement that returns rows reports them as rows.
+	_, body = postConsole(s, c, url.Values{"sql": {"DELETE FROM users WHERE id = 5 RETURNING id"}, "write": {"1"}})
+	if !strings.Contains(body, "1 rows in") {
+		t.Errorf("delete returning = %s", body)
+	}
+}

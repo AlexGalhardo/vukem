@@ -3,6 +3,7 @@ package studio
 import (
 	"context"
 	"database/sql"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -80,15 +81,29 @@ func (s *SQLDB) exec(ctx context.Context, text string, write bool) (ResultSet, e
 
 	defer func() { _ = tx.Rollback() }()
 
-	//nolint:gosec // the console runs the developer's own statement; the read-only transaction is the guard
-	rows, err := tx.QueryContext(ctx, text)
-	if err != nil {
-		return ResultSet{}, &queryError{err}
-	}
+	var rs ResultSet
 
-	rs, err := readResult(rows)
-	if err != nil {
-		return ResultSet{}, err
+	if write && !readOnlyStatement(text, s.family()) && !returningRe.MatchString(text) {
+		// A write that returns no rows: Rows cannot say how many it changed, Exec can.
+		//nolint:gosec // the console runs the developer's own statement, in a transaction that rolls back on failure
+		res, err := tx.ExecContext(ctx, text)
+		if err != nil {
+			return ResultSet{}, &queryError{err}
+		}
+
+		if n, err := res.RowsAffected(); err == nil {
+			rs.Affected, rs.HasAffected = n, true
+		}
+	} else {
+		//nolint:gosec // the console runs the developer's own statement; the read-only transaction is the guard
+		rows, err := tx.QueryContext(ctx, text)
+		if err != nil {
+			return ResultSet{}, &queryError{err}
+		}
+
+		if rs, err = readResult(rows); err != nil {
+			return ResultSet{}, err
+		}
 	}
 
 	if write {
@@ -101,6 +116,9 @@ func (s *SQLDB) exec(ctx context.Context, text string, write bool) (ResultSet, e
 
 	return rs, nil
 }
+
+// returningRe finds a RETURNING clause: such a statement answers with rows.
+var returningRe = regexp.MustCompile(`(?i)\breturning\b`) //nolint:gochecknoglobals // read-only
 
 // readResult reads up to 1000 rows and closes rows.
 func readResult(rows *sql.Rows) (ResultSet, error) {

@@ -261,3 +261,31 @@ func TestOverviewListsSourcesWithoutCredentials(t *testing.T) {
 		t.Errorf("unknown path: status = %d, want 404", rec.Code)
 	}
 }
+
+func TestSecurity_A07_StudioTokenIsSingleUse(t *testing.T) {
+	t.Parallel()
+
+	s := newStudio(t)
+	target := "/?token=" + s.Token()
+
+	first := serve(s, request(http.MethodGet, target))
+	if first.Code != http.StatusSeeOther {
+		t.Fatalf("first use = %d, want 303", first.Code)
+	}
+
+	// Another browser holding the same URL gets nothing.
+	again := serve(s, request(http.MethodGet, target))
+	if again.Code != http.StatusUnauthorized || len(again.Result().Cookies()) != 0 {
+		t.Errorf("second use = %d with %d cookies, want 401 and none", again.Code, len(again.Result().Cookies()))
+	}
+
+	// The browser that used it first keeps its session.
+	r := request(http.MethodGet, "/")
+	for _, c := range first.Result().Cookies() {
+		r.AddCookie(c)
+	}
+
+	if got := serve(s, r).Code; got == http.StatusUnauthorized {
+		t.Error("the first browser lost its session when the token was refused")
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime/debug"
 	"runtime"
 	"strconv"
 	"time"
@@ -21,8 +22,27 @@ import (
 	"github.com/AlexGalhardo/vukem/contrib/studio"
 )
 
-// version is set at release time with -ldflags "-X main.version=v0.1.0".
-var version = "v0.0.0-dev" //nolint:gochecknoglobals // set by the linker
+// linkedVersion is set at release time with -ldflags "-X main.linkedVersion=v0.1.0".
+var linkedVersion string //nolint:gochecknoglobals // set by the linker
+
+// version is what the binary reports: the linker value, else the module
+// version `go install ...@vX.Y.Z` records, else a development placeholder.
+var version = func() string { //nolint:gochecknoglobals // computed once at start
+	info, _ := debug.ReadBuildInfo()
+	return resolveVersion(linkedVersion, info)
+}()
+
+func resolveVersion(linked string, info *debug.BuildInfo) string {
+	if linked != "" {
+		return linked
+	}
+
+	if info != nil && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+
+	return "v0.0.0-dev"
+}
 
 // DefaultPort is Studio's port; Drizzle Studio uses 4983, so this avoids a clash.
 const defaultPort = 4984
@@ -125,8 +145,13 @@ func run(
 
 	// Before any connection is opened.
 	if env.Production && !o.allowProduction {
-		fmt.Fprintln(stderr,
-			"vukem-studio: refusing to start with APP_ENV=production (pass --allow-production to override)")
+		if env.AppEnvSet {
+			fmt.Fprintln(stderr,
+				"vukem-studio: refusing to start with APP_ENV=production (pass --allow-production to override)")
+		} else {
+			fmt.Fprintln(stderr, "vukem-studio: APP_ENV is not set, which counts as production: "+
+				"set APP_ENV=development in .env or pass --allow-production")
+		}
 
 		return exitRefusal
 	}
