@@ -97,7 +97,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | footer `Security:` on a `feat`, `fix`, `perf` or `refactor` | Security (a body that only mentions security is not enough) |
 | `docs`, `test`, `ci`, `build`, `chore`, `style` | omitted |
 
-The template lives in `.config/cliff.toml` (git-cliff is called with `--config .config/cliff.toml`). Every entry ends with its short commit hash linked to the commit on GitHub, so each Added/Fixed/Security line points at the code that changed; the docs site renders the same file at [vukem.dev/changelog](https://vukem.dev/changelog). `task changelog` previews the next section; released sections are never edited by hand (change the template or the commit history instead). The `[Unreleased]` section exists at all times.
+The template lives in `.config/cliff.toml` (git-cliff is called with `--config .config/cliff.toml`). Every entry ends with its short commit hash linked to the commit on GitHub, so each Added/Fixed/Security line points at the code that changed; the docs site renders the same file at [vukem.dev/changelog](https://vukem.dev/changelog). `task changelog` previews the next section; released sections are never edited by hand (change the template or the commit history instead). The `[Unreleased]` section exists at all times and may receive hand-written notes (for example for a `ci` or `docs` change that git-cliff omits); `task release` keeps those notes above the generated section of the release.
 
 ## Release process
 

@@ -48,7 +48,7 @@ Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`
 
 ## Changelog and releases
 
-Do not edit `CHANGELOG.md` by hand: each release section is generated from commit messages by git-cliff when a PLAN.md task group is released (`task release -- vX.Y.Z`) ([Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/)). Versioning follows [SemVer](https://semver.org); see [docs/tooling.md](../docs/tooling.md#versioning).
+Do not edit released sections of `CHANGELOG.md` by hand: each release section is generated from commit messages by git-cliff when a PLAN.md task group is released (`task release -- vX.Y.Z`) ([Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/)). `[Unreleased]` may carry hand-written notes, which the release keeps above the generated section. Versioning follows [SemVer](https://semver.org); see [docs/tooling.md](../docs/tooling.md#versioning).
 
 ## Release cadence
 

@@ -11,5 +11,5 @@
 - [ ] No new `//nolint` without a one-line reason; no new `//nolint:gocognit`
 - [ ] No new dependency without a decision in `docs/brainstorming.md`
 - [ ] Workflows: actions pinned by full SHA with a `# vX.Y.Z` comment; minimal `permissions`
-- [ ] `CHANGELOG.md` untouched (generated from commits by `task release`)
+- [ ] released sections of `CHANGELOG.md` untouched (generated from commits by `task release`; `[Unreleased]` notes are allowed)
 - [ ] Breaking changes have a `BREAKING CHANGE:` footer and an entry in `docs/upgrade/`
