@@ -161,7 +161,7 @@ func SendReports() vukem.Command {
 }
 ```
 
-Rename `CommandName` to the `namespace:action` form (`reports:send`) when the command belongs to a group. Commands run with the `console` environment (providers limited to `web` are skipped), after `Boot`.
+Rename `CommandName` to the `namespace:action` form (`reports:send`) when the command belongs to a group. Commands run with the `console` environment (providers limited to `web` are skipped), after `Boot`. A command that only talks to another process can skip the boot (no database, queue or cache opened) by implementing `vukem.NoBootCommand`: add `NoBoot() bool { return true }`. The app is then shut down only if the command called `app.Boot` itself.
 
 Commands print through `app.Stdout()` and `app.Stderr()` and read `app.Stdin()` instead of the `os` streams, so `vukem.WithStdout`, `WithStderr` and `WithStdin` (used by tests to capture or silence output) apply to them:
 

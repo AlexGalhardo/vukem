@@ -53,6 +53,15 @@ type Command interface {
 	Run(ctx context.Context, app *App, args []string) error
 }
 
+// NoBootCommand is an optional interface of a [Command]: when NoBoot returns
+// true the command runs without [App.Boot], so no provider Boot hook runs (no
+// database connection, queue or cache is opened). Use it for a command that
+// only talks to another process. The command can still call app.Boot itself.
+type NoBootCommand interface {
+	Command
+	NoBoot() bool
+}
+
 var errUsage = errors.New("usage error")
 
 // rawArgsCommand is a built-in command that parses its own arguments
@@ -147,6 +156,22 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 		}
 
 		return errUsage
+	}
+
+	if nb, ok := cmd.(NoBootCommand); ok && nb.NoBoot() {
+		runErr := cmd.Run(ctx, app, fset.Args())
+
+		// Providers were never booted unless the command booted the app itself,
+		// so only then is there anything to shut down.
+		app.mu.Lock()
+		booted := app.booted
+		app.mu.Unlock()
+
+		if !booted {
+			return runErr
+		}
+
+		return errors.Join(runErr, app.Shutdown(context.WithoutCancel(ctx)))
 	}
 
 	if app.Kind != KindWarmup {
