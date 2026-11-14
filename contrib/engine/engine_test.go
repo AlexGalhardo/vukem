@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/contrib/engine"
@@ -588,4 +591,150 @@ func TestRunCallsPrepareWithTheFinishedCommand(t *testing.T) {
 	if !strings.Contains(res.Stdout, "PREPARED=yes") {
 		t.Errorf("the tool did not see the variable Prepare added: %s", res.Stdout)
 	}
+}
+
+// patternReader yields n bytes of a repeating pattern in small chunks, so the
+// copy to the child takes many writes.
+type patternReader struct{ left int }
+
+func (r *patternReader) Read(p []byte) (int, error) {
+	if r.left == 0 {
+		return 0, io.EOF
+	}
+
+	n := min(len(p), r.left, 4096)
+	for i := range n {
+		p[i] = byte(i)
+	}
+
+	r.left -= n
+
+	return n, nil
+}
+
+// waitGoroutines fails when the number of goroutines does not settle back to
+// at most base within a few seconds.
+func waitGoroutines(t *testing.T, base int) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	for runtime.NumGoroutine() > base {
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines = %d, want at most %d: a run leaked", runtime.NumGoroutine(), base)
+		}
+
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// VF-031: ffmpeg reads Go-composed frames from pipe:0, so the input is
+// per run, the child sees its end, and the output still comes back.
+func TestRunWithFeedsTheChildStandardInput(t *testing.T) {
+	tool := find(t, engine.Config{Name: "faketool"})
+	base := runtime.NumGoroutine()
+
+	const size = 5<<20 + 17 // several pipe buffers, not a round number
+
+	res, err := tool.RunWith(t.Context(), engine.RunOptions{
+		Dir:   t.TempDir(),
+		Stdin: &patternReader{left: size},
+	}, "stdin-len")
+	if err != nil {
+		t.Fatalf("RunWith() = %v\n%s", err, res.Stderr)
+	}
+
+	if got, want := strings.TrimSpace(res.Stdout), strconv.Itoa(size); got != want {
+		t.Errorf("RunWith(stdin %d bytes) stdout = %q, want %q", size, got, want)
+	}
+
+	waitGoroutines(t, base)
+}
+
+func TestRunWithStreamsStdoutAndStderrAlongsideStdin(t *testing.T) {
+	tool := find(t, engine.Config{Name: "faketool"})
+
+	var out, live bytes.Buffer
+
+	res, err := tool.RunWith(t.Context(), engine.RunOptions{
+		Dir:    t.TempDir(),
+		Stdin:  strings.NewReader("abcdef"),
+		Stdout: &out,
+		Stderr: &live,
+	}, "stdin-len")
+	if err != nil {
+		t.Fatalf("RunWith() = %v\n%s", err, res.Stderr)
+	}
+
+	if got := strings.TrimSpace(out.String()); got != "6" {
+		t.Errorf("streamed stdout = %q, want 6", got)
+	}
+
+	if res.Stdout != "" {
+		t.Errorf("Result.Stdout = %q, want empty when Stdout is set", res.Stdout)
+	}
+}
+
+func TestRunWithoutStdinStillGivesAnEmptyInput(t *testing.T) {
+	tool := find(t, engine.Config{Name: "faketool"})
+
+	res, err := tool.RunWith(t.Context(), engine.RunOptions{Dir: t.TempDir()}, "stdin-len")
+	if err != nil || strings.TrimSpace(res.Stdout) != "0" {
+		t.Errorf("RunWith(no stdin) = %q, %v; want 0 bytes and no error", res.Stdout, err)
+	}
+}
+
+// A cancelled context ends the run and kills the tree even though the tool
+// is still waiting for more input.
+func TestRunWithStopsWhenTheContextIsCancelledMidStream(t *testing.T) {
+	tool := find(t, engine.Config{Name: "faketool"})
+	base := runtime.NumGoroutine()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	// Some bytes, then silence until the context is done: the tool never sees EOF.
+	pr, pw := io.Pipe()
+
+	go func() {
+		_, _ = pw.Write([]byte("partial"))
+		<-ctx.Done()
+		_ = pw.CloseWithError(ctx.Err())
+	}()
+
+	time.AfterFunc(300*time.Millisecond, cancel)
+
+	start := time.Now()
+
+	_, err := tool.RunWith(ctx, engine.RunOptions{Dir: t.TempDir(), Stdin: pr}, "stdin-len")
+	if !errors.Is(err, engine.ErrRun) {
+		t.Fatalf("RunWith() = %v, want ErrRun", err)
+	}
+
+	if took := time.Since(start); took > 10*time.Second {
+		t.Errorf("a cancelled run took %s to return", took)
+	}
+
+	waitGoroutines(t, base)
+}
+
+// A reader that fails must not look like a stream that ended: the child
+// would write a truncated video and report success.
+func TestRunWithEndsTheRunWhenTheReaderFails(t *testing.T) {
+	tool := find(t, engine.Config{Name: "faketool"})
+	base := runtime.NumGoroutine()
+	boom := errors.New("frame source failed")
+
+	r := io.MultiReader(strings.NewReader("some frames"), iotest.ErrReader(boom))
+
+	res, err := tool.RunWith(t.Context(), engine.RunOptions{Dir: t.TempDir(), Stdin: r}, "stdin-len")
+	if !errors.Is(err, boom) || !errors.Is(err, engine.ErrRun) {
+		t.Fatalf("RunWith() = %v, want ErrRun wrapping the reader error", err)
+	}
+
+	if strings.TrimSpace(res.Stdout) != "" {
+		t.Errorf("stdout = %q: the tool completed on a truncated stream", res.Stdout)
+	}
+
+	waitGoroutines(t, base)
 }

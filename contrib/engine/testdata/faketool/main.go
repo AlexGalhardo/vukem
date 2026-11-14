@@ -8,6 +8,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,6 +119,16 @@ func main() {
 		}
 
 		fmt.Fprintln(os.Stderr, "grandchild", child.Process.Pid)
+	case "stdin-len":
+		// Read standard input to its end and print how many bytes came,
+		// as ffmpeg reading "-i pipe:0" does, to show the per-run input.
+		n, err := io.Copy(io.Discard, os.Stdin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "faketool: read stdin:", err)
+			os.Exit(1)
+		}
+
+		fmt.Println(n)
 	case "fail":
 		code, _ := strconv.Atoi(os.Args[2])
 		fmt.Fprintln(os.Stderr, "faketool: deliberate failure")

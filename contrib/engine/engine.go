@@ -88,7 +88,9 @@
 // ([Config.MaxOutput], default [DefaultMaxOutput]) rather than everything,
 // so a long run cannot exhaust the worker holding its own log. When the
 // tool's *output* is the product — a video on stdout — use
-// [Tool.RunStream], which never buffers it.
+// [Tool.RunStream], which never buffers it. A tool that reads its input from
+// a pipe (ffmpeg with -i pipe:0) is fed by [Tool.RunWith] with a reader of
+// your own for that run.
 //
 // # Threads are the caller's to place
 //
@@ -118,6 +120,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -380,13 +383,95 @@ type Result struct {
 // A non-zero exit is an error wrapping [ErrRun]; the Result is returned
 // either way, so a caller can log the tail of stderr on failure.
 func (t *Tool) Run(ctx context.Context, dir string, args ...string) (Result, error) {
+	return t.RunWith(ctx, RunOptions{Dir: dir}, args...)
+}
+
+// RunOptions are the per-run inputs and outputs of [Tool.RunWith].
+type RunOptions struct {
+	// Dir is the run's working directory, HOME and temp directory, as for
+	// [Tool.Run].
+	Dir string
+	// Stdin, when set, is copied to the tool's standard input. The tool sees
+	// end of file when Stdin returns [io.EOF]. A Stdin error other than
+	// io.EOF, like a cancelled context, ends the run and kills the process
+	// tree, so a tool never takes a truncated stream for a complete one; the
+	// error wraps [ErrRun] and the reader's error. A Stdin that blocks in Read
+	// must return once ctx is done (read from a pipe the caller closes, or a
+	// channel it also selects on with ctx): the copy goroutine cannot
+	// interrupt a Read it is blocked in, and ends only when Read returns.
+	// When nil the tool's standard input is empty (the null device).
+	Stdin io.Reader
+	// Stdout, when set, receives the tool's standard output as it arrives
+	// and [Result].Stdout stays empty (as in [Tool.RunStream]). When nil the
+	// tail is captured in Result.Stdout (as in [Tool.Run]).
+	Stdout io.Writer
+	// Stderr, when set, also receives the standard error as it arrives (as in
+	// [Tool.RunStreams]); the tail in [Result].Stderr is kept either way.
+	Stderr io.Writer
+}
+
+// RunWith is [Tool.Run], [Tool.RunStream] and [Tool.RunStreams] with a
+// per-run standard input: a tool that reads its input from a pipe (ffmpeg
+// with "-i pipe:0") is fed by the caller's reader instead of a file on
+// disk. The limits, the Windows Job Object, the timeout and the process
+// group kill of the other methods apply unchanged; on Windows the process
+// starts suspended and is resumed only after it joins the job, and the input
+// is delivered after that.
+//
+// The returned Result is filled as for Run, and a non-zero exit is an error
+// wrapping [ErrRun].
+func (t *Tool) RunWith(ctx context.Context, o RunOptions, args ...string) (Result, error) {
+	if o.Stdout != nil {
+		return t.run(ctx, o.Dir, o.Stdout, o.Stderr, o.Stdin, args)
+	}
+
 	out := &tailWriter{max: t.cfg.MaxOutput}
 
-	res, err := t.run(ctx, dir, out, nil, args)
+	res, err := t.run(ctx, o.Dir, out, o.Stderr, o.Stdin, args)
 	res.Stdout = out.String()
 	res.StdoutTruncated = out.over
 
 	return res, err
+}
+
+// stdinReader reports a failure of the caller's reader to the run, which
+// cancels itself: otherwise the copy to the child would end at the error,
+// close the pipe, and the tool would see a clean end of file.
+type stdinReader struct {
+	r    io.Reader
+	done <-chan struct{}
+	fail func(error)
+
+	mu  sync.Mutex
+	err error
+}
+
+func (s *stdinReader) Read(p []byte) (int, error) {
+	select {
+	case <-s.done:
+		return 0, context.Canceled
+	default:
+	}
+
+	n, err := s.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		s.mu.Lock()
+		if s.err == nil {
+			s.err = err
+		}
+		s.mu.Unlock()
+
+		s.fail(err)
+	}
+
+	return n, err
+}
+
+func (s *stdinReader) failure() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.err
 }
 
 // RunStream executes the tool in dir and copies its standard output to w
@@ -403,7 +488,7 @@ func (t *Tool) RunStream(ctx context.Context, dir string, w io.Writer, args ...s
 		return Result{}, fmt.Errorf("%w: RunStream needs a writer", ErrRun)
 	}
 
-	return t.run(ctx, dir, w, nil, args)
+	return t.run(ctx, dir, w, nil, nil, args)
 }
 
 // RunStreams is [Tool.RunStream] that also copies the standard error to
@@ -418,14 +503,26 @@ func (t *Tool) RunStreams(
 		return Result{}, fmt.Errorf("%w: RunStreams needs two writers", ErrRun)
 	}
 
-	return t.run(ctx, dir, stdout, stderr, args)
+	return t.run(ctx, dir, stdout, stderr, nil, args)
 }
 
 func (t *Tool) run(
-	ctx context.Context, dir string, stdout, liveStderr io.Writer, args []string,
+	ctx context.Context, dir string, stdout, liveStderr io.Writer, stdin io.Reader, args []string,
 ) (Result, error) {
 	if err := checkDir(dir); err != nil {
 		return Result{}, err
+	}
+
+	// A reader error cancels the run, which kills the tree like any cancel.
+	var in *stdinReader
+
+	if stdin != nil {
+		var cancelCause context.CancelCauseFunc
+
+		ctx, cancelCause = context.WithCancelCause(ctx)
+		defer cancelCause(nil)
+
+		in = &stdinReader{r: stdin, done: ctx.Done(), fail: cancelCause}
 	}
 
 	// Only when the caller has not bounded the run itself, so a caller's
@@ -456,9 +553,13 @@ func (t *Tool) run(
 	if liveStderr != nil {
 		cmd.Stderr = io.MultiWriter(stderr, liveStderr)
 	}
-	// Nothing to read: a tool waiting on stdin would otherwise hang until
-	// the timeout rather than failing at once.
+	// Without a RunOptions.Stdin there is nothing to read: a tool waiting
+	// on stdin would otherwise hang until the timeout rather than failing at
+	// once. (The nil check keeps a nil *stdinReader out of the interface.)
 	cmd.Stdin = nil
+	if in != nil {
+		cmd.Stdin = in
+	}
 
 	setProcessGroup(cmd)
 
@@ -492,6 +593,13 @@ func (t *Tool) run(
 		StderrTruncated: stderr.over,
 		ExitCode:        cmd.ProcessState.ExitCode(),
 		Duration:        time.Since(start),
+	}
+
+	if in != nil {
+		if rerr := in.failure(); rerr != nil {
+			return res, fmt.Errorf("%w: %s stdin reader failed after %s: %w",
+				ErrRun, t.cfg.Name, res.Duration.Round(time.Millisecond), rerr)
+		}
 	}
 
 	if err == nil {
