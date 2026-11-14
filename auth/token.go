@@ -29,6 +29,11 @@ type Token struct {
 	Abilities  []string   `json:"abilities"`
 	LastUsedAt *time.Time `json:"last_used_at"`
 	ExpiresAt  *time.Time `json:"expires_at"`
+	// Resource is the optional free-form attribute stored with the token (a
+	// project id, a tenant) that CreateWith was given; empty when none. The
+	// token does not enforce it: the app compares it with the resource a
+	// request asks for.
+	Resource string `json:"resource,omitempty"`
 	// RevokedAt is when the token was revoked; a revoked token is kept for
 	// the audit trail (List shows it) until Prune deletes it.
 	RevokedAt *time.Time `json:"revoked_at"`
@@ -43,9 +48,11 @@ func (t Token) Can(ability string) bool {
 // only SHA-256(secret) is stored. Table (created by install:auth / install:api):
 // access_tokens(id TEXT PRIMARY KEY, user_id TEXT, name TEXT, hash TEXT,
 // abilities TEXT, last_used_at TIMESTAMP NULL, expires_at TIMESTAMP NULL,
-// revoked_at TIMESTAMP NULL, created_at TIMESTAMP). Tables created before
+// revoked_at TIMESTAMP NULL, created_at TIMESTAMP), plus the optional
+// resource TEXT NULL column (TokensResourceMigration). Tables created before
 // revoked_at existed need TokensRevokedAtMigration; until then Find
-// refuses every token.
+// refuses every token. Without resource everything works, except CreateWith
+// with a Resource, which fails.
 type Tokens struct {
 	// Prefix starts every newly issued token ("vk_"), so secret scanners
 	// (GitHub push protection, gitleaks) can match leaked tokens. It is up
@@ -66,6 +73,44 @@ type Tokens struct {
 	outdatedLogged atomic.Bool
 	// revokedAtSeen skips the column probe once revoked_at was found.
 	revokedAtSeen atomic.Bool
+	// resourceCol caches whether the resource column exists: 0 unknown,
+	// 1 yes, 2 no (decided once per Tokens, so a migration that adds the
+	// column takes effect on the next start).
+	resourceCol atomic.Int32
+}
+
+// hasResource reports whether access_tokens has the resource column.
+func (t *Tokens) hasResource(ctx context.Context) (bool, error) {
+	switch t.resourceCol.Load() {
+	case 1:
+		return true, nil
+	case 2:
+		return false, nil
+	}
+
+	has, err := schema.New(ctx, t.ex).HasColumn(t.table, "resource")
+	if err != nil {
+		return false, fmt.Errorf("auth: probe resource column: %w", err)
+	}
+
+	if has {
+		t.resourceCol.Store(1)
+	} else {
+		t.resourceCol.Store(2)
+	}
+
+	return has, nil
+}
+
+// resourceExpr is the SELECT expression for the resource column, NULL on a
+// table without it.
+func (t *Tokens) resourceExpr(ctx context.Context) (string, error) {
+	has, err := t.hasResource(ctx)
+	if err != nil || has {
+		return "resource", err
+	}
+
+	return "NULL", nil
 }
 
 // errNoRevokedAt marks a lookup that failed because access_tokens predates
@@ -144,7 +189,47 @@ func (t *Tokens) Create(
 	abilities []string,
 	ttl time.Duration,
 ) (string, Token, error) {
-	return t.create(ctx, rand.Text(), userID, name, abilities, ttl)
+	return t.create(ctx, rand.Text(), "", userID, name, abilities, ttl)
+}
+
+// CreateOptions are the optional attributes of CreateWith.
+type CreateOptions struct {
+	// ID is the token id, with the rules of CreateWithID; empty generates one.
+	ID string
+	// Resource is stored with the token and returned by Find and List (up to
+	// 255 bytes); it needs the resource column (TokensResourceMigration).
+	Resource string
+}
+
+// maxResource bounds CreateOptions.Resource.
+const maxResource = 255
+
+// CreateWith is Create with the attributes in opts: an id chosen by the
+// caller and a resource attribute. A Resource on a table without the
+// resource column fails with an error naming TokensResourceMigration.
+func (t *Tokens) CreateWith(
+	ctx context.Context,
+	userID, name string,
+	abilities []string,
+	ttl time.Duration,
+	opts CreateOptions,
+) (string, Token, error) {
+	if len(opts.Resource) > maxResource {
+		return "", Token{}, fmt.Errorf("auth: token resource: want at most %d bytes", maxResource)
+	}
+
+	id := opts.ID
+	if id == "" {
+		id = rand.Text()
+	} else if !validTokenID(id) {
+		return "", Token{}, fmt.Errorf(
+			"auth: token id %q: want 1 to %d ASCII letters, digits or hyphens",
+			id,
+			maxTokenID,
+		)
+	}
+
+	return t.create(ctx, id, opts.Resource, userID, name, abilities, ttl)
 }
 
 // CreateWithID is Create with an id chosen by the caller, for an app that
@@ -167,7 +252,7 @@ func (t *Tokens) CreateWithID(
 		)
 	}
 
-	return t.create(ctx, id, userID, name, abilities, ttl)
+	return t.create(ctx, id, "", userID, name, abilities, ttl)
 }
 
 // maxTokenID bounds a caller-chosen token id.
@@ -181,7 +266,7 @@ func validTokenID(id string) bool {
 
 func (t *Tokens) create(
 	ctx context.Context,
-	id, userID, name string,
+	id, resource, userID, name string,
 	abilities []string,
 	ttl time.Duration,
 ) (string, Token, error) {
@@ -189,8 +274,20 @@ func (t *Tokens) create(
 		return "", Token{}, err
 	}
 
+	if resource != "" {
+		has, err := t.hasResource(ctx)
+		if err != nil {
+			return "", Token{}, err
+		}
+
+		if !has {
+			return "", Token{}, errors.New("auth: access_tokens has no resource column; " +
+				"add auth.TokensResourceMigration to the app's migrations and run vukem migrate")
+		}
+	}
+
 	now := t.now().UTC()
-	tok := Token{ID: id, UserID: userID, Name: name, Abilities: abilities}
+	tok := Token{ID: id, UserID: userID, Name: name, Abilities: abilities, Resource: resource}
 
 	if ttl > 0 {
 		exp := now.Add(ttl)
@@ -208,17 +305,16 @@ func (t *Tokens) create(
 
 	secret := rand.Text()
 
+	cols, marks, extra := "", "", []any{}
+	if resource != "" {
+		cols, marks, extra = ", resource", ", ?", []any{resource}
+	}
+
 	_, err = t.ex.ExecContext(
 		ctx,
-		t.q("INSERT INTO {table} (id, user_id, name, hash, abilities, expires_at, created_at) "+
-			"VALUES (?, ?, ?, ?, ?, ?, ?)"),
-		tok.ID,
-		userID,
-		name,
-		digest(secret),
-		string(abil),
-		tok.ExpiresAt,
-		now,
+		t.q("INSERT INTO {table} (id, user_id, name, hash, abilities, expires_at, created_at"+cols+") "+
+			"VALUES (?, ?, ?, ?, ?, ?, ?"+marks+")"),
+		append([]any{tok.ID, userID, name, digest(secret), string(abil), tok.ExpiresAt, now}, extra...)...,
 	)
 	if err != nil {
 		return "", Token{}, err
@@ -265,16 +361,23 @@ func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 		return Token{}, ErrInvalidToken
 	}
 
+	resExpr, err := t.resourceExpr(ctx)
+	if err != nil {
+		return Token{}, err
+	}
+
 	var (
-		tok    = Token{ID: id}
-		stored string
-		abil   string
+		tok      = Token{ID: id}
+		stored   string
+		abil     string
+		resource sql.NullString
 	)
 
-	err := t.ex.QueryRowContext(ctx, t.q("SELECT user_id, name, hash, abilities, last_used_at, expires_at, revoked_at "+
-		"FROM {table} WHERE id = ?"), id).
-		Scan(&tok.UserID, &tok.Name, &stored, &abil, &tok.LastUsedAt, &tok.ExpiresAt, &tok.RevokedAt)
+	err = t.ex.QueryRowContext(ctx, t.q("SELECT user_id, name, hash, abilities, last_used_at, expires_at, revoked_at, "+
+		resExpr+" FROM {table} WHERE id = ?"), id).
+		Scan(&tok.UserID, &tok.Name, &stored, &abil, &tok.LastUsedAt, &tok.ExpiresAt, &tok.RevokedAt, &resource)
 	found := err == nil
+	tok.Resource = resource.String
 
 	if !found {
 		// An unknown id compares against a digest-sized placeholder, so it
@@ -376,9 +479,14 @@ func (t *Tokens) revoke(ctx context.Context, where string, args ...any) (int64, 
 // its row, like Find, so the owner does not depend on what the caller asked
 // for.
 func (t *Tokens) List(ctx context.Context, userID string) ([]Token, error) {
+	resExpr, err := t.resourceExpr(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := t.ex.QueryContext(
 		ctx,
-		t.q("SELECT id, user_id, name, abilities, last_used_at, expires_at, revoked_at FROM {table} "+
+		t.q("SELECT id, user_id, name, abilities, last_used_at, expires_at, revoked_at, "+resExpr+" FROM {table} "+
 			"WHERE user_id = ? ORDER BY created_at DESC, id"),
 		userID,
 	)
@@ -391,14 +499,17 @@ func (t *Tokens) List(ctx context.Context, userID string) ([]Token, error) {
 
 	for rows.Next() {
 		var (
-			tok  Token
-			abil string
+			tok      Token
+			abil     string
+			resource sql.NullString
 		)
 
 		if err := rows.Scan(&tok.ID, &tok.UserID, &tok.Name, &abil,
-			&tok.LastUsedAt, &tok.ExpiresAt, &tok.RevokedAt); err != nil {
+			&tok.LastUsedAt, &tok.ExpiresAt, &tok.RevokedAt, &resource); err != nil {
 			return nil, err
 		}
+
+		tok.Resource = resource.String
 
 		if err := json.Unmarshal([]byte(abil), &tok.Abilities); err != nil {
 			return nil, fmt.Errorf("auth: token %s abilities: %w", tok.ID, err)
@@ -455,6 +566,24 @@ func TokensRevokedAtMigration(id string) schema.Migration {
 			}
 
 			return s.Table("access_tokens", func(t *schema.Table) { t.Timestamp("revoked_at").Nullable() })
+		},
+		Down: func(*schema.Schema) error { return nil },
+	}
+}
+
+// TokensResourceMigration returns migration id adding the optional resource
+// column (TEXT NULL) to access_tokens, for CreateWith with a Resource. It
+// skips a table that already has it, and its Down is a no-op.
+func TokensResourceMigration(id string) schema.Migration {
+	return schema.Migration{
+		ID: id,
+		Up: func(s *schema.Schema) error {
+			has, err := s.HasColumn("access_tokens", "resource")
+			if err != nil || has {
+				return err
+			}
+
+			return s.Table("access_tokens", func(t *schema.Table) { t.String("resource").Nullable() })
 		},
 		Down: func(*schema.Schema) error { return nil },
 	}

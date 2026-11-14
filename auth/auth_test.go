@@ -74,6 +74,7 @@ var migrations = []schema.Migration{{
 			t.Timestamp("last_used_at").Nullable()
 			t.Timestamp("expires_at").Nullable()
 			t.Timestamp("revoked_at").Nullable()
+			t.String("resource").Nullable()
 			t.Timestamp("created_at")
 		})
 	},
