@@ -27,8 +27,15 @@ func (s *Studio) exportRows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+
+	filters, err := filtersFrom(q)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
 	query := RowQuery{
-		Table: r.PathValue("table"), Filters: filtersFrom(q), Sort: q.Get("sort"), Desc: q.Get("desc") == "1",
+		Table: r.PathValue("table"), Filters: filters, Sort: q.Get("sort"), Desc: q.Get("desc") == "1",
 		PerPage: 200, Full: true,
 	}
 

@@ -16,8 +16,12 @@
 	{{range .Filters}}<input type="hidden" name="f" value="{{.}}">{{end}}
 	<button class="btn btn-default">Apply</button>
 </form>
+<details class="mb-3 text-sm text-muted-foreground">
+	<summary>Filter operators</summary>
+	<p>One filter is <code>column:op:value</code>; add more to combine them with AND. Operators: <code>eq</code> equal, <code>ne</code> not equal, <code>lt</code> less than, <code>lte</code> less than or equal, <code>gt</code> greater than, <code>gte</code> greater than or equal, <code>contains</code> text anywhere, <code>starts</code> text at the start, <code>null</code> and <code>notnull</code> (no value). Example: <code>qty:gt:5</code>.</p>
+</details>
 {{if .Filters}}<p class="mb-3 text-sm text-muted-foreground">Filters: {{range .Filters}}<code>{{.}}</code> {{end}}</p>{{end}}
-{{if .Rows}}{{template "partials/table" (dict "Head" .Head "Rows" .Rows)}}
+{{if .Rows}}{{template "partials/table" (dict "Head" .Head "Sorts" .Sorts "Rows" .Rows)}}
 {{else}}{{template "partials/empty" (dict "Title" "No rows" "Text" "Nothing matches this view.")}}{{end}}
 {{template "partials/pager" (dict "Prev" .Prev "Next" .Next)}}
 {{end}}
