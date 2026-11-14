@@ -93,6 +93,13 @@ func (a *App) Commands() []Command {
 }
 
 func runCommand(ctx context.Context, app *App, name string, args []string) error {
+	// Like the health probes, only with WithVersion: otherwise the flag stays
+	// an unknown command and the build is not revealed.
+	if name == "--version" && app.Version != "" {
+		fmt.Fprintln(app.stdout, app.Version)
+		return nil
+	}
+
 	if name == "help" || name == "list" || name == "-h" || name == "--help" {
 		printCommands(app)
 		return nil
