@@ -359,10 +359,6 @@ func (s *Studio) sqlConsole(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "SQL console POST is only allowed from localhost", http.StatusForbidden)
 			return
 		}
-		if s.cfg.Token == "" || r.Header.Get("X-Studio-Token") != s.cfg.Token {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 
