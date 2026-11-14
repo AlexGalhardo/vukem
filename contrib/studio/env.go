@@ -19,6 +19,8 @@ type Env struct {
 	// Production reports APP_ENV=production. An unset APP_ENV counts as
 	// production, as in the framework.
 	Production bool
+	// AppEnvSet reports whether APP_ENV was set (to anything).
+	AppEnvSet bool
 	// DatabaseURL is DATABASE_URL, or the SQLite default.
 	DatabaseURL string
 	// DatabaseSet reports whether DATABASE_URL was set (not the default).
@@ -41,6 +43,7 @@ func LoadEnv(dir string, getenv func(string) (string, bool)) (Env, error) {
 		MongoURL: src.Get("MONGO_URL"), MongoDatabase: src.Get("MONGO_DATABASE"), RedisURL: src.Get("REDIS_URL"),
 	}
 
+	e.AppEnvSet = src.Get("APP_ENV") != ""
 	e.DatabaseSet = e.DatabaseURL != ""
 	if !e.DatabaseSet {
 		e.DatabaseURL = DefaultDatabaseURL

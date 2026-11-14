@@ -84,8 +84,9 @@ func TestAssetsNeedASessionAndAreNotCached(t *testing.T) {
 		t.Errorf("asset without a session = %d, want 401", rec.Code)
 	}
 
+	cookie := session(t, s)
 	r := request(http.MethodGet, "/assets/studio.css")
-	r.AddCookie(session(t, s))
+	r.AddCookie(cookie)
 
 	rec := serve(s, r)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "text/css") ||
@@ -94,7 +95,7 @@ func TestAssetsNeedASessionAndAreNotCached(t *testing.T) {
 	}
 
 	r = request(http.MethodGet, "/assets/nope.css")
-	r.AddCookie(session(t, s))
+	r.AddCookie(cookie)
 
 	if rec := serve(s, r); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown asset = %d, want 404", rec.Code)

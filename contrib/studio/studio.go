@@ -35,6 +35,7 @@ type Studio struct {
 	cfg       Config
 	token     string // in the start URL, traded for the cookie
 	sessionID string // the cookie value
+	tokenUsed atomic.Bool
 	mux       *http.ServeMux
 	pages     map[string]*template.Template
 

@@ -520,8 +520,16 @@ func TestSQLExport(t *testing.T) {
 	rec := serve(s, r)
 
 	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
-	if rec.Code != 200 || len(lines) != 5 || !strings.HasPrefix(lines[0], `{"id":"1","name":"ada","bio":"`+long) {
+	if rec.Code != 200 || len(lines) != 5 || !strings.HasPrefix(lines[0], `{"id":1,"name":"ada","bio":"`+long) {
 		t.Fatalf("jsonl = %d, %d lines, first %.80q", rec.Code, len(lines), lines[0])
+	}
+
+	// Numbers stay numbers; text that looks like one stays text.
+	r = request(http.MethodGet, "/s/db/t/items/export")
+	r.AddCookie(c)
+
+	if got := serve(s, r).Body.String(); !strings.Contains(got, `"id":1,"qty":5,"price":null,`) {
+		t.Errorf("items jsonl = %q, want the integers as JSON numbers and NULL as null", got)
 	}
 
 	if !strings.Contains(lines[1], `"bio":"50%_off"`) ||
