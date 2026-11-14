@@ -712,6 +712,13 @@ func overlaySchema(zp z.AnySchema, sc Schema) Schema {
 		return sc
 	}
 
+	// A discriminated union has no structural form in the Go type (an
+	// interface), and one inside a slice or a map is deeper than the
+	// keywords reach: the z schema is the whole description.
+	if full := z.JSONSchema(zp); hasDiscriminator(full) {
+		return full
+	}
+
 	out := maps.Clone(sc)
 	for _, k := range constraintKeys {
 		delete(out, k)
@@ -726,6 +733,33 @@ func overlaySchema(zp z.AnySchema, sc Schema) Schema {
 	maps.Copy(out, z.SchemaKeywords(zp))
 
 	return out
+}
+
+// hasDiscriminator reports whether a JSON Schema has a discriminator
+// (z.DiscriminatedUnion) at any depth.
+func hasDiscriminator(v any) bool {
+	switch v := v.(type) {
+	case map[string]any:
+		if _, ok := v["discriminator"]; ok {
+			return true
+		}
+
+		for _, child := range v {
+			if hasDiscriminator(child) {
+				return true
+			}
+		}
+	case []any:
+		return slices.ContainsFunc(v, hasDiscriminator)
+	case []map[string]any:
+		for _, child := range v {
+			if hasDiscriminator(child) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // goFormats are the formats the document derives from Go types.

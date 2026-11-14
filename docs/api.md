@@ -67,7 +67,7 @@ Use `Describe` (or a `doc:"..."` tag): nothing else in the document says what be
 
 `json.RawMessage` is refused with that advice, not described: `Parse` receives decoded JSON, so the bytes the client sent are already gone and re-encoding them changes key order and number formatting. Until this was refused it was silently taken for the `[]byte` it is built on — the document claimed an array of integers and the validator rejected every object body.
 
-A real discriminated union (OpenAPI `oneOf` plus `discriminator`, which generators turn into a TypeScript discriminated union) is the typed version of this and is not built yet; an open object is the floor it would stand on.
+The typed version is `z.DiscriminatedUnion[T](key, variants)` in the schema given to `api.RegisterWith`: the document gets `oneOf` (one inline object schema per variant, each with a `z.Literal` key) plus `discriminator.propertyName`, which generators turn into a TypeScript discriminated union. It works as a body property and inside a slice (`z.Slice[Cmd](union)`, the shape of a batch of commands), where the schema replaces the structural one of the Go type (`TestRegisterWithDiscriminatedUnion`). The variants are inline, so the `discriminator` has no `mapping`; generators read the literal of each variant.
 
 ## Responses
 
