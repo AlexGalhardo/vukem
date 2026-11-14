@@ -167,12 +167,12 @@ func updateProject(t *testing.T) string {
 	return dir
 }
 
-func runUpdate(t *testing.T, dir, cliVersion string, args ...string) (int, string, string) {
+func runUpdate(t *testing.T, dir, cliVersion string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 
 	var out, errOut bytes.Buffer
 
-	code := Run(t.Context(), append([]string{"update"}, args...), Env{
+	code = Run(t.Context(), append([]string{"update"}, args...), Env{
 		Dir: dir, Stdout: &out, Stderr: &errOut, Now: fixedNow, Version: cliVersion,
 	})
 

@@ -279,11 +279,8 @@ func goFixDiff(ctx context.Context, root, overlay string, gen []generated) (stri
 
 // changedLines returns the removed and added lines of file in a unified
 // diff as printed by go fix -diff ("--- name (old)" headers), trimmed.
-func changedLines(diff, file string) ([]string, []string) {
-	var (
-		removed, added []string
-		inFile         bool
-	)
+func changedLines(diff, file string) (removed, added []string) {
+	var inFile bool
 
 	for line := range strings.Lines(diff) {
 		line = strings.TrimRight(line, "\r\n")
