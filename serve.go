@@ -290,12 +290,12 @@ func (s *HTTPServer) Run(ctx context.Context) error {
 type BuildFunc func(opts ...Option) (*App, error)
 
 // RunMain is the testable body of main: it builds the app with the given
-// environment and runs the command in args (default "serve"). A command can fail with an [*ExitError], which carries
+// environment and runs the command in args (default "serve", see [WithDefaultCommand]). A command can fail with an [*ExitError], which carries
 // the exit code Main uses (bench:run uses 3 and 4): a caller that runs RunMain itself must read the code from it.
 func RunMain(ctx context.Context, args []string, getenv func(string) (string, bool), build BuildFunc,
 	opts ...Option,
 ) error {
-	cmd, rest := "serve", []string(nil)
+	cmd, rest := defaultCommandOf(opts), []string(nil)
 	if len(args) > 1 {
 		cmd, rest = args[1], args[2:]
 	}

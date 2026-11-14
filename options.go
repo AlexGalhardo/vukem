@@ -182,6 +182,29 @@ func WithVersion(version string) Option {
 	return func(o *options) error { o.version = version; return nil }
 }
 
+// WithDefaultCommand sets the command [RunMain] and [Main] run when the
+// program gets no arguments, instead of "serve". An app whose binary is a
+// product CLI uses "help" so a bare invocation prints the command list
+// rather than starting a server. Explicit arguments are unaffected.
+func WithDefaultCommand(name string) Option {
+	return func(o *options) error { o.defaultCommand = name; return nil }
+}
+
+// defaultCommandOf reads the default command from opts without building an app.
+func defaultCommandOf(opts []Option) string {
+	var o options
+
+	for _, opt := range opts {
+		_ = opt(&o) // an option that fails here fails again in New, with its error
+	}
+
+	if o.defaultCommand == "" {
+		return "serve"
+	}
+
+	return o.defaultCommand
+}
+
 // WithName sets the application name used when APP_NAME is unset, instead
 // of "Vukem". APP_NAME still wins. `vukem new` writes the project name here,
 // so a deployment without a .env (CI, containers) does not show "Vukem" in

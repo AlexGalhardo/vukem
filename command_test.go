@@ -1466,3 +1466,38 @@ func TestCommandNoBoot(t *testing.T) {
 		})
 	}
 }
+
+func TestRunMainDefaultCommand(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts, WithLogger(discardLogger()), WithStdout(&out))...)
+	}
+
+	t.Run("configured command runs without arguments", func(t *testing.T) {
+		out.Reset()
+
+		err := RunMain(t.Context(), []string{"app"}, testSource(nil).Lookup, build, WithDefaultCommand("help"))
+		if err != nil || !strings.Contains(out.String(), "Available commands:") {
+			t.Fatalf("RunMain(no args, WithDefaultCommand(help)) = %v, output %q, want the command list", err, out.String())
+		}
+	})
+
+	t.Run("explicit arguments win", func(t *testing.T) {
+		out.Reset()
+
+		err := RunMain(t.Context(), []string{"app", "--version"}, testSource(nil).Lookup, build,
+			WithDefaultCommand("help"), WithVersion("v1.0.0"))
+		if err != nil || out.String() != "v1.0.0\n" {
+			t.Fatalf("RunMain(--version) = %v, output %q, want v1.0.0", err, out.String())
+		}
+	})
+
+	t.Run("serve stays the default", func(t *testing.T) {
+		if got := defaultCommandOf(nil); got != "serve" {
+			t.Errorf("defaultCommandOf(nil) = %q, want serve", got)
+		}
+	})
+}
