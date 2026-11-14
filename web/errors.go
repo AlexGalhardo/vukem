@@ -285,9 +285,12 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	switch {
 	case c.WantsJSON():
 		p := &Problem{Status: status, Title: title, Detail: detail}
-		if he != nil && status < 500 {
+		if he != nil && (status < 500 || he.ExtensionsOn5xx) {
 			// A clone: the decorator may edit it and he can be a shared sentinel.
 			p.Extensions = maps.Clone(he.Extensions)
+		}
+
+		if he != nil && status < 500 {
 			p.Type = he.Type
 		}
 

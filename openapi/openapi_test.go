@@ -1046,3 +1046,51 @@ func TestEnumTagDocumentsWithoutValidating(t *testing.T) {
 		t.Errorf("a value outside the enum tag answered %d, want 200 (documentation only)", rec.Code)
 	}
 }
+
+func TestProblemExtensionsDocumented(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	r.Get("/me", func(*web.Ctx) error { return nil }).Name("me")
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	info := openapi.Info{ProblemExtensions: map[string]openapi.Schema{
+		"code":      {"type": "string"},
+		"retryable": {"type": "boolean"},
+		"status":    {"type": "string"}, // a standard member: ignored
+	}}
+
+	doc, err := openapi.Build(r.Routes(), info)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	props, ok := doc.Components.Schemas["Problem"]["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("Problem component = %v, want an object with properties", doc.Components.Schemas["Problem"])
+	}
+
+	if diff := cmp.Diff(openapi.Schema{"type": "string"}, props["code"]); diff != "" {
+		t.Errorf("code property (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(openapi.Schema{"type": "boolean"}, props["retryable"]); diff != "" {
+		t.Errorf("retryable property (-want +got):\n%s", diff)
+	}
+
+	if s, _ := props["status"].(map[string]any); s["type"] == "string" {
+		t.Errorf("status = %v, a standard member must not be replaced", props["status"])
+	}
+
+	plain, err := openapi.Build(r.Routes(), openapi.Info{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := plain.Components.Schemas["Problem"]["properties"].(map[string]any)["code"]; ok {
+		t.Error("an extension leaked into a document built without ProblemExtensions")
+	}
+}
