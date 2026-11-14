@@ -164,6 +164,37 @@ func TestRunMainServesHTTP(t *testing.T) {
 	}
 }
 
+func TestHTTPServerLogsBoundPortWhenPortIsZero(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+
+	ready := make(chan string, 1)
+	app := newTestApp(t,
+		WithSource(testSource(map[string]string{"PORT": "0", "HOST": "127.0.0.1"})),
+		WithLogger(slog.New(slog.NewTextHandler(&logs, nil))),
+		WithReady(ready),
+	)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errc := make(chan error, 1)
+
+	go func() { errc <- app.Run(ctx) }()
+
+	addr := <-ready
+
+	cancel()
+
+	if err := <-errc; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	want := "msg=\"http server listening\" addr=" + addr
+	if !strings.Contains(logs.String(), want) {
+		t.Fatalf("logs = %q, want %q (the bound port, not :0)", logs.String(), want)
+	}
+}
+
 func TestRunMainServesH2COutsideProduction(t *testing.T) {
 	t.Parallel()
 
