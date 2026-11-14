@@ -656,7 +656,7 @@ Six things it does that are traps rather than preferences:
 | `Config.Prepare` | not a trap: a hook that receives each run's finished `*exec.Cmd` before it starts, for limits this package cannot apply everywhere (`SysProcAttr`, a Windows Job Object or a macOS limit set by your own code). Without it, `Limits` work on Linux only and `Find` refuses them elsewhere; on Windows the only built-in protection is killing the process tree with `taskkill` on cancel |
 | process-group cancellation | ffmpeg and yt-dlp spawn children; killing the parent leaves them holding the working directory open, which on Windows also blocks its removal |
 | `Cmd.Cancel` + `Cmd.WaitDelay` | not a watcher goroutine, so the context stays on the call |
-| bounded capture | `Run` keeps a **tail** (`MaxOutput`, default 64 KiB) with an `[earlier output dropped]` marker, because a progress line every 200 ms for a 40-minute transcode is megabytes per run. When the tool's product **is** its stdout, `RunStream` never buffers it |
+| bounded capture | `Run` keeps a **tail** (`MaxOutput`, default 64 KiB) with an `[earlier output dropped]` marker, because a progress line every 200 ms for a 40-minute transcode is megabytes per run. When the tool's product **is** its stdout, `RunStream` never buffers it; `RunStreams` also copies stderr to a writer while the tool runs (progress lines), and still keeps the tail. A run whose context has no deadline stops after `Config.Timeout` (5 minutes by default), shorter than a long ingest or transcode: pass a context with the deadline you want |
 
 ### Why the temp directory is pinned
 

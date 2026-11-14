@@ -308,6 +308,36 @@ func TestRunStreamDoesNotBufferStdout(t *testing.T) {
 	}
 }
 
+func TestRunStreamsDeliversStderrLive(t *testing.T) {
+	t.Parallel()
+
+	tool := find(t, engine.Config{Name: "faketool"})
+
+	var out, live bytes.Buffer
+
+	res, err := tool.RunStreams(t.Context(), t.TempDir(), &out, &live, "spew", "3")
+	if err != nil {
+		t.Fatalf("RunStreams() = %v\n%s", err, res.Stderr)
+	}
+
+	const want = "err 0\nerr 1\nerr 2\n"
+	if got := strings.ReplaceAll(live.String(), "\r\n", "\n"); got != want {
+		t.Errorf("live stderr = %q, want %q", got, want)
+	}
+
+	if got := strings.ReplaceAll(res.Stderr, "\r\n", "\n"); got != want {
+		t.Errorf("Result.Stderr = %q, want the tail as well: %q", got, want)
+	}
+
+	if !strings.Contains(out.String(), "out 2") {
+		t.Errorf("stdout = %q, want the tool output", out.String())
+	}
+
+	if _, err := tool.RunStreams(t.Context(), t.TempDir(), &out, nil, "cwd"); err == nil {
+		t.Error("RunStreams(nil stderr) = nil, want an error")
+	}
+}
+
 // The version probe reads stderr as well as stdout and takes the first
 // non-blank line: poppler's pdftotext answers -v on stderr with exit 0,
 // so a stdout-only probe logs "unknown" for a tool that works perfectly.
