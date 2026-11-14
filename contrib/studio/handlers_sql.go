@@ -2,6 +2,7 @@ package studio
 
 import (
 	"errors"
+	"html/template"
 	"net"
 	"net/http"
 	"net/url"
@@ -199,7 +200,7 @@ func (s *Studio) rowPage(w http.ResponseWriter, r *http.Request) {
 
 	s.page(w, r, http.StatusOK, "row", map[string]any{
 		"Source": src.Name(), "Table": t, "Fields": fields, "Incoming": in, "CanWrite": canWrite,
-		"Key": url.Values{"k": key}.Encode(), "Confirm": confirmKey(key),
+		"Key": template.URL(url.Values{"k": key}.Encode()), "Confirm": confirmKey(key),
 	})
 }
 
