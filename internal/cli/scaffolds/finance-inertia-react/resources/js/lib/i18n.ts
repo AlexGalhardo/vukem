@@ -19,5 +19,5 @@ export function useFinanceI18n() {
  const shared = usePage<SharedProps>().props as SharedProps & {locale?:string};
  const locale = shared.locale === "pt-BR" || shared.locale === "es" ? shared.locale : "en";
  const dictionary = locale === "pt-BR" ? pt : locale === "es" ? es : en;
- return {locale, t:(key:Key):string=>dictionary[key], money:(cents:number,currency:string)=>formatMoney(cents,currency,locale), month:(value:string)=>monthLabel(value,locale), date:(value:string)=>new Intl.DateTimeFormat(locale,{dateStyle:"medium",timeZone:"UTC"}).format(new Date(value.slice(0,10)+"T12:00:00Z"))};
+ return {locale, t:(key:Key):string=>dictionary[key], money:(cents:number,currency:string)=>formatMoney(cents,currency,locale), month:(value:string)=>monthLabel(value,locale), date:(value:string)=>new Intl.DateTimeFormat(locale,{dateStyle:"medium",timeZone:"UTC"}).format(new Date(`${value.slice(0,10)}T12:00:00Z`))};
 }
