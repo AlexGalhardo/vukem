@@ -74,7 +74,16 @@ func TestNewPrebuiltFinance(t *testing.T) {
 
 	dir := t.TempDir()
 
-	if code, out, errOut := vukemVersion(t, dir, "v0.44.0", "new", "money", "--prebuilt", "--example", "finance"); code != 0 {
+	if code, out, errOut := vukemVersion(
+		t,
+		dir,
+		"v0.44.0",
+		"new",
+		"money",
+		"--prebuilt",
+		"--example",
+		"finance",
+	); code != 0 {
 		t.Fatalf("code = %d\n%s%s", code, out, errOut)
 	}
 
@@ -123,8 +132,17 @@ func TestNewPrebuiltUsage(t *testing.T) {
 	dir := t.TempDir()
 
 	for _, extra := range [][]string{
-		{"--example", "none"}, {"--no-example"}, {"--minimal"}, {"--seed"}, {"--docker"}, {"--api"},
-		{"--templ"}, {"--inertia", "react"}, {"--module", "x"}, {"--no-install"}, {"--standards"},
+		{"--example", "none"},
+		{"--no-example"},
+		{"--minimal"},
+		{"--seed"},
+		{"--docker"},
+		{"--api"},
+		{"--templ"},
+		{"--inertia", "react"},
+		{"--module", "x"},
+		{"--no-install"},
+		{"--standards"},
 	} {
 		args := append([]string{"new", "demo", "--prebuilt"}, extra...)
 
@@ -179,7 +197,8 @@ func TestNewPrebuiltPrompt(t *testing.T) {
 			}
 
 			asked := strings.Contains(out.String(), "Run ready-made in Docker")
-			if wantAsked := !strings.Contains(strings.Join(tc.args, " "), "--api") && kind != exampleNone; asked != wantAsked {
+			if wantAsked := !strings.Contains(strings.Join(tc.args, " "), "--api") &&
+				kind != exampleNone; asked != wantAsked {
 				t.Errorf("asked = %v, want %v", asked, wantAsked)
 			}
 		})
