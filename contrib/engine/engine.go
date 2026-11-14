@@ -226,6 +226,10 @@ type Config struct {
 	// MaxOutput is the tail of stdout and stderr Run keeps
 	// (DefaultMaxOutput when zero).
 	MaxOutput int
+	// ProbeDir is the directory under which Find makes a private, empty
+	// working directory (also HOME and the temp directory) for the version
+	// probe, and removes it afterwards. The system temp directory when empty.
+	ProbeDir string
 	// Log receives the resolved path and version at Find time, so a boot
 	// log records which build of the tool is in the image.
 	Log *slog.Logger
@@ -505,9 +509,19 @@ func (t *Tool) probeVersion(ctx context.Context) string {
 	// entire contract; no request data reaches either, and a
 	// client-supplied file name becomes a bounded path through
 	// Sanitized rather than an argument.
+	// The probe gets its own directory, like a run, so even a tool that
+	// scratches on start-up stays out of the shared system temp directory.
+	dir, err := os.MkdirTemp(t.cfg.ProbeDir, "engine-probe-*")
+	if err != nil {
+		return "unknown"
+	}
+
+	defer func() { _ = os.RemoveAll(dir) }()
+
 	cmd := exec.CommandContext(ctx, t.path, t.cfg.VersionArgs...) //nolint:gosec // G204: see above
 	cmd.Stdout, cmd.Stderr = &out, &errOut
-	cmd.Env = t.environ(os.TempDir())
+	cmd.Dir = dir
+	cmd.Env = t.environ(dir)
 	setProcessGroup(cmd)
 
 	cmd.Cancel = func() error { return killProcessGroup(cmd) }
