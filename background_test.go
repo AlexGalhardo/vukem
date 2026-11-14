@@ -16,6 +16,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/events"
@@ -1181,5 +1183,65 @@ func TestScheduleLocksAreNamespacedByAppName(t *testing.T) {
 		if got := lockNamespace(in); got != want {
 			t.Errorf("lockNamespace(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestWithQueueWorkOverridesOnlySetFields(t *testing.T) {
+	t.Parallel()
+
+	base := queue.WorkOptions{
+		Queues:      []string{"default"},
+		Concurrency: 4,
+		Limits:      map[string]int{"a": 1},
+		StopTimeout: time.Second,
+	}
+
+	tests := map[string]struct {
+		over queue.WorkOptions
+		want queue.WorkOptions
+	}{
+		"zero keeps the configuration": {over: queue.WorkOptions{}, want: base},
+		"sets polling and concurrency": {
+			over: queue.WorkOptions{Sleep: 50 * time.Millisecond, Concurrency: 2},
+			want: queue.WorkOptions{
+				Queues:      base.Queues,
+				Concurrency: 2,
+				Limits:      base.Limits,
+				StopTimeout: time.Second,
+				Sleep:       50 * time.Millisecond,
+			},
+		},
+		"sets queues and limits": {
+			over: queue.WorkOptions{Queues: []string{"render", "default"}, Limits: map[string]int{"render": 1}},
+			want: queue.WorkOptions{
+				Queues: []string{
+					"render",
+					"default",
+				},
+				Concurrency: 4,
+				Limits:      map[string]int{"render": 1},
+				StopTimeout: time.Second,
+			},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if diff := cmp.Diff(tt.want, withQueueWork(base, tt.over)); diff != "" {
+				t.Errorf("withQueueWork() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestWithQueueWorkReachesTheApp(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithQueueWork(queue.WorkOptions{Sleep: 10 * time.Millisecond}))
+
+	if app.queueWork.Sleep != 10*time.Millisecond {
+		t.Errorf("app.queueWork.Sleep = %v, want 10ms", app.queueWork.Sleep)
 	}
 }
