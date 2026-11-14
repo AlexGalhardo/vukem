@@ -21,9 +21,9 @@ import (
 // may be pasted next to them).
 
 // signalValue returns OTEL_EXPORTER_OTLP_<SIGNAL>_<name>, else
-// OTEL_EXPORTER_OTLP_<name>, and the key it came from.
-func signalValue(getenv func(string) string, signal, name string) (string, string) {
-	key := "OTEL_EXPORTER_OTLP_" + signal + "_" + name
+// OTEL_EXPORTER_OTLP_<name>, with the key it came from.
+func signalValue(getenv func(string) string, signal, name string) (key, value string) {
+	key = "OTEL_EXPORTER_OTLP_" + signal + "_" + name
 	if v := getenv(key); v != "" {
 		return key, v
 	}
