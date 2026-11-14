@@ -151,3 +151,69 @@ func TestTokensResourceNeedsMigration(t *testing.T) {
 		t.Fatalf("Find(old token) = %+v, %v, want no resource", got, err)
 	}
 }
+
+func TestTokensResourceAppearsAfterMigrationWithoutRestart(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	db, err := database.Open(ctx, "file:"+filepath.Join(testutil.TempDir(t), "tokens.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := schema.Migration{ID: "1_access_tokens", Up: func(s *schema.Schema) error {
+		return s.Create("access_tokens", func(t *schema.Table) {
+			t.String("id").Unique()
+			t.String("user_id").Index()
+			t.String("name")
+			t.String("hash")
+			t.Text("abilities")
+			t.Timestamp("last_used_at").Nullable()
+			t.Timestamp("expires_at").Nullable()
+			t.Timestamp("revoked_at").Nullable()
+			t.Timestamp("created_at")
+		})
+	}}
+
+	migrate := func(ms ...schema.Migration) {
+		t.Helper()
+
+		m, err := schema.NewMigrator(db, ms)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := m.Up(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	migrate(base)
+
+	long := auth.NewTokens(db)
+
+	first, _, err := long.Create(ctx, "1", "a", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := long.Find(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another process migrates and issues a resource token; this Tokens was
+	// never restarted.
+	migrate(base, auth.TokensResourceMigration("2_resource"))
+
+	plain, _, err := auth.NewTokens(db).CreateWith(ctx, "1", "b", nil, time.Hour, auth.CreateOptions{Resource: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := long.Find(ctx, plain); err != nil || got.Resource != "p" {
+		t.Fatalf("Find() = %+v, %v, want resource p without a restart", got, err)
+	}
+}
