@@ -6,3 +6,8 @@ require (
 	github.com/AlexGalhardo/vukem v0.43.0
 	github.com/google/go-cmp v0.7.0
 )
+
+require (
+	golang.org/x/sys v0.50.0 // indirect
+	modernc.org/sqlite v1.62.0 // indirect
+)
