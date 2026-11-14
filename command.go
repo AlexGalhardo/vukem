@@ -2,6 +2,7 @@ package vukem
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -62,7 +63,13 @@ type NoBootCommand interface {
 	NoBoot() bool
 }
 
-var errUsage = errors.New("usage error")
+// ErrUsage marks a usage error: an unknown command, an unknown flag or a bad
+// argument. The reason and the usage go to stderr, and [Main] exits with code
+// 2. An app maps its own exit code with errors.Is(err, vukem.ErrUsage) on the
+// error of [RunMain].
+var ErrUsage = errors.New("usage error")
+
+var errUsage = ErrUsage
 
 // rawArgsCommand is a built-in command that parses its own arguments
 // (db:seed: the seeder flags depend on the seeders its names pick).
@@ -130,19 +137,23 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 		}
 
 		if s := suggest.Closest(name, names); s != "" {
-			fmt.Fprintf(app.stdout, "unknown command %q (did you mean %q?)\n", name, s)
+			fmt.Fprintf(app.stderr, "unknown command %q (did you mean %q?)\n", name, s)
 
 			return errUsage
 		}
 
-		fmt.Fprintf(app.stdout, "unknown command %q\n\n", name)
-		printCommands(app)
+		fmt.Fprintf(app.stderr, "unknown command %q\n\n", name)
+		printCommandsTo(app.stderr, app)
 
 		return errUsage
 	}
 
 	fset := flag.NewFlagSet(name, flag.ContinueOnError)
-	fset.SetOutput(app.stdout)
+	// A flag error prints its reason and the usage here; they go to stderr
+	// unless the user asked for help (-h), which is output, not an error.
+	var flagOut bytes.Buffer
+
+	fset.SetOutput(&flagOut)
 	cmd.Flags(fset)
 
 	if _, raw := cmd.(rawArgsCommand); raw {
@@ -152,8 +163,12 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 
 	if err := fset.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			_, _ = flagOut.WriteTo(app.stdout)
+
 			return nil
 		}
+
+		_, _ = flagOut.WriteTo(app.stderr)
 
 		return errUsage
 	}
@@ -203,8 +218,10 @@ func isWarmupCommand(name string) bool {
 	}
 }
 
-func printCommands(app *App) {
-	tw := tabwriter.NewWriter(app.stdout, 0, 4, 2, ' ', 0)
+func printCommands(app *App) { printCommandsTo(app.stdout, app) }
+
+func printCommandsTo(w io.Writer, app *App) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "Available commands:")
 
 	for _, c := range app.Commands() {
