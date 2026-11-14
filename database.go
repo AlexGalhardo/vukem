@@ -467,7 +467,7 @@ func (seedCommand) Description() string {
 
 func (seedCommand) Flags(*flag.FlagSet) {}
 
-func (seedCommand) rawArgs() {}
+func (seedCommand) RawArgs() {}
 
 func (seedCommand) Run(ctx context.Context, app *App, args []string) error {
 	names, flagArgs, err := splitSeedArgs(args)
