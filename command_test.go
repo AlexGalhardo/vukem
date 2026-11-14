@@ -930,6 +930,43 @@ func TestBenchRunUsesAGivenDatabaseURL(t *testing.T) {
 	}
 }
 
+func TestRunMainVersionFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		opts    []Option
+		wantOut string
+		wantErr error
+	}{
+		{"with version", []Option{WithVersion("v1.4.2")}, "v1.4.2\n", nil},
+		{"without version", nil, "unknown command \"--version\"", errUsage},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+
+			build := func(opts ...Option) (*App, error) {
+				return New(append(opts, WithLogger(discardLogger()), WithStdout(&out))...)
+			}
+
+			err := RunMain(t.Context(), []string{"app", "--version"}, testSource(nil).Lookup, build, tt.opts...)
+			if !errors.Is(err, tt.wantErr) || !strings.Contains(out.String(), tt.wantOut) {
+				t.Fatalf(
+					"RunMain(--version) = %v, output %q, want %v and %q",
+					err,
+					out.String(),
+					tt.wantErr,
+					tt.wantOut,
+				)
+			}
+		})
+	}
+}
+
 func TestExitCodeOf(t *testing.T) {
 	t.Parallel()
 
