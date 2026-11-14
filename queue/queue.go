@@ -120,6 +120,8 @@ type options struct {
 	timeout time.Duration
 	delay   time.Duration
 	unique  string
+
+	progress func(ctx context.Context, p JobProgress)
 }
 
 // Option configures a handler (defaults) or a single dispatch.
@@ -251,6 +253,9 @@ type Queue struct {
 	mu       sync.RWMutex
 	handlers map[string]handler
 	obs      Observer
+
+	runMu   sync.Mutex
+	running map[string]*runningJob
 }
 
 // New returns a queue on driver. log may be nil.
@@ -638,7 +643,14 @@ func (q *Queue) attempt(ctx context.Context, h handler, m *Message, a Attempt) (
 		timeout = h.opts.timeout
 	}
 
-	ctx, cancel := context.WithTimeout(withAttempt(ctx, a), timeout)
+	jobCtx, cancelJob := context.WithCancelCause(withAttempt(ctx, a))
+	defer cancelJob(nil)
+
+	defer q.track(m.ID, cancelJob)()
+
+	jobCtx = context.WithValue(jobCtx, progressKey{}, q.reporter(h, m, a))
+
+	runCtx, cancel := context.WithTimeout(jobCtx, timeout)
 	defer cancel()
 
 	defer func() {
@@ -647,7 +659,13 @@ func (q *Queue) attempt(ctx context.Context, h handler, m *Message, a Attempt) (
 		}
 	}()
 
-	return h.run(ctx, m.Payload)
+	err = h.run(runCtx, m.Payload)
+	if err != nil && errors.Is(context.Cause(jobCtx), ErrCancelled) {
+		// Cancel is a verdict: retrying a job someone stopped would undo it.
+		err = fmt.Errorf("%w: %w: %w", ErrCancelled, ErrPermanent, err)
+	}
+
+	return err
 }
 
 func newID() string {
