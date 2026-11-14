@@ -100,7 +100,7 @@ const highlighted = await Promise.all(tabs.map((tab) => highlight(tab.code, tab.
 
 <Base title="Vukem — Web apps, the Go way" description="Build web apps and APIs in Go with a working starter, familiar net/http foundations, and your choice of frontend." canonical="/">
 	<main id="content" class="home flex flex-col gap-5 px-5 pb-6 pt-6 md:h-[calc(100dvh-var(--header-h))] md:gap-3 md:overflow-hidden md:px-8 md:pb-3 md:pt-6 lg:px-16 [@media(max-height:360px)]:h-auto [@media(max-height:360px)]:overflow-visible">
-		<div class="mx-auto grid w-full max-w-[90rem] min-h-0 flex-1 grid-cols-1 gap-6 md:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)] md:items-center md:gap-8 lg:gap-12">
+		<div class="mx-auto grid w-full max-w-[90rem] min-h-0 flex-1 grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:items-center md:gap-8 lg:gap-12">
 			<section class="min-w-0" aria-label="Get started">
 				<h1 class="text-[clamp(2rem,min(5vw,6.5vh),3.5rem)] font-semibold leading-[1.02] tracking-[-.06em] text-fg">
 					Make more. <span class="text-brand">Wire less.</span>
@@ -116,7 +116,7 @@ const highlighted = await Promise.all(tabs.map((tab) => highlight(tab.code, tab.
 					<ul class="py-1">
 						{commands.map((cmd) => (
 							<li class="flex items-center justify-between gap-2 py-0.5 pl-3 pr-1">
-								<code class="min-w-0 overflow-x-auto whitespace-nowrap py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" tabindex="0"><span class="mr-2 select-none text-[#28c840]" aria-hidden="true">$</span>{cmd}</code>
+								<code class="min-w-0 whitespace-pre-wrap break-all py-1 pl-[2ch] -indent-[2ch]"><span class="select-none text-[#28c840]" aria-hidden="true">$ </span>{cmd}</code>
 								<CopyButton client:visible text={cmd} className="terminal-copy" />
 							</li>
 						))}
@@ -127,16 +127,16 @@ const highlighted = await Promise.all(tabs.map((tab) => highlight(tab.code, tab.
 				</div>
 			</section>
 
-			<section data-feature-tabs class="flex min-h-0 min-w-0 flex-col gap-2 md:h-full" aria-label="Framework features">
+			<section data-feature-tabs class="flex min-h-0 min-w-0 flex-col gap-2 md:max-h-full" aria-label="Framework features">
 				<div role="tablist" aria-label="Framework features" class="tablist -mx-5 flex shrink-0 snap-x snap-proximity gap-2 overflow-x-auto px-6 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:mx-0 md:px-1">
 					{tabs.map((tab, i) => (
 						<button type="button" role="tab" id={`tab-${tab.id}`} aria-selected={i === 0 ? "true" : "false"} aria-controls={`panel-${tab.id}`} tabindex={i === 0 ? 0 : -1} class="shrink-0 snap-start rounded-full border border-border-strong px-4 py-1.5 text-sm font-medium text-muted transition-colors hover:text-fg aria-selected:border-fg aria-selected:bg-fg aria-selected:text-bg">{tab.label}</button>
 					))}
 				</div>
-				<div class="tab-panels min-h-0 flex-1">
+				<div class="tab-panels min-h-0">
 					{tabs.map((tab, i) => (
-						<div role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} tabindex="0" hidden={i !== 0} data-source={tab.source} class="flex h-full min-h-0 flex-col gap-3">
-							<figure class="landing-code flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-code-bg md:flex-1">
+						<div role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} tabindex="0" hidden={i !== 0} data-source={tab.source} class="flex min-h-0 flex-col gap-3 md:max-h-full">
+							<figure class="landing-code flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-code-bg">
 								<figcaption class="flex h-10 shrink-0 items-center justify-between border-b border-border pr-1.5 pl-4"><span class="truncate font-mono text-xs text-muted">{tab.id === "cli" ? "Terminal" : "Go"}</span><CopyButton client:visible text={tab.code} /></figcaption>
 								<div class="code-body min-h-0 flex-1 overflow-auto" set:html={highlighted[i]} />
 							</figure>
