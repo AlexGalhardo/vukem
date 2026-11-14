@@ -32,7 +32,7 @@ func checkBootConfig(
 		errs = append(errs, err)
 	}
 
-	key, err := checkConfig(cfg, src.EnvSet(), o.kind == KindWarmup)
+	key, err := checkConfig(cfg, src.EnvSet(), o.kind == KindWarmup, o.keyOptional)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -105,8 +105,9 @@ func checkBootConfig(
 
 // checkConfig enforces secure defaults at boot (fail closed). envSet
 // reports whether APP_ENV was given explicitly (config.Source.EnvSet);
-// warmup whether the app is built in KindWarmup.
-func checkConfig(cfg *Config, envSet, warmup bool) (config.Key, error) {
+// warmup whether the app is built in KindWarmup; optional whether it was built
+// with WithKeyOptional.
+func checkConfig(cfg *Config, envSet, warmup, optional bool) (config.Key, error) {
 	var errs []error
 
 	// A missing key is allowed only with an explicit APP_ENV=development or
@@ -114,10 +115,11 @@ func checkConfig(cfg *Config, envSet, warmup bool) (config.Key, error) {
 	// key-derived feature then fails closed (Key.Derive panics, Crypt is nil,
 	// cookie sessions refuse to start). A warmup app (codegen) never boots
 	// providers or serves, so it tolerates a missing key in any env; routes
-	// that need the key at build time still fail closed. A malformed key is
-	// always an error.
+	// that need the key at build time still fail closed. WithKeyOptional (the
+	// app declares it uses no key-derived feature) tolerates it in any env. A
+	// malformed key is always an error.
 	key, err := config.ParseKey(cfg.Key)
-	keyOptional := warmup || (envSet && !cfg.IsProduction())
+	keyOptional := warmup || optional || (envSet && !cfg.IsProduction())
 
 	if err != nil && (!errors.Is(err, config.ErrKeyMissing) || !keyOptional) {
 		errs = append(errs, err)
