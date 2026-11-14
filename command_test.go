@@ -1501,3 +1501,37 @@ func TestRunMainDefaultCommand(t *testing.T) {
 		}
 	})
 }
+
+func TestHiddenCommands(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	app := newTestApp(t, WithStdout(&out), WithStderr(&out), WithHiddenCommands("route:list", "make:nothing"),
+		WithProviders(ProviderFunc(func(app *App) error { app.AddCommand(echoCommand{}); return nil })))
+
+	if err := runCommand(t.Context(), app, "list", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := out.String(); strings.Contains(got, "route:list") || !strings.Contains(got, "test:echo") ||
+		!strings.Contains(got, "queue:work") {
+		t.Errorf("list = %q, want every command except the hidden route:list", got)
+	}
+
+	out.Reset()
+
+	if err := runCommand(t.Context(), app, "route:list", nil); err != nil {
+		t.Fatalf("a hidden command = %v, want it to still run", err)
+	}
+
+	found := false
+
+	for _, c := range app.Commands() {
+		found = found || c.Name() == "route:list"
+	}
+
+	if !found {
+		t.Error("App.Commands() lacks the hidden route:list")
+	}
+}

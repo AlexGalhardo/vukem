@@ -182,6 +182,24 @@ func WithVersion(version string) Option {
 	return func(o *options) error { o.version = version; return nil }
 }
 
+// WithHiddenCommands leaves the named commands out of the output of "list" and
+// "help", for a product CLI that does not want make:*, db:* and the like to
+// confuse its users. A hidden command still runs when named, and still shows
+// in App.Commands. An unknown name is ignored.
+func WithHiddenCommands(names ...string) Option {
+	return func(o *options) error {
+		if o.hiddenCommands == nil {
+			o.hiddenCommands = map[string]bool{}
+		}
+
+		for _, n := range names {
+			o.hiddenCommands[n] = true
+		}
+
+		return nil
+	}
+}
+
 // WithDefaultCommand sets the command [RunMain] and [Main] run when the
 // program gets no arguments, instead of "serve". An app whose binary is a
 // product CLI uses "help" so a bare invocation prints the command list

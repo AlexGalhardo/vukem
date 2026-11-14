@@ -358,6 +358,8 @@ type App struct {
 	seeders    []AppSeeder
 	// benchScenarios are the load-test scenarios of bench:run (WithBench).
 	benchScenarios []BenchScenario
+	// hiddenCommands are left out of the "list" output (WithHiddenCommands).
+	hiddenCommands map[string]bool
 
 	mu     sync.Mutex
 	booted bool
@@ -437,6 +439,7 @@ type options struct {
 	migrations     []schema.Migration
 	seeders        []AppSeeder
 	benchScenarios []BenchScenario
+	hiddenCommands map[string]bool
 	mailTransport  mail.Transport
 	listeners      []events.Registration
 	jobs           []queue.Registration
@@ -565,6 +568,7 @@ func New(opts ...Option) (*App, error) {
 		migrations:     o.migrations,
 		seeders:        o.seeders,
 		benchScenarios: o.benchScenarios,
+		hiddenCommands: o.hiddenCommands,
 		jobs:           o.jobs,
 		jobFuncs:       o.jobFuncs,
 		queueDriver:    o.queueDriver,
