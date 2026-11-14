@@ -16,6 +16,7 @@ const LANGS = [
   "http",
   "ini",
   "toml",
+  "protobuf",
 ] as const;
 
 const ALIASES: Record<string, string> = {
@@ -27,6 +28,7 @@ const ALIASES: Record<string, string> = {
   yml: "yaml",
   gohtml: "html",
   tmpl: "html",
+  proto: "protobuf",
 };
 
 let highlighter: Promise<Highlighter> | undefined;
