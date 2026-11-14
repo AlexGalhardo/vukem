@@ -75,3 +75,44 @@ func alive(t *testing.T, pid string) bool {
 
 	return strings.Contains(strings.ToLower(string(out)), "ping.exe")
 }
+
+func TestRunJobStartsTheProcessSuspendedUntilAssign(t *testing.T) {
+	t.Parallel()
+
+	job, err := newRunJob(Limits{Processes: 4})
+	if err != nil || job == nil {
+		t.Fatalf("newRunJob() = %v, %v", job, err)
+	}
+
+	defer job.close()
+
+	var out strings.Builder
+
+	cmd := exec.CommandContext(t.Context(), "cmd.exe", "/c", "echo started")
+	cmd.Stdout = &out
+
+	job.prepare(cmd)
+
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A process that already ran would have printed by now.
+	time.Sleep(500 * time.Millisecond)
+
+	if got := out.String(); got != "" {
+		t.Fatalf("the process ran %q before it joined the job", got)
+	}
+
+	if err := job.assign(cmd); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out.String(), "started") {
+		t.Errorf("output = %q, want the process to run after assign", out.String())
+	}
+}

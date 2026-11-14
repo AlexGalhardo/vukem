@@ -158,10 +158,10 @@ var (
 // has no mechanism that bounds a child instead of the server. See trap 3 in
 // the package comment for why they cannot be set from Go.
 //
-// The Windows column is not the Linux one with another name. The job is
-// created for the run and the process joins it right after it starts, so a
-// child is unlimited for that short window (os/exec cannot start it
-// suspended) and a grandchild spawned inside it would escape the job.
+// The Windows column is not the Linux one with another name. The run is
+// created suspended, put in its Job Object and only then resumed, so the
+// limits hold from the tool's first instruction and a grandchild can never
+// start outside the job.
 type Limits struct {
 	// CPUTime is RLIMIT_CPU on Linux, rounded up to whole seconds; the
 	// kernel sends SIGKILL when it is exceeded, so it is the backstop for a
@@ -482,6 +482,9 @@ func (t *Tool) run(
 	// group is the job.
 	cmd.Cancel = func() error { return job.kill(cmd) }
 
+	// After Prepare, so the suspended flag is merged with whatever it set.
+	job.prepare(cmd)
+
 	start := time.Now()
 	err = startAndWait(cmd, job)
 	res := Result{
@@ -501,9 +504,9 @@ func (t *Tool) run(
 		ErrRun, t.cfg.Name, res.ExitCode, res.Duration.Round(time.Millisecond), err)
 }
 
-// startAndWait runs cmd like Run, with the process joining job right after
-// it starts. A process that cannot join a limited job is killed: it would
-// run unlimited.
+// startAndWait runs cmd like Run, with the process joining job before it
+// runs its first instruction (it starts suspended on Windows). A process that
+// cannot join a limited job is killed: it never ran any code.
 func startAndWait(cmd *exec.Cmd, job *runJob) error {
 	if err := cmd.Start(); err != nil {
 		return err

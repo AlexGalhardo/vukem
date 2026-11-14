@@ -3,9 +3,11 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"sync/atomic"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -22,6 +24,9 @@ type runJob struct {
 	h        windows.Handle
 	limited  bool
 	assigned atomic.Bool
+	// suspended is set by prepare: the process was created suspended and
+	// assign must resume it.
+	suspended bool
 }
 
 // newRunJob creates the job for a run with l. Without limits a failure to
@@ -76,11 +81,26 @@ func newRunJob(l Limits) (*runJob, error) {
 	return &runJob{h: h, limited: limited}, nil
 }
 
-// assign puts the started process in the job. The child already runs when
-// this is called (os/exec offers no way to start it suspended), so there is
-// a short window in which it is unlimited and a grandchild it spawns in that
-// window would escape the job (documented on [Limits]). If the assignment fails, a run
-// without limits keeps the taskkill fallback, and a run with limits fails.
+// prepare makes cmd start suspended, so the process runs no code, spawns
+// nothing and allocates nothing before assign has put it in the job. It
+// merges with the creation flags that Prepare may have set.
+func (j *runJob) prepare(cmd *exec.Cmd) {
+	if j == nil {
+		return
+	}
+
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
+	j.suspended = true
+}
+
+// assign puts the suspended process in the job and resumes it. If the
+// assignment fails, a run without limits resumes anyway and keeps the
+// taskkill fallback; a run with limits returns the error and the caller kills
+// the process, which has not run any code.
 func (j *runJob) assign(cmd *exec.Cmd) error {
 	if j == nil {
 		return nil
@@ -89,14 +109,66 @@ func (j *runJob) assign(cmd *exec.Cmd) error {
 	err := assignProcess(j.h, cmd.Process.Pid)
 	if err == nil {
 		j.assigned.Store(true)
-		return nil
+	} else if j.limited {
+		return fmt.Errorf("engine: assign the process to its job object: %w", err)
 	}
 
-	if !j.limited {
-		return nil
+	if err := resumeProcess(cmd.Process.Pid); err != nil {
+		return fmt.Errorf("engine: resume the process: %w", err)
 	}
 
-	return fmt.Errorf("engine: assign the process to its job object: %w", err)
+	return nil
+}
+
+// resumeProcess resumes the threads of the suspended process pid; a process
+// created suspended has exactly one.
+func resumeProcess(pid int) error {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = windows.CloseHandle(snap) }()
+
+	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	if err := windows.Thread32First(snap, &entry); err != nil {
+		return err
+	}
+
+	resumed := false
+
+	for {
+		if entry.OwnerProcessID == uint32(pid) { //nolint:gosec // G115: a Windows process id is a positive 32-bit value
+			if err := resumeThread(entry.ThreadID); err != nil {
+				return err
+			}
+
+			resumed = true
+		}
+
+		if err := windows.Thread32Next(snap, &entry); err != nil {
+			break
+		}
+	}
+
+	if !resumed {
+		return errors.New("no thread found")
+	}
+
+	return nil
+}
+
+func resumeThread(id uint32) error {
+	h, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, id)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = windows.CloseHandle(h) }()
+
+	_, err = windows.ResumeThread(h)
+
+	return err
 }
 
 func assignProcess(job windows.Handle, pid int) error {

@@ -10,6 +10,8 @@ type runJob struct{}
 
 func newRunJob(Limits) (*runJob, error) { return nil, nil }
 
+func (*runJob) prepare(*exec.Cmd) {}
+
 func (*runJob) assign(*exec.Cmd) error { return nil }
 
 func (*runJob) kill(cmd *exec.Cmd) error { return killProcessGroup(cmd) }
