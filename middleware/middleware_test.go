@@ -467,6 +467,40 @@ func TestSecurity_A06_MethodOverrideRemembersMaxBytes(t *testing.T) {
 	}
 }
 
+// TestMethodOverrideBodyErrorForRawFormValue covers a handler that reads the
+// form with r.FormValue: the oversized form looks empty, web.BodyError tells why.
+func TestMethodOverrideBodyErrorForRawFormValue(t *testing.T) {
+	t.Parallel()
+
+	var (
+		value   string
+		bodyErr error
+	)
+
+	read := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		value, bodyErr = r.FormValue("email"), web.BodyError(r)
+	})
+	h := BodyLimit(64)(MethodOverride()(read))
+
+	oversized := "email=ada@example.com&pad=" + strings.Repeat("x", 200)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(oversized))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	if value != "" || !errors.Is(bodyErr, errs.ErrRequestTooLarge) {
+		t.Fatalf("oversized: FormValue = %q, BodyError = %v, want empty and ErrRequestTooLarge", value, bodyErr)
+	}
+
+	small := "email=ada@example.com"
+	r = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(small))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	if value != "ada@example.com" || bodyErr != nil {
+		t.Fatalf("small: FormValue = %q, BodyError = %v", value, bodyErr)
+	}
+}
+
 func TestPanicAfterStatusIs500(t *testing.T) {
 	t.Parallel()
 

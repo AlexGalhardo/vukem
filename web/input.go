@@ -142,6 +142,20 @@ func NoteBodyError(r *http.Request, err error) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), bodyErrorKey{}, err))
 }
 
+// BodyError reports the body-read error remembered by NoteBodyError (the
+// *http.MaxBytesError MethodOverride hit parsing an urlencoded form), mapped
+// like Input and Parse map it: errs.ErrRequestTooLarge for an oversized
+// body. It returns nil when none was noted. A handler that reads the form
+// with r.FormValue gets an empty form from an oversized body; call BodyError
+// first to answer 413 instead.
+func BodyError(r *http.Request) error {
+	if err := notedBodyError(r); err != nil {
+		return bodyError(err)
+	}
+
+	return nil
+}
+
 func notedBodyError(r *http.Request) error {
 	err, _ := r.Context().Value(bodyErrorKey{}).(error)
 	return err
