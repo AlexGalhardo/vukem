@@ -144,6 +144,26 @@ linters:
         - name: unexported-return
         - name: unused-parameter
         - name: var-naming
+        - name: blank-imports
+        - name: confusing-results
+        - name: dot-imports
+        - name: early-return
+        - name: empty-block
+        - name: error-naming
+        - name: errorf
+        - name: identical-branches
+        - name: if-return
+        - name: import-shadowing
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-naming
+        - name: unnecessary-stmt
+        - name: unreachable-code
+        - name: var-declaration
     sloglint:
       context: scope
   exclusions:
