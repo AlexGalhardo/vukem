@@ -114,6 +114,8 @@ r.Get("/rpc/openrpc.json", func(c *web.Ctx) error {
 
 Each params field becomes a content descriptor, in field order, marked `required` when its tag says so. Feed the document to OpenRPC tools (a playground, or a generator for a TypeScript client); Vukem's own [client generation](/docs/rest-apis/client-generation) covers OpenAPI only.
 
+The same building blocks make an [MCP server for AI agents](/docs/rest-apis/mcp).
+
 ## Calling from Go
 
 `jsonrpc.Client` calls any JSON-RPC 2.0 endpoint, typed with generics:

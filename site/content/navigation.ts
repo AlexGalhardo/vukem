@@ -61,6 +61,7 @@ export const navigation: NavCategory[] = [
       "graphql",
       "grpc",
       "json-rpc",
+      "mcp",
     ],
   },
   {

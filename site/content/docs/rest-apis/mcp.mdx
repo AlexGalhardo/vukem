@@ -1,0 +1,297 @@
+---
+title: An MCP server for your app
+description: Expose typed app methods to AI agents as Model Context Protocol tools, built on the jsonrpc package, with schemas from your structs and auth from the router.
+---
+
+The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets an AI agent discover and call the functions of an app. Its wire format is JSON-RPC 2.0: an agent sends `initialize`, asks for `tools/list`, then runs `tools/call`. Vukem has no MCP package for your app yet (the `boost:mcp` command serves agents that **write** your app, not agents that **use** it), but the pieces are already in the framework, so a small server is a page of code:
+
+- [`jsonrpc`](/docs/rest-apis/json-rpc) parses the requests, batches, errors and notifications.
+- `openapi.Schemas` turns the same structs and `validate` tags that feed [OpenAPI](/docs/rest-apis/openapi) into each tool's `inputSchema` and `outputSchema`.
+- The router middleware authenticates the caller, and `jsonrpc.Guard` checks the scope of each tool.
+
+This page is a recipe, not an API: copy it, shape it to your app and keep it next to your routes.
+
+## What MCP asks of the server
+
+Three methods and one notification are enough for tools:
+
+| Method | Returns |
+| --- | --- |
+| `initialize` | the protocol version the server speaks, its capabilities (`tools`) and its name |
+| `notifications/initialized` | nothing (a notification) |
+| `tools/list` | every tool with `name`, `description`, `inputSchema` and `outputSchema` |
+| `tools/call` | `content` (text for the model), `structuredContent` (the typed result) and `isError` |
+
+MCP is versioned by date and the revisions differ in how a session starts, so read the specification of the revision you target and keep the server on its side of it. The recipe below does not keep session state, which is what a stateless revision and a server behind a load balancer both want.
+
+## A tool registry
+
+A tool is a name, a description, the two schemas and a function. `Add` is generic like `jsonrpc.Method`: it takes the params type `P` and the result type `R`, validates the arguments with the same strict `z` schema, and builds both JSON Schemas once at registration:
+
+```go title="app/mcp/tools.go"
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+
+	"github.com/AlexGalhardo/vukem/jsonrpc"
+	"github.com/AlexGalhardo/vukem/openapi"
+	"github.com/AlexGalhardo/vukem/z"
+)
+
+type tool struct {
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"inputSchema"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
+
+	guards []jsonrpc.Guard
+	call   func(ctx context.Context, args map[string]any) (any, error)
+}
+
+// Registry holds the tools of one MCP server.
+type Registry struct {
+	tools []*tool
+}
+
+// schemaOf builds a self-contained JSON Schema for t: nested structs are
+// $ref entries under components, so the document carries them along.
+func schemaOf(t reflect.Type) map[string]any {
+	schemas := openapi.NewSchemas()
+	out := schemas.Object(t, nil)
+
+	if defs := schemas.Components(); len(defs) > 0 {
+		out["components"] = map[string]any{"schemas": defs}
+	}
+
+	return out
+}
+
+// Add registers fn as the tool name. P must be a struct.
+func Add[P, R any](reg *Registry, name, description string, fn func(context.Context, P) (R, error), guards ...jsonrpc.Guard) {
+	args := z.For[P]().Strict()
+
+	reg.tools = append(reg.tools, &tool{
+		Name:         name,
+		Description:  description,
+		InputSchema:  schemaOf(reflect.TypeFor[P]()),
+		OutputSchema: schemaOf(reflect.TypeFor[R]()),
+		guards:       guards,
+		call: func(ctx context.Context, in map[string]any) (any, error) {
+			p, err := args.Parse(in)
+			if err != nil {
+				if is, ok := z.AsIssues(err); ok {
+					return nil, &jsonrpc.Error{
+						Code:    jsonrpc.CodeInvalidParams,
+						Message: "Invalid params",
+						Data:    map[string]any{"fields": is.Fields()},
+					}
+				}
+
+				return nil, err
+			}
+
+			return fn(ctx, p)
+		},
+	})
+}
+
+func (r *Registry) find(name string) *tool {
+	for _, t := range r.tools {
+		if t.Name == name {
+			return t
+		}
+	}
+
+	return nil
+}
+
+// result is the answer to tools/call.
+type result struct {
+	Content           []map[string]any `json:"content"`
+	StructuredContent any              `json:"structuredContent,omitempty"`
+	IsError           bool             `json:"isError"`
+}
+
+func ok(v any) (result, error) {
+	text, err := json.Marshal(v)
+	if err != nil {
+		return result{}, err
+	}
+
+	return result{
+		Content:           []map[string]any{{"type": "text", "text": string(text)}},
+		StructuredContent: v,
+	}, nil
+}
+```
+
+`R` must be a struct for `OutputSchema` (the schema of a scalar result is a plain type, and MCP wants an object for `structuredContent`): return a small result struct, not a bare string or number.
+
+## The server
+
+The three methods are ordinary `jsonrpc.Method` registrations. The params of `tools/call` carry the tool name and its arguments; the arguments stay an open object until the tool's own schema parses them:
+
+```go title="app/mcp/server.go"
+package mcp
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/jsonrpc"
+)
+
+// protocolVersion is the MCP revision this server answers with.
+const protocolVersion = "2025-06-18"
+
+type initializeParams struct {
+	ProtocolVersion string         `json:"protocolVersion"`
+	Capabilities    map[string]any `json:"capabilities"`
+	ClientInfo      map[string]any `json:"clientInfo"`
+}
+
+type callParams struct {
+	Name      string         `json:"name" validate:"required"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+type listResult struct {
+	Tools []*tool `json:"tools"`
+}
+
+// Handler returns the MCP endpoint of reg, to mount behind your
+// authentication middleware.
+func Handler(reg *Registry, name, version string, cfg jsonrpc.Config) http.Handler {
+	srv := jsonrpc.NewServer(cfg)
+
+	jsonrpc.Method(srv, "initialize", func(ctx context.Context, p initializeParams) (map[string]any, error) {
+		return map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": name, "version": version},
+		}, nil
+	})
+
+	jsonrpc.Method(srv, "notifications/initialized", func(ctx context.Context, _ struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	jsonrpc.Method(srv, "tools/list", func(ctx context.Context, _ struct{}) (listResult, error) {
+		return listResult{Tools: reg.tools}, nil
+	})
+
+	jsonrpc.Method(srv, "tools/call", func(ctx context.Context, p callParams) (result, error) {
+		t := reg.find(p.Name)
+		if t == nil {
+			return result{}, errs.ErrNotFound
+		}
+
+		for _, guard := range t.guards {
+			if err := guard(ctx); err != nil {
+				return result{}, err
+			}
+		}
+
+		out, err := t.call(ctx, p.Arguments)
+		if err != nil {
+			return result{}, err
+		}
+
+		return ok(out)
+	})
+
+	return srv
+}
+```
+
+`jsonrpc.Server` is an `http.Handler`, so `Handler` returns it directly. Bad arguments come back as the usual `-32602 Invalid params` with `data.fields`, which an agent can read and retry; an unknown tool is a `-32004`; anything unexpected is a `-32603` with no detail.
+
+## Mounting it, with auth and scopes
+
+Authentication belongs on the route, before the server reads the method, exactly as for any [JSON-RPC endpoint](/docs/rest-apis/json-rpc#authorization). An agent gets an `auth.Tokens` token with abilities.
+
+A `jsonrpc.Guard` only receives a `context.Context`, so a small middleware, placed after `auth.Required`, copies the token into it:
+
+```go title="app/mcp/token.go"
+package mcp
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/jsonrpc"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+type tokenKey struct{}
+
+// WithToken stores the access token that authenticated the request (from
+// the token guard named guard) in the request context.
+func WithToken(guard string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c := web.NewCtx(w, r, web.ServicesFrom(r.Context()))
+			if tok, ok := auth.CurrentToken(c, guard); ok {
+				r = r.WithContext(context.WithValue(r.Context(), tokenKey{}, tok))
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// Can is a guard that needs the token to grant ability. Without a token
+// it refuses: it fails closed.
+func Can(ability string) jsonrpc.Guard {
+	return func(ctx context.Context) error {
+		tok, ok := ctx.Value(tokenKey{}).(auth.Token)
+		if !ok || !tok.Can(ability) {
+			return errs.ErrForbidden
+		}
+
+		return nil
+	}
+}
+```
+
+Then register each tool with its scope and mount the endpoint:
+
+```go title="routes/api.go"
+reg := &mcp.Registry{}
+
+mcp.Add(reg, "projects.render", "Render a project to a video file.",
+	func(ctx context.Context, p RenderParams) (RenderResult, error) {
+		return renders.Start(ctx, p)
+	},
+	mcp.Can("projects:render"),
+)
+
+r.Group("/mcp", func(g *router.Group) {
+	g.Use(auth.Required(acc.API), mcp.WithToken("api"))
+	g.Handle("POST /", mcp.Handler(reg, "my-app", app.Version, jsonrpc.Config{Logger: app.Logger}))
+})
+```
+
+`Token.Resource` (see [Authentication](/docs/security/api-tokens)) can limit a key to one project: compare it with the project id in the tool's params, and refuse when it differs. An empty `Resource` means the token carries none, so decide on purpose whether that is "any project" for your app.
+
+Rate limits, request ids, logging and tracing come from the middleware you already put on the group; nothing here is MCP-specific.
+
+## Standard input and output
+
+A local agent often starts the server as a child process and talks over standard input and output, one JSON message per line. The `http.Handler` serves that too: read a line, run it through the handler with `httptest.NewRequest` and a recorder, and write the body back.
+
+Keep that for a `stdio` command of your binary, and never mount it on the network: it has no authentication.
+
+## The official SDK instead
+
+The [official Go SDK](https://github.com/modelcontextprotocol/go-sdk) implements the protocol, both transports and the session handling for you, and tracks new revisions of the specification. Prefer it when you want those without owning the code, or need features beyond tools (resources, prompts, sampling). It is a third-party dependency, so it follows your own dependency policy, and you still build `inputSchema` from your structs (the `schemaOf` helper above works there too) and put the same router middleware and guards in front of it.
+
+## Where this is going
+
+Vukem may ship a `contrib/mcp` module once an app has proved the shape of this recipe: typed tool registration, schemas from `z`, the router's auth and the guards you saw here. Until then it stays a recipe so that the API is settled by real use, not by guesses. Tell us in the issue tracker what your server needed that the recipe did not give you.
