@@ -1,0 +1,37 @@
+# {{.Name}}
+
+The Vukem {{.Example}} example, ready-made: this folder holds no source code,
+only a Compose file that runs the published image `{{.Image}}`.
+
+```sh
+docker compose up
+```
+
+Open <http://localhost:3000>.{{if .Finance}} The mail catcher inbox is at <http://localhost:8025>.{{end}}
+{{- if .Finance}}
+
+## Demo data
+
+The image runs in development mode, so the local seeders are available. Seed
+the admin and the demo workspace, then read the generated admin password:
+
+```sh
+docker compose exec app /app/app db:seed FinanceAdminSeeder FinanceDemoSeeder
+docker compose exec app sh -c "cat storage/finance-admin-*.txt"
+```
+
+Sign in at `/login` with `admin@example.test`. Choose November 2026 to see the
+demo transactions. Seeding twice changes nothing.
+
+This is a demo, not a deployment: do not expose it to a network or reuse its
+credentials anywhere.
+{{- end}}
+
+## Develop with the source instead
+
+```sh
+vukem new {{.Name}}-src --example {{.Example}}
+```
+
+`.env` holds `APP_KEY`; keep it out of version control. `docker compose down -v`
+stops the stack and deletes its data.

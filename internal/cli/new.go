@@ -54,6 +54,8 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	example := set.String("example", "", "example app: todo (the default without a terminal), finance or none")
 	noExample := set.Bool("no-example", false, "same as --example none")
 	seed := set.Bool("seed", false, "with --example finance, migrate and seed the local admin and demo data")
+	prebuilt := set.Bool("prebuilt", false,
+		"no source: a compose.yaml that runs the ready-made example image (todo by default, or --example finance)")
 	pmFlag := set.String(
 		"pm", "",
 		"JavaScript package manager: npm, bun, pnpm or yarn (default: the first of bun, npm, pnpm, yarn on PATH)",
@@ -85,6 +87,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			example:     *example,
 			noExample:   *noExample,
 			seed:        *seed,
+			prebuilt:    *prebuilt,
 			std: standardsOpts{
 				standards: *standards,
 				license:   strings.ToLower(strings.TrimSpace(*license)),
@@ -102,6 +105,7 @@ type newOpts struct {
 	noExample                                         bool
 	example                                           string
 	seed                                              bool
+	prebuilt                                          bool
 	std                                               standardsOpts
 }
 
@@ -113,6 +117,12 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 
 	if !projectName.MatchString(name) {
 		return usagef("invalid project name %q (letters, digits, '-', '_' and '.')", name)
+	}
+
+	if o.prebuilt {
+		if c := prebuiltConflict(o); c != "" {
+			return usagef("--prebuilt runs a ready-made image and writes no source: drop %s", c)
+		}
 	}
 
 	std := o.std
@@ -128,6 +138,14 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 	kind, err := chooseExample(env, o.example, o.noExample, o.minimal)
 	if err != nil {
 		return err
+	}
+
+	if o.prebuilt || askPrebuilt(env, o, kind) {
+		if kind == exampleNone {
+			return usagef("--prebuilt needs an example: choose todo or finance")
+		}
+
+		return writePrebuilt(env, name, kind)
 	}
 
 	st, err := selectNewStack(env, o, kind)
