@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **cli:** The finance app's `/admin` lists users, workspaces and subscriptions (read-only, behind the admin policies; `/admin/users` was a 404) and its screens no longer sit inside the visitor layout, which showed a second header and a "Log in" button to a signed-in admin.
 - **studio:** The row page saves and deletes again. Its form `action` was escaped twice (`?k%3d1`), so every edit or delete answered 422 "the key does not match the primary key"; a handler test now submits the rendered forms.
 - **schema:** Stop `vukem migrate` in production from refusing `DROP CONSTRAINT`, `ALTER COLUMN ... DROP DEFAULT` and `DROP NOT NULL` (and MySQL `DROP INDEX`, `DROP PRIMARY KEY`, `DROP FOREIGN KEY`) as if they were `DROP COLUMN`: they no longer need `--allow-destructive`.
 - **database:** A SQLite URL whose directory does not exist now fails with an error that names the directory, instead of "unable to open database file (14)".
