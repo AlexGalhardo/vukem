@@ -162,11 +162,12 @@ func (in *interceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) c
 		start := time.Now()
 		err := next(ctx, &validatingConn{StreamingHandlerConn: conn, in: in})
 
-		if cerr := in.finish(ctx, conn.Spec(), conn.Peer(), start, err); cerr != nil {
-			return cerr
+		cerr := in.finish(ctx, conn.Spec(), conn.Peer(), start, err)
+		if cerr == nil {
+			return nil // returning cerr directly would wrap a nil *connect.Error in a non-nil error
 		}
 
-		return nil
+		return cerr
 	}
 }
 
