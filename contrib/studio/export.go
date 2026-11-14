@@ -75,7 +75,14 @@ func (s *Studio) exportDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	coll, q := r.PathValue("collection"), r.URL.Query()
-	query := DocQuery{Collection: coll, Filters: filtersFrom(q), Desc: q.Get("desc") == "1", PerPage: 200}
+
+	filters, err := filtersFrom(q)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	query := DocQuery{Collection: coll, Filters: filters, Desc: q.Get("desc") == "1", PerPage: 200}
 
 	// Check the collection and the filters before the response starts.
 	if _, err := m.Documents(r.Context(), DocQuery{Collection: coll, Filters: query.Filters, PerPage: 1}); err != nil {

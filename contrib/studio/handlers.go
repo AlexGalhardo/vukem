@@ -3,8 +3,10 @@ package studio
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -70,6 +72,12 @@ func (s *Studio) redis(r *http.Request) RedisSource {
 // input the browser sent, 500 otherwise. The message is the database's own
 // (no stack trace) and never holds the connection URL, which sources redact.
 func (s *Studio) fail(w http.ResponseWriter, r *http.Request, err error) {
+	s.failWith(w, r, err, nil)
+}
+
+// failWith is fail plus extra template data; a write failure passes the form
+// back so the page can repeat what was typed.
+func (s *Studio) failWith(w http.ResponseWriter, r *http.Request, err error, extra map[string]any) {
 	status := http.StatusInternalServerError
 
 	switch {
@@ -81,7 +89,26 @@ func (s *Studio) fail(w http.ResponseWriter, r *http.Request, err error) {
 
 	s.cfg.Log.WarnContext(r.Context(), "studio request failed", "path", r.URL.Path, "status", status,
 		"cause", errors.Unwrap(err))
-	s.page(w, r, status, "error", map[string]any{"Message": err.Error()})
+
+	data := map[string]any{"Message": err.Error()}
+	maps.Copy(data, extra)
+	s.page(w, r, status, "error", data)
+}
+
+// failForm answers a refused form write: the error, a link back to the form
+// and the values that were submitted, so a long edit is not lost.
+func (s *Studio) failForm(w http.ResponseWriter, r *http.Request, err error, back string) {
+	type submitted struct{ Name, Text string }
+
+	var typed []submitted
+
+	for _, k := range slices.Sorted(maps.Keys(r.PostForm)) {
+		if name, ok := strings.CutPrefix(k, "col."); ok && len(r.PostForm[k]) > 0 {
+			typed = append(typed, submitted{name, truncateBytes(r.PostForm[k][0], 4096)})
+		}
+	}
+
+	s.failWith(w, r, err, map[string]any{"Back": back, "Typed": typed})
 }
 
 // errInput marks a refusal caused by what the browser sent.
@@ -120,20 +147,22 @@ func (s *Studio) sourcePage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// filtersFrom reads f=<column>:<op>:<value> (repeatable).
-func filtersFrom(q url.Values) []Filter {
+// filtersFrom reads f=<column>:<op>:<value> (repeatable). A filter without an
+// operator is refused: dropping it would show every row as if it matched.
+func filtersFrom(q url.Values) ([]Filter, error) {
 	var out []Filter
 
 	for _, raw := range q["f"] {
 		col, rest, ok := strings.Cut(raw, ":")
-		op, val, _ := strings.Cut(rest, ":")
-
-		if ok {
-			out = append(out, Filter{Column: col, Op: op, Value: val})
+		if !ok || col == "" {
+			return nil, inputError("a filter must look like column:op:value, for example qty:gt:5")
 		}
+
+		op, val, _ := strings.Cut(rest, ":")
+		out = append(out, Filter{Column: col, Op: op, Value: val})
 	}
 
-	return out
+	return out, nil
 }
 
 func intParam(q url.Values, key string) int {
@@ -149,8 +178,15 @@ func (s *Studio) documentsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+
+	filters, err := filtersFrom(q)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
 	query := DocQuery{
-		Collection: r.PathValue("collection"), Filters: filtersFrom(q), Sort: q.Get("sort"), Desc: q.Get("desc") == "1",
+		Collection: r.PathValue("collection"), Filters: filters, Sort: q.Get("sort"), Desc: q.Get("desc") == "1",
 		After: q.Get("after"), Page: intParam(q, "page"), PerPage: intParam(q, "per"),
 	}
 
