@@ -186,6 +186,11 @@ func TestLimitsAreRefusedWhereTheyCannotApply(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Find() with prlimit present = %v", err)
 		}
+	case "windows":
+		// A Job Object carries CPUTime and AddressSpace natively.
+		if err != nil {
+			t.Fatalf("Find() on windows = %v, want the limits applied", err)
+		}
 	default:
 		if !errors.Is(err, engine.ErrLimitsUnsupported) {
 			t.Fatalf("Find() on %s = %v, want ErrLimitsUnsupported", runtime.GOOS, err)

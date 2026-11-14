@@ -9,6 +9,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -76,6 +77,47 @@ func main() {
 	case "sleep":
 		d, _ := time.ParseDuration(os.Args[2])
 		time.Sleep(d)
+	case "alloc":
+		// Commit and touch N MiB, then report it: a memory limit makes the
+		// runtime abort before the line is printed.
+		n, _ := strconv.Atoi(os.Args[2])
+		buf := make([]byte, n<<20)
+
+		for i := 0; i < len(buf); i += 4096 {
+			buf[i] = 1
+		}
+
+		fmt.Println("allocated", len(buf)>>20, "MiB")
+	case "spin":
+		// Burn user-mode CPU until killed.
+		for x := 0; ; x++ {
+			_ = x
+		}
+	case "spawn":
+		// Start a long-lived grandchild, print its pid on stderr, and wait
+		// for it. A child that cannot start (a process limit) is reported.
+		child := exec.Command(os.Args[0], "sleep", "60s")
+		if err := child.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "spawn failed:", err)
+			os.Exit(3)
+		}
+
+		fmt.Fprintln(os.Stderr, "grandchild", child.Process.Pid)
+
+		if err := child.Wait(); err != nil {
+			fmt.Fprintln(os.Stderr, "grandchild ended:", err)
+			os.Exit(4)
+		}
+	case "orphan":
+		// Start a long-lived grandchild, print its pid on stderr and exit
+		// without waiting: a helper that outlives the tool.
+		child := exec.Command(os.Args[0], "sleep", "60s")
+		if err := child.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "orphan failed:", err)
+			os.Exit(3)
+		}
+
+		fmt.Fprintln(os.Stderr, "grandchild", child.Process.Pid)
 	case "fail":
 		code, _ := strconv.Atoi(os.Args[2])
 		fmt.Fprintln(os.Stderr, "faketool: deliberate failure")

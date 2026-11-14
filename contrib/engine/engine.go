@@ -49,17 +49,20 @@
 // where it should not is contained by default rather than by a flag the
 // next release might reinterpret.
 //
-// # 3. Resource limits have to go through prlimit(1)
+// # 3. Resource limits have to be applied to the child, natively
 //
 // syscall.Setrlimit applies to the *caller*, and Go exposes no hook
 // between fork and exec, so a limit set in the parent would bound the
-// server instead of the tool. The only correct route is prlimit(1) from
-// util-linux, which applies the limits and then execs. [Find] resolves it
-// when [Config.Limits] is set and **refuses** when it cannot: on a
-// platform without it, silently unlimited execution is the outcome worth
-// refusing. Limits are Linux-only for that reason; everything else in
-// this package applies everywhere, so an unlimited Tool works on Windows
-// and macOS.
+// server instead of the tool. On Linux the route is prlimit(1) from
+// util-linux, which applies the limits and then execs; [Find] resolves it
+// when [Config.Limits] is set. On Windows the route is a Job Object that
+// every run is assigned to (see [Limits] for what each field becomes).
+// [Find] **refuses** where it cannot apply a limit: silently unlimited
+// execution is the outcome worth refusing. That is macOS (no equivalent
+// that bounds a child: RLIMIT_AS is not enforced there and there is no
+// prlimit), Linux without prlimit, and a FileSize on Windows (a Job Object
+// has no per-process file size limit). Everything else in this package
+// applies everywhere, so an unlimited Tool works on every platform.
 //
 // # 4. Cancellation must kill the process group
 //
@@ -67,7 +70,9 @@
 // running, holding the working directory open — which on Windows also
 // blocks the directory's removal, so a test's t.TempDir cleanup fails
 // after the test passed. Every run starts its own process group and
-// cancellation kills the group.
+// cancellation kills the group. On Windows the group is the run's Job
+// Object (created with kill-on-close), which also ends processes that
+// outlive a run that exited normally.
 //
 // # 5. The shape for that is Cmd.Cancel and Cmd.WaitDelay
 //
@@ -131,10 +136,13 @@ var (
 	// ErrNotFound reports a binary that could not be resolved.
 	ErrNotFound = errors.New("engine: binary not found")
 	// ErrLimitsUnsupported reports that Limits were asked for where they
-	// cannot be applied: a platform other than Linux, or a Linux host
-	// without prlimit(1) from util-linux. Refused rather than ignored,
-	// because the alternative is unlimited execution that looks limited.
-	ErrLimitsUnsupported = errors.New("engine: resource limits need prlimit(1) from util-linux on Linux")
+	// cannot be applied: macOS or another platform, a Linux host without
+	// prlimit(1) from util-linux, or a FileSize on Windows. Refused rather
+	// than ignored, because the alternative is unlimited execution that
+	// looks limited.
+	ErrLimitsUnsupported = errors.New(
+		"engine: resource limits need prlimit(1) from util-linux on Linux or a Job Object on Windows",
+	)
 	// ErrRun reports a tool that exited non-zero, was killed, or could not
 	// be started. The Result returned alongside holds the captured output.
 	ErrRun = errors.New("engine: run failed")
@@ -144,23 +152,38 @@ var (
 	ErrDir = errors.New("engine: working directory unusable")
 )
 
-// Limits bound one run. They are applied by prlimit(1), so they are
-// Linux-only; a zero field is not limited by this package. See trap 3 in
+// Limits bound one run; a zero field is not limited by this package. On
+// Linux they are applied by prlimit(1); on Windows by a Job Object the run
+// is assigned to; macOS refuses them with [ErrLimitsUnsupported] because it
+// has no mechanism that bounds a child instead of the server. See trap 3 in
 // the package comment for why they cannot be set from Go.
+//
+// The Windows column is not the Linux one with another name. The job is
+// created for the run and the process joins it right after it starts, so a
+// child is unlimited for that short window (os/exec cannot start it
+// suspended) and a grandchild spawned inside it would escape the job.
 type Limits struct {
-	// CPUTime is RLIMIT_CPU, rounded up to whole seconds. The kernel
-	// sends SIGKILL when it is exceeded, so it is the backstop for a tool
-	// that ignores its own timeout.
+	// CPUTime is RLIMIT_CPU on Linux, rounded up to whole seconds; the
+	// kernel sends SIGKILL when it is exceeded, so it is the backstop for a
+	// tool that ignores its own timeout. On Windows it is the job's
+	// PerProcessUserTimeLimit: user-mode time of each process, which
+	// terminates the process (kernel time is not counted).
 	CPUTime time.Duration
-	// AddressSpace is RLIMIT_AS in bytes: the ceiling on a decoder handed
-	// a file that claims enormous dimensions.
+	// AddressSpace is RLIMIT_AS in bytes on Linux: the ceiling on a decoder
+	// handed a file that claims enormous dimensions. On Windows it is the
+	// job's ProcessMemoryLimit, the memory a process may commit; an
+	// allocation beyond it fails, and a tool that cannot continue without it
+	// dies, which is the point.
 	AddressSpace int64
-	// FileSize is RLIMIT_FSIZE in bytes: the ceiling on what one run can
-	// write, whatever the tool thinks it is producing.
+	// FileSize is RLIMIT_FSIZE in bytes on Linux: the ceiling on what one
+	// run can write, whatever the tool thinks it is producing. Windows has
+	// no equivalent in a Job Object, so it is refused there.
 	FileSize int64
-	// Processes is RLIMIT_NPROC: the ceiling on threads and children.
-	// Note that it counts per real user, not per process tree, so a
-	// server running several tools shares the budget.
+	// Processes is RLIMIT_NPROC on Linux: the ceiling on threads and
+	// children. Note that it counts per real user, not per process tree, so
+	// a server running several tools shares the budget. On Windows it is the
+	// job's ActiveProcessLimit, per run and counting the tool itself, so 1
+	// forbids any child.
 	Processes int
 }
 
@@ -214,7 +237,8 @@ type Config struct {
 	// the package builds. Each one is a deliberate widening of what the
 	// child can see (trap 1).
 	Env map[string]string
-	// Limits bound every run through prlimit(1) (Linux only).
+	// Limits bound every run: prlimit(1) on Linux, a Job Object on Windows,
+	// [ErrLimitsUnsupported] on macOS (see [Limits]).
 	Limits Limits
 	// CPUCount is the CPU budget a run may use, reported by
 	// Tool.CPUCount and never placed in the arguments by this package.
@@ -228,8 +252,8 @@ type Config struct {
 	MaxOutput int
 	// Prepare, when set, receives every run's finished *exec.Cmd just
 	// before it starts, so a caller can add what this package does not
-	// provide: SysProcAttr fields, or a hook that places the process in a
-	// Windows Job Object or a macOS limit. It sees the command with the
+	// provide: SysProcAttr fields, or a macOS limit. (The Windows Job Object
+	// is built in: see [Limits].) It sees the command with the
 	// isolation already applied (Dir, Env, process group); changing those
 	// removes the guarantees documented on this package. The version probe
 	// does not call it. Prepare must not start or wait for the command.
@@ -281,12 +305,8 @@ func Find(ctx context.Context, cfg Config) (*Tool, error) {
 	t := &Tool{cfg: cfg, path: path}
 
 	if !cfg.Limits.zero() {
-		if runtime.GOOS != "linux" {
-			return nil, fmt.Errorf("%w (this is %s)", ErrLimitsUnsupported, runtime.GOOS)
-		}
-
-		if t.prlimit, err = exec.LookPath("prlimit"); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrLimitsUnsupported, err)
+		if t.prlimit, err = limitsBackend(cfg.Limits); err != nil {
+			return nil, err
 		}
 	}
 
@@ -446,15 +466,24 @@ func (t *Tool) run(
 		t.cfg.Prepare(cmd)
 	}
 
-	// Cancel kills the group, not just the parent: ffmpeg and yt-dlp
-	// spawn children that keep the working directory open. WaitDelay
-	// bounds the wait for the pipes after that, so a child holding stderr
+	// WaitDelay bounds the wait for the pipes after that, so a child holding stderr
 	// open cannot keep Wait from returning.
-	cmd.Cancel = func() error { return killProcessGroup(cmd) }
 	cmd.WaitDelay = 5 * time.Second
 
+	job, err := newRunJob(t.cfg.Limits)
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: %w", ErrRun, err)
+	}
+
+	defer job.close()
+
+	// Cancel kills the group, not just the parent: ffmpeg and yt-dlp
+	// spawn children that keep the working directory open. On Windows the
+	// group is the job.
+	cmd.Cancel = func() error { return job.kill(cmd) }
+
 	start := time.Now()
-	err := cmd.Run()
+	err = startAndWait(cmd, job)
 	res := Result{
 		Stderr:          stderr.String(),
 		StderrTruncated: stderr.over,
@@ -470,6 +499,46 @@ func (t *Tool) run(
 	// alone rarely does.
 	return res, fmt.Errorf("%w: %s exited %d after %s: %w",
 		ErrRun, t.cfg.Name, res.ExitCode, res.Duration.Round(time.Millisecond), err)
+}
+
+// startAndWait runs cmd like Run, with the process joining job right after
+// it starts. A process that cannot join a limited job is killed: it would
+// run unlimited.
+func startAndWait(cmd *exec.Cmd, job *runJob) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	if err := job.assign(cmd); err != nil {
+		_ = job.kill(cmd)
+		_ = cmd.Wait()
+
+		return err
+	}
+
+	return cmd.Wait()
+}
+
+// limitsBackend checks that l can be applied here and returns the prlimit
+// path Linux runs go through ("" elsewhere).
+func limitsBackend(l Limits) (string, error) {
+	switch runtime.GOOS {
+	case "linux":
+		path, err := exec.LookPath("prlimit")
+		if err != nil {
+			return "", fmt.Errorf("%w: %w", ErrLimitsUnsupported, err)
+		}
+
+		return path, nil
+	case "windows":
+		if l.FileSize > 0 {
+			return "", fmt.Errorf("%w (a Job Object on %s has no file size limit)", ErrLimitsUnsupported, runtime.GOOS)
+		}
+
+		return "", nil
+	default:
+		return "", fmt.Errorf("%w (this is %s)", ErrLimitsUnsupported, runtime.GOOS)
+	}
 }
 
 // checkDir refuses a working directory that is missing or is a file: the

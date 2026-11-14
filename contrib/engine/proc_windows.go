@@ -25,8 +25,8 @@ func setProcessGroup(cmd *exec.Cmd) {
 }
 
 // killProcessGroup kills the process and its descendants with taskkill,
-// which walks the tree by parent PID; the standard library has no job
-// object. If taskkill cannot run or fails, it kills the process itself.
+// which walks the tree by parent PID. It is the fallback for a run that is
+// not in a Job Object (see runJob), which is the normal path. If taskkill cannot run or fails, it kills the process itself.
 func killProcessGroup(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil
