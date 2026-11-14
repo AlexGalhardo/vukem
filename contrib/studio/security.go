@@ -126,7 +126,8 @@ func (s *Studio) session(next http.Handler) http.Handler {
 func (s *Studio) exchange(w http.ResponseWriter, r *http.Request, q url.Values) {
 	// The token is spent by the first request that carries it: a copy of the
 	// URL (a screenshot, shell history, another browser) opens nothing later.
-	if subtle.ConstantTimeCompare([]byte(q.Get("token")), []byte(s.token)) != 1 || !s.tokenUsed.CompareAndSwap(false, true) {
+	if subtle.ConstantTimeCompare([]byte(q.Get("token")), []byte(s.token)) != 1 ||
+		!s.tokenUsed.CompareAndSwap(false, true) {
 		unauthorized(w)
 		return
 	}

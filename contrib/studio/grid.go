@@ -66,7 +66,7 @@ type ResultSet struct {
 	// tells it from a result of zero rows.
 	Affected    int64
 	HasAffected bool
-	Elapsed  time.Duration
+	Elapsed     time.Duration
 }
 
 // queryError hides what the database said: its text can carry values, table
