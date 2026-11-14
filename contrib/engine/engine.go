@@ -362,7 +362,7 @@ type Result struct {
 func (t *Tool) Run(ctx context.Context, dir string, args ...string) (Result, error) {
 	out := &tailWriter{max: t.cfg.MaxOutput}
 
-	res, err := t.run(ctx, dir, out, args)
+	res, err := t.run(ctx, dir, out, nil, args)
 	res.Stdout = out.String()
 	res.StdoutTruncated = out.over
 
@@ -372,16 +372,38 @@ func (t *Tool) Run(ctx context.Context, dir string, args ...string) (Result, err
 // RunStream executes the tool in dir and copies its standard output to w
 // as it arrives, so a tool whose product is its stdout — a video, an
 // archive — never fills the worker's memory. Stderr is still captured as
-// a tail, because that is where these tools explain themselves.
+// a tail, because that is where these tools explain themselves; use
+// [Tool.RunStreams] to also see it while the tool runs.
+//
+// Like [Tool.Run], a run whose ctx has no deadline is bounded by
+// [Config.Timeout] ([DefaultTimeout], 5 minutes, when zero), which is shorter
+// than a long transcode or ingest: pass a ctx with the deadline you want.
 func (t *Tool) RunStream(ctx context.Context, dir string, w io.Writer, args ...string) (Result, error) {
 	if w == nil {
 		return Result{}, fmt.Errorf("%w: RunStream needs a writer", ErrRun)
 	}
 
-	return t.run(ctx, dir, w, args)
+	return t.run(ctx, dir, w, nil, args)
 }
 
-func (t *Tool) run(ctx context.Context, dir string, stdout io.Writer, args []string) (Result, error) {
+// RunStreams is [Tool.RunStream] that also copies the standard error to
+// stderr as it arrives, for progress a tool prints there (whisper.cpp writes
+// "progress = N%"). The tail in [Result].Stderr is kept as well. The writer is
+// called from the goroutine that copies the pipe, one write per chunk, not per
+// line, and a write error ends the run. The timeout of RunStream applies.
+func (t *Tool) RunStreams(
+	ctx context.Context, dir string, stdout, stderr io.Writer, args ...string,
+) (Result, error) {
+	if stdout == nil || stderr == nil {
+		return Result{}, fmt.Errorf("%w: RunStreams needs two writers", ErrRun)
+	}
+
+	return t.run(ctx, dir, stdout, stderr, args)
+}
+
+func (t *Tool) run(
+	ctx context.Context, dir string, stdout, liveStderr io.Writer, args []string,
+) (Result, error) {
 	if err := checkDir(dir); err != nil {
 		return Result{}, err
 	}
@@ -410,6 +432,10 @@ func (t *Tool) run(ctx context.Context, dir string, stdout io.Writer, args []str
 	cmd.Env = t.environ(dir)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+
+	if liveStderr != nil {
+		cmd.Stderr = io.MultiWriter(stderr, liveStderr)
+	}
 	// Nothing to read: a tool waiting on stdin would otherwise hang until
 	// the timeout rather than failing at once.
 	cmd.Stdin = nil
