@@ -329,6 +329,11 @@ type Result struct {
 	// Stdout and Stderr are the **tail** of each stream, up to
 	// Config.MaxOutput. Stdout is empty for RunStream.
 	Stdout, Stderr string
+	// StdoutTruncated and StderrTruncated report that the stream passed
+	// Config.MaxOutput and its beginning was dropped (the text then starts
+	// with a marker line). Check StdoutTruncated before parsing Stdout as
+	// JSON, or use RunStream with a writer of your own for a large output.
+	StdoutTruncated, StderrTruncated bool
 	// ExitCode is the process's exit code (-1 when it never ran or was
 	// killed by a signal).
 	ExitCode int
@@ -347,6 +352,7 @@ func (t *Tool) Run(ctx context.Context, dir string, args ...string) (Result, err
 
 	res, err := t.run(ctx, dir, out, args)
 	res.Stdout = out.String()
+	res.StdoutTruncated = out.over
 
 	return res, err
 }
@@ -407,7 +413,12 @@ func (t *Tool) run(ctx context.Context, dir string, stdout io.Writer, args []str
 
 	start := time.Now()
 	err := cmd.Run()
-	res := Result{Stderr: stderr.String(), ExitCode: cmd.ProcessState.ExitCode(), Duration: time.Since(start)}
+	res := Result{
+		Stderr:          stderr.String(),
+		StderrTruncated: stderr.over,
+		ExitCode:        cmd.ProcessState.ExitCode(),
+		Duration:        time.Since(start),
+	}
 
 	if err == nil {
 		return res, nil
