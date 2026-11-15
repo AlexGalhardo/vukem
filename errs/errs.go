@@ -40,14 +40,17 @@ type HTTPError struct {
 	// title, status, detail, instance, request_id, errors). Values must be
 	// safe to show to clients.
 	Extensions map[string]any
-	// ExtensionsOn5xx opts a 5xx error into showing Extensions (see
-	// WithExtensionsOn5xx). Without it a 5xx never leaks members (CWE-209).
+	// ExtensionsOn5xx opts a 5xx error into showing Extensions, Type, Title
+	// and its message as the detail (see WithExtensionsOn5xx). Without it a
+	// 5xx never leaks members (CWE-209).
 	ExtensionsOn5xx bool
 	// Type is the RFC 9457 "type" URI of a 4xx problem; empty means
-	// "about:blank" (see WithType). 5xx responses never use it.
+	// "about:blank" (see WithType). 5xx responses use it only with
+	// ExtensionsOn5xx.
 	Type string
 	// Title replaces the status text as the "title" of a 4xx problem or
-	// error page (see WithTitle). 5xx responses never use it.
+	// error page (see WithTitle). 5xx responses use it only with
+	// ExtensionsOn5xx.
 	Title string
 
 	stack []uintptr
@@ -121,11 +124,12 @@ func (e *HTTPError) WithExtension(key string, value any) *HTTPError {
 	return &c
 }
 
-// WithExtensionsOn5xx returns a copy of e whose Extensions are also written
-// in the problem+json body of a 5xx response, such as a machine-readable
-// "code" and "retryable" on a 503. Only the app builds this error, so only
-// values the app put in Extensions are shown; the cause, the message and
-// Type stay hidden. Use it for values that are safe to show to clients.
+// WithExtensionsOn5xx returns a copy of e whose Extensions, Type, Title and
+// message (as the detail) are also written in the problem+json body of a 5xx
+// response, such as a machine-readable "code" and "retryable" on a 503. Only
+// the app builds this error, so only what the app put in e is shown; the
+// wrapped cause stays hidden. Use it for values that are safe to show to
+// clients.
 func (e *HTTPError) WithExtensionsOn5xx() *HTTPError {
 	c := *e
 	c.ExtensionsOn5xx = true
