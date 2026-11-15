@@ -91,6 +91,9 @@ type Config struct {
 	// document). Serve the document with vukem.ServeOpenAPIWith and
 	// InProduction as well.
 	InProduction bool
+	// BasePath is the URL prefix of the router.Group given to Register, so
+	// the page loads its scripts from the full path (default none).
+	BasePath string
 }
 
 var page = template.Must(template.New("docs").Parse(`<!doctype html>
@@ -131,13 +134,22 @@ func Serve(app *vukem.App, r *router.Router, path string, cfg Config) bool {
 	return true
 }
 
+// Registrar is a router.Router or router.Group.
+type Registrar interface {
+	Get(path string, h web.HandlerFunc) *router.Route
+}
+
 // Register adds the routes without the production check (for apps that
-// gate them another way).
-func Register(r *router.Router, path string, cfg Config) {
+// gate them another way). r is a router.Router or a router.Group: on a
+// group the routes inherit its middleware (authentication, say) and path
+// is relative to the group, so set Config.BasePath to the group prefix for
+// the page to find its scripts.
+func Register(r Registrar, path string, cfg Config) {
 	path = strings.TrimSuffix(path, "/")
-	script := path + "/scalar.js?v=" + ScalarVersion
+	publicPath := strings.TrimSuffix(cfg.BasePath, "/") + path
+	script := publicPath + "/scalar.js?v=" + ScalarVersion
 	sum := sha256.Sum256(pageJS)
-	pageScript := path + "/page.js?v=" + hex.EncodeToString(sum[:4])
+	pageScript := publicPath + "/page.js?v=" + hex.EncodeToString(sum[:4])
 
 	if cfg.SpecURL == "" {
 		cfg.SpecURL = "/openapi.json"

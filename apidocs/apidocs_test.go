@@ -414,3 +414,37 @@ func TestOptionsMergedAndProtected(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterOnGroupInheritsMiddleware(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	r.Group("/api", func(g *router.Group) {
+		g.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Header.Get("Authorization") == "" {
+					http.Error(w, "no", http.StatusUnauthorized)
+
+					return
+				}
+
+				next.ServeHTTP(w, req)
+			})
+		})
+		apidocs.Register(g, "/docs", apidocs.Config{BasePath: "/api"})
+	})
+
+	if rec := get(t, r, "/api/docs"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", rec.Code)
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/docs", http.NoBody)
+	req.Header.Set("Authorization", "x")
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `src="/api/docs/scalar.js?v=`) {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
