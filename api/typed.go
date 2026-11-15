@@ -82,6 +82,11 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 //		return ItemJSON{}, nil
 //	}
 //
+// In is the HTTP input type, kept apart from the domain type: a json.RawMessage
+// field makes z.For panic at boot (Parse receives decoded JSON, so the
+// original bytes are gone). Declare the field as map[string]any or any and
+// convert to the domain type in the handler.
+//
 // Once the handler has touched the response writer (c.JSON, c.Writer().WriteHeader,
 // a redirect) the response is the handler's: Register writes no body and
 // ignores Out, so a handler that picks the status per request writes it
