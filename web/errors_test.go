@@ -635,14 +635,15 @@ func TestSecurity_A10_ProblemExtensionsNotSentOn5xx(t *testing.T) {
 }
 
 // TestSecurity_A10_ProblemExtensionsOn5xxAreOptIn checks that a 5xx shows its
-// extension members only when the app asked with WithExtensionsOn5xx, and
-// that the cause, the message and the type stay hidden either way.
+// type, title, detail and extension members only when the app asked with
+// WithExtensionsOn5xx, and that the cause stays hidden either way.
 func TestSecurity_A10_ProblemExtensionsOn5xxAreOptIn(t *testing.T) {
 	t.Parallel()
 
 	jsonReq := func(r *http.Request) { r.Header.Set("Accept", "application/json") }
 	base := errs.Wrap(http.StatusServiceUnavailable, errors.New("dial tcp 10.0.0.5: refused")).
-		WithType("https://example.test/p/secret").
+		WithType("https://example.test/p/locked").
+		WithTitle("Workspace locked").
 		WithExtension("code", "E_WORKSPACE_LOCKED").
 		WithExtension("retryable", true)
 
@@ -650,8 +651,9 @@ func TestSecurity_A10_ProblemExtensionsOn5xxAreOptIn(t *testing.T) {
 		t.Parallel()
 
 		rec, _ := runError(t, base, jsonReq, nil)
-		if body := rec.Body.String(); strings.Contains(body, "E_WORKSPACE_LOCKED") {
-			t.Errorf("5xx problem without opt-in leaked an extension: %s", body)
+		if body := rec.Body.String(); strings.Contains(body, "E_WORKSPACE_LOCKED") ||
+			strings.Contains(body, "p/locked") || strings.Contains(body, "Workspace locked") {
+			t.Errorf("5xx problem without opt-in leaked a member: %s", body)
 		}
 	})
 
@@ -669,10 +671,28 @@ func TestSecurity_A10_ProblemExtensionsOn5xxAreOptIn(t *testing.T) {
 			t.Errorf("problem = %v, want the extensions next to the standard members", got)
 		}
 
-		if got["type"] != "about:blank" || strings.Contains(rec.Body.String(), "refused") {
-			t.Errorf("problem = %s, want the type and the cause hidden", rec.Body)
+		if got["type"] != "https://example.test/p/locked" || got["title"] != "Workspace locked" ||
+			strings.Contains(rec.Body.String(), "refused") {
+			t.Errorf("problem = %s, want the type and title shown and the cause hidden", rec.Body)
 		}
 	})
+}
+
+func TestProblem5xxDetailIsOptIn(t *testing.T) {
+	t.Parallel()
+
+	jsonReq := func(r *http.Request) { r.Header.Set("Accept", "application/json") }
+	base := errs.New(http.StatusServiceUnavailable, "The export queue is full.")
+
+	rec, _ := runError(t, base, jsonReq, nil)
+	if strings.Contains(rec.Body.String(), "export queue") {
+		t.Errorf("5xx detail without opt-in leaked: %s", rec.Body)
+	}
+
+	rec, _ = runError(t, base.WithExtensionsOn5xx(), jsonReq, nil)
+	if !strings.Contains(rec.Body.String(), `"detail":"The export queue is full."`) {
+		t.Errorf("5xx detail with opt-in = %s, want the message", rec.Body)
+	}
 }
 
 func TestProblemTypeTitleAndDecorator(t *testing.T) {

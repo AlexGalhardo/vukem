@@ -264,8 +264,12 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	title := http.StatusText(status)
 	detail := ""
 
+	// The app chose these members: always on a 4xx, on a 5xx only when it
+	// opted in with WithExtensionsOn5xx.
+	shown := he != nil && (status < http.StatusInternalServerError || he.ExtensionsOn5xx)
+
 	switch {
-	case he != nil && status < 500:
+	case shown:
 		detail = he.LocalizedText(c.Context())
 	case verr != nil:
 		detail = fmt.Sprintf("%d field(s) are invalid.", len(verr.Fields))
@@ -274,7 +278,7 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		detail = original.Error()
 	}
 
-	if he != nil && status < 500 && he.Title != "" && verr == nil {
+	if shown && he.Title != "" && verr == nil {
 		title = he.Title
 	}
 
@@ -308,7 +312,7 @@ func DefaultErrorHandler(c *Ctx, err error) {
 }
 
 // applyErrorMembers copies the members an app chose on he into p: the
-// extensions of a 4xx, or of a 5xx that opted in, and the type of a 4xx.
+// extensions and the type of a 4xx, or of a 5xx that opted in.
 func applyErrorMembers(p *Problem, he *errs.HTTPError) {
 	if he == nil {
 		return
@@ -317,9 +321,6 @@ func applyErrorMembers(p *Problem, he *errs.HTTPError) {
 	if p.Status < http.StatusInternalServerError || he.ExtensionsOn5xx {
 		// A clone: the decorator may edit it and he can be a shared sentinel.
 		p.Extensions = maps.Clone(he.Extensions)
-	}
-
-	if p.Status < http.StatusInternalServerError {
 		p.Type = he.Type
 	}
 }
