@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-11-15
+
+### Added
+
+- **config:** Let an app boot without APP_KEY with WithKeyOptional ([54a7631](https://github.com/AlexGalhardo/vukem/commit/54a7631530fefb03efc0c08500069f718fc3fd4e))
+- **auth:** Store a resource attribute with an access token ([7dbe65e](https://github.com/AlexGalhardo/vukem/commit/7dbe65e4b7da86e1ac757145e419ec6e35ca3c03))
+- **cli:** Scaffold prefixed queue table names in new apps ([9ae838a](https://github.com/AlexGalhardo/vukem/commit/9ae838a6005e0c145fa17f1541022e1795918d38))
+- **apidocs:** Register the reference on a router group ([2d98bad](https://github.com/AlexGalhardo/vukem/commit/2d98bad69b72a74a685ea3f111da3707980ea852))
+- **web:** Show type, title and detail of an opted-in 5xx error ([b3055df](https://github.com/AlexGalhardo/vukem/commit/b3055df5bc9cb57c9d11da9d2ab2a70f5c3188df))
+- **inertia:** Add RenderInvalid for form errors without a session store ([0fe1f34](https://github.com/AlexGalhardo/vukem/commit/0fe1f34a064d20d6abb93802aba353267fd3e707))
+- **httpclient:** Add Options.TLSConfig and Options.OnDial ([ff7fcaa](https://github.com/AlexGalhardo/vukem/commit/ff7fcaafc7ea882431e12615d1260125e07fdc4a))
+- **auth:** Add TokensMigration to create access_tokens ([3b0def7](https://github.com/AlexGalhardo/vukem/commit/3b0def7ab937e318300cbfe0a2179eec366eede4))
+- **auth:** Add SessionGuard.UserFromRequest for net/http middleware ([58cea46](https://github.com/AlexGalhardo/vukem/commit/58cea469ccd12b1edc859cbda4111e8aadcb3cb3))
+- **ratelimit:** Add Peek to Memory and Window ([619e3c0](https://github.com/AlexGalhardo/vukem/commit/619e3c09ae946b0d7170edb39c54894a3bae005b))
+
+### Fixed
+
+- **site:** Name the landing page Full Stack MVC Framework Written in Go ([7e884de](https://github.com/AlexGalhardo/vukem/commit/7e884de0a88d441c32740ae02460e786b4da9ba1))
+- **cli:** Find the module root above the app for make generators ([24085e2](https://github.com/AlexGalhardo/vukem/commit/24085e2324b38444f35f0c092aea89821c93f010))
+- **auth:** Re-probe the resource column until it exists ([d29ff00](https://github.com/AlexGalhardo/vukem/commit/d29ff007c17452e3051af61ea2e196aafe0ca64f))
+- **cli:** Print nothing for an ExitError without a cause ([51afa3a](https://github.com/AlexGalhardo/vukem/commit/51afa3a718426360db9e4e004347f0203060c8ab))
+- **cli:** Keep the context of a wrapped ExitError and document OnDial and Peek ([d834930](https://github.com/AlexGalhardo/vukem/commit/d834930b8cb84f543464d3ef66691887c47dffb0))
+- **ratelimit:** Return a plain error for an out-of-range remaining count in Window.Peek ([ee31efb](https://github.com/AlexGalhardo/vukem/commit/ee31efbcb2b3043300750605b273b87b57f04f66))
+
+### Security
+
+- **archive:** Refuse links and encrypted entries, expose mode and ratio ([edfd995](https://github.com/AlexGalhardo/vukem/commit/edfd995ae4f3c3aeb4720ea32ad36f9669e1188d))
+
 ## [0.44.0] - 2026-11-14
 
 ### Added
@@ -1664,7 +1692,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/AlexGalhardo/vukem/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/AlexGalhardo/vukem/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/AlexGalhardo/vukem/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/AlexGalhardo/vukem/compare/v0.41.0...v0.42.0
