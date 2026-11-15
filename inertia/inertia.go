@@ -354,6 +354,31 @@ func Render(c *web.Ctx, component string, props Props) error {
 // 204, 205, 304), redirects and 409 (the protocol's version and location
 // responses) are refused with an error.
 func RenderStatus(c *web.Ctx, status int, component string, props Props) error {
+	return renderStatus(c, status, component, props, nil)
+}
+
+// RenderInvalid answers a form submission whose input was refused, for an app
+// without a session store (no flash to carry the errors through a redirect).
+// When err is, or wraps, an *errs.ValidationError (what web.Bind and the z
+// schemas return) it renders component with props and status 422, and the
+// errors prop holds the first message per field (under the X-Inertia-Error-Bag
+// name when the request sends one), so the client fills form.errors on the
+// same page. Any other error, nil included, is returned unchanged for the
+// handler to return:
+//
+//	if err != nil {
+//		return inertia.RenderInvalid(c, "Projects/Index", props, err)
+//	}
+func RenderInvalid(c *web.Ctx, component string, props Props, err error) error {
+	verr, ok := errors.AsType[*errs.ValidationError](err)
+	if !ok {
+		return err
+	}
+
+	return renderStatus(c, http.StatusUnprocessableEntity, component, props, verr)
+}
+
+func renderStatus(c *web.Ctx, status int, component string, props Props, verr *errs.ValidationError) error {
 	if !pageStatus(status) {
 		return errs.Wrap(http.StatusInternalServerError,
 			fmt.Errorf("inertia: RenderStatus cannot answer status %d", status))
@@ -367,6 +392,10 @@ func RenderStatus(c *web.Ctx, status int, component string, props Props) error {
 	p, err := st.page(c, component, props)
 	if err != nil {
 		return err
+	}
+
+	if verr != nil {
+		p.Props["errors"] = mergeErrors(c, p.Props["errors"], verr.Fields)
 	}
 
 	if IsInertia(c.Request()) {
@@ -487,6 +516,34 @@ func (st *state) page(c *web.Ctx, component string, props Props) (*Page, error) 
 	pageFlags(c, st, p)
 
 	return p, nil
+}
+
+// mergeErrors adds the first message per field of fields to the errors prop,
+// inside the request's error bag when it names one.
+func mergeErrors(c *web.Ctx, current any, fields map[string][]string) map[string]any {
+	out, _ := current.(map[string]any)
+	if out == nil {
+		out = map[string]any{}
+	}
+
+	target := out
+
+	if bag := c.Header(HeaderErrorBag); bag != "" {
+		inner, _ := out[bag].(map[string]any)
+		if inner == nil {
+			inner = map[string]any{}
+		}
+
+		out[bag], target = inner, inner
+	}
+
+	for field, msgs := range fields {
+		if len(msgs) > 0 {
+			target[field] = msgs[0]
+		}
+	}
+
+	return out
 }
 
 // validationErrors returns the first flashed message per field, namespaced
