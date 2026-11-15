@@ -80,7 +80,9 @@ func (w *Window) Allow(ctx context.Context, key string) (Result, error) {
 // Peek implements [Peeker]: it reads the counter of the current window
 // without counting a request (an Increment by zero, which every Counter
 // treats as a read). Remaining is limit minus what was counted, and a
-// window at its limit is not allowed.
+// window at its limit is not allowed. With the Database and Redis counters
+// the read of an unknown key stores it with a count of zero until the window
+// ends, the same storage an Allow of that key would take.
 func (w *Window) Peek(ctx context.Context, key string) (Result, error) {
 	if !nameRe.MatchString(w.name) {
 		return Result{}, fmt.Errorf("ratelimit: invalid limiter name %q (1-64 of A-Z a-z 0-9 . _ -)", w.name)

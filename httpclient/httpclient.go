@@ -55,7 +55,9 @@ type Options struct {
 	// OnDial, when set, is called with the resolved address of every
 	// connection attempt that passed the address check, from the dialer's
 	// Control hook. Returning an error refuses the connection (a test can
-	// assert which address was reached, an app can add its own rule).
+	// assert which address was reached, an app can add its own rule). It may
+	// be called from several goroutines at once (Happy Eyeballs dials IPv4
+	// and IPv6 in parallel), so it must be safe for concurrent use.
 	OnDial func(address string) error
 }
 
