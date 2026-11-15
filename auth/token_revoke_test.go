@@ -423,3 +423,46 @@ func TestTokensPruneKeepsLiveTokens(t *testing.T) {
 		t.Fatalf("Find() after Prune(next year) = %v, want the live token", err)
 	}
 }
+
+func TestTokensMigrationCreatesAUsableTable(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	db, err := database.Open(ctx, "file:"+filepath.Join(testutil.TempDir(t), "tokens.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	migrations := []schema.Migration{
+		auth.TokensMigration("1_create_access_tokens"),
+		auth.TokensResourceMigration("2_access_tokens_resource"),
+		auth.TokensRevokedAtMigration("3_access_tokens_revoked_at"),
+	}
+
+	m, err := schema.NewMigrator(db, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ran, err := m.Up(ctx); err != nil || len(ran) != 3 {
+		t.Fatalf("Up() = %v, %v, want all three", ran, err)
+	}
+
+	tokens := auth.NewTokens(db)
+
+	plain, _, err := tokens.Create(ctx, "1", "cli", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tokens.Find(ctx, plain); err != nil {
+		t.Fatalf("Find() = %v, want the token", err)
+	}
+
+	if err := tokens.Revoke(ctx, plain); err != nil {
+		t.Fatalf("Revoke() = %v, want the soft revoke (revoked_at exists)", err)
+	}
+}

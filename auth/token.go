@@ -49,7 +49,8 @@ func (t Token) Can(ability string) bool {
 // access_tokens(id TEXT PRIMARY KEY, user_id TEXT, name TEXT, hash TEXT,
 // abilities TEXT, last_used_at TIMESTAMP NULL, expires_at TIMESTAMP NULL,
 // revoked_at TIMESTAMP NULL, created_at TIMESTAMP), plus the optional
-// resource TEXT NULL column (TokensResourceMigration). Tables created before
+// resource TEXT NULL column (TokensResourceMigration). TokensMigration
+// creates the table for an app that does not run install:auth. Tables created before
 // revoked_at existed need TokensRevokedAtMigration; until then Find
 // refuses every token. Without resource everything works, except CreateWith
 // with a Resource, which fails.
@@ -546,6 +547,30 @@ func (t *Tokens) Prune(ctx context.Context, cutoff time.Time) (int64, error) {
 	}
 
 	return res.RowsAffected()
+}
+
+// TokensMigration returns migration id creating the access_tokens table with
+// the columns Tokens needs (revoked_at included, resource not: add it with
+// TokensResourceMigration), the same table install:auth scaffolds. Its Down
+// drops the table.
+func TokensMigration(id string) schema.Migration {
+	return schema.Migration{
+		ID: id,
+		Up: func(s *schema.Schema) error {
+			return s.Create("access_tokens", func(t *schema.Table) {
+				t.String("id").Unique()
+				t.String("user_id").Index()
+				t.String("name")
+				t.String("hash")
+				t.Text("abilities")
+				t.Timestamp("last_used_at").Nullable()
+				t.Timestamp("expires_at").Nullable()
+				t.Timestamp("revoked_at").Nullable()
+				t.Timestamp("created_at")
+			})
+		},
+		Down: func(s *schema.Schema) error { return s.DropIfExists("access_tokens") },
+	}
 }
 
 // TokensRevokedAtMigration returns migration id adding the revoked_at column
