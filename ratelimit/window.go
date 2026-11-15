@@ -77,6 +77,36 @@ func (w *Window) Allow(ctx context.Context, key string) (Result, error) {
 	return res, nil
 }
 
+// Peek implements [Peeker]: it reads the counter of the current window
+// without counting a request (an Increment by zero, which every Counter
+// treats as a read). Remaining is limit minus what was counted, and a
+// window at its limit is not allowed.
+func (w *Window) Peek(ctx context.Context, key string) (Result, error) {
+	if !nameRe.MatchString(w.name) {
+		return Result{}, fmt.Errorf("ratelimit: invalid limiter name %q (1-64 of A-Z a-z 0-9 . _ -)", w.name)
+	}
+
+	now := w.now()
+	start := now.Truncate(w.window)
+	reset := start.Add(w.window).Sub(now)
+
+	n, err := w.counter.Increment(ctx, w.bucket(key, start), 0, w.window)
+	if err != nil {
+		return Result{}, fmt.Errorf("ratelimit: read %s: %w", w.name, err)
+	}
+
+	res := Result{Limit: w.limit, ResetAfter: reset}
+	if n >= int64(w.limit) {
+		res.RetryAfter = reset
+		return res, nil
+	}
+
+	res.Allowed = true
+	res.Remaining = w.limit - int(n)
+
+	return res, nil
+}
+
 // bucket hashes every key: keys come from requests, so a raw key could
 // carry separators or forge the encoding of another one, and the hash
 // keeps every database key within VARBINARY(255) on MySQL.

@@ -44,6 +44,21 @@ type Limiter interface {
 	Allow(ctx context.Context, key string) (Result, error)
 }
 
+// Peeker is a [Limiter] that can answer without spending: Peek reports what
+// Allow would say for key right now, and consumes nothing. [Memory] and
+// [Window] implement it. Use it to refuse a client that is already out of
+// credits before doing work for it (checking a credential), and spend with
+// Allow only on the outcome you want to count (a failed login).
+//
+// Result.Allowed is whether the next Allow would pass, Remaining how many
+// requests could still be admitted now, and RetryAfter, when not allowed,
+// the wait until one would be. A Peek is not a reservation: another request
+// may spend the credit before your Allow.
+type Peeker interface {
+	Limiter
+	Peek(ctx context.Context, key string) (Result, error)
+}
+
 // Memory is an in-process GCRA limiter: a steady rate with bursts up to
 // a ceiling ([NewMemory]: the whole window's limit; [NewMemoryBurst]: a
 // separate burst).
@@ -102,21 +117,53 @@ func NewMemoryBurst(rate int, window time.Duration, burst int) *Memory {
 // maxRawKey is the longest key [Memory] stores as is.
 const maxRawKey = 128
 
+// bucketKey returns the map key for key: one longer than maxRawKey is stored
+// as its hash.
+func bucketKey(key string) string {
+	if len(key) <= maxRawKey {
+		return key
+	}
+
+	// Keys come from requests: a long one is stored as its hash so a
+	// client cannot make the map retain arbitrary bytes per bucket.
+	sum := sha256.Sum256([]byte(key))
+	// The NUL prefix keeps a raw key spelling "sha256:<hex>" out of
+	// this bucket; request-derived keys cannot carry NUL.
+	return "\x00sha256:" + hex.EncodeToString(sum[:])
+}
+
+// Peek implements [Peeker]: it reports what Allow would answer for key and
+// stores nothing, so asking about a key never creates a bucket.
+func (m *Memory) Peek(_ context.Context, key string) (Result, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := m.now()
+	next, allowAt := gcra.Next(m.tat[bucketKey(key)], now, m.interval, m.tolerance)
+
+	if now.Before(allowAt) {
+		return Result{
+			Limit:      m.limit,
+			ResetAfter: next.Add(-m.interval).Sub(now),
+			RetryAfter: allowAt.Sub(now),
+		}, nil
+	}
+
+	return Result{
+		Allowed:    true,
+		Limit:      m.limit,
+		Remaining:  min(int(now.Sub(allowAt)/m.interval)+1, m.limit),
+		ResetAfter: next.Add(-m.interval).Sub(now),
+	}, nil
+}
+
 // Allow implements Limiter. Keys longer than 128 bytes are stored as
 // their SHA-256 hash.
 func (m *Memory) Allow(_ context.Context, key string) (Result, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if len(key) > maxRawKey {
-		// Keys come from requests: a long one is stored as its hash so a
-		// client cannot make the map retain arbitrary bytes per bucket.
-		sum := sha256.Sum256([]byte(key))
-		// The NUL prefix keeps a raw key spelling "sha256:<hex>" out of
-		// this bucket; request-derived keys cannot carry NUL.
-		key = "\x00sha256:" + hex.EncodeToString(sum[:])
-	}
-
+	key = bucketKey(key)
 	now := m.now()
 
 	m.calls++
