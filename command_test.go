@@ -1012,7 +1012,7 @@ func TestReportError(t *testing.T) {
 		{"nil", nil, ""},
 		{"usage", errUsage, ""},
 		{"exit code only", &ExitError{Code: 5}, ""},
-		{"wrapped exit code only", fmt.Errorf("w: %w", &ExitError{Code: 5}), ""},
+		{"wrapped exit code only", fmt.Errorf("w: %w", &ExitError{Code: 5}), "w: exit status 5\n"},
 		{"exit with cause", &ExitError{Code: 3, Err: errors.New("thresholds")}, "thresholds\n"},
 		{"plain", errors.New("boom"), "boom\n"},
 	}

@@ -356,13 +356,14 @@ func MainWith(build BuildFunc, opts ...Option) int {
 }
 
 // reportError prints err to w, except a usage error (already explained) and
-// an [*ExitError] without a cause, which sets the exit code and nothing else.
+// an [*ExitError] without a cause returned as is, which sets the exit code and
+// nothing else. A wrapped one keeps the context its wrapper added.
 func reportError(w io.Writer, err error) {
 	if err == nil || errors.Is(err, errUsage) {
 		return
 	}
 
-	if ee, ok := errors.AsType[*ExitError](err); ok && ee.Err == nil {
+	if ee, ok := err.(*ExitError); ok && ee.Err == nil { //nolint:errorlint // only the top-level error is silent
 		return
 	}
 
