@@ -318,6 +318,21 @@ func isNotFound(err error) bool {
 	return errors.Is(err, ErrUserNotFound) || errors.Is(err, orm.ErrNotFound) || errors.Is(err, sql.ErrNoRows)
 }
 
+// UserFromRequest is [SessionGuard.User] for a net/http middleware, which has
+// no *web.Ctx: it returns the logged-in user (or ErrUnauthenticated) and the
+// request carrying that user, so the handlers after it, and [UserFrom] and
+// [Principal], see it. The session middleware must have run before; pass
+// the returned request on, not the one given. w is needed to clear a stale
+// remember-me cookie.
+//
+//	u, r, err := guard.UserFromRequest(w, r)
+func (g *SessionGuard[U]) UserFromRequest(w http.ResponseWriter, r *http.Request) (U, *http.Request, error) {
+	c := web.NewCtx(w, r, nil)
+	u, err := g.User(c)
+
+	return u, c.Request(), err
+}
+
 // authenticate is Check that tells a guest (ErrUnauthenticated) apart
 // from a failed lookup, which Required answers with its error.
 func (g *SessionGuard[U]) authenticate(c *web.Ctx) error {

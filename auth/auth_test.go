@@ -234,6 +234,27 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 					id, ok := ta.web.Impersonator(c)
 					return c.String(200, fmt.Sprintf("%s %v", id, ok))
 				})
+				// A net/http middleware asks the guard without a handler context.
+				r.Get("/netuser", func(c *web.Ctx) error { return c.NoContent() }).
+					Use(func(next http.Handler) http.Handler {
+						return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							u, r, err := ta.web.UserFromRequest(w, r)
+							if err != nil {
+								http.Error(w, "guest", http.StatusUnauthorized)
+
+								return
+							}
+
+							if again, err := auth.UserFrom[User](r.Context(), "web"); err != nil || again.ID != u.ID {
+								http.Error(w, "user not on the request", http.StatusInternalServerError)
+
+								return
+							}
+
+							w.Header().Set("X-User", u.Email)
+							next.ServeHTTP(w, r)
+						})
+					})
 				r.Get("/whoami", func(c *web.Ctx) error {
 					if u, err := auth.User[User](c, "web"); err == nil {
 						return c.String(200, u.Email)
@@ -410,6 +431,20 @@ func TestSessionLoginLogout(t *testing.T) {
 
 	// JSON clients get 401 instead of a redirect.
 	ta.Client(t).GetJSON("/dashboard").AssertUnauthorized().AssertHeader("WWW-Authenticate", `Bearer realm="api"`)
+}
+
+func TestSessionGuardUserFromRequest(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	ta.user(t, "ana@example.com", "s3cret-pass", false)
+
+	c := ta.Client(t)
+	c.Get("/netuser").AssertUnauthorized()
+
+	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"s3cret-pass"}}).
+		AssertRedirect("/dashboard")
+	c.Get("/netuser").AssertNoContent().AssertHeader("X-User", "ana@example.com")
 }
 
 // Sessions logged in before the user key existed get it on their next
