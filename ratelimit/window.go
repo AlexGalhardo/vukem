@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -107,7 +108,7 @@ func (w *Window) Peek(ctx context.Context, key string) (Result, error) {
 	res.Allowed = true
 	remaining64 := int64(w.limit) - n
 	if remaining64 < math.MinInt || remaining64 > math.MaxInt {
-		return Result{}, fmt.Errorf("ratelimit: remaining out of int range")
+		return Result{}, errors.New("ratelimit: remaining out of int range")
 	}
 	res.Remaining = int(remaining64)
 
