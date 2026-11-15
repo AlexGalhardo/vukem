@@ -656,3 +656,35 @@ func TestOperationRouteSummary(t *testing.T) {
 		t.Fatalf("RouteSummary() = %q", got)
 	}
 }
+
+func TestRegisterHandlerPicksStatusPerRequest(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.Register(r, "POST /projects", api.Op{}, func(c *web.Ctx, _ struct{}) (productJSON, error) {
+		if c.Query("dry_run") == "true" {
+			return productJSON{}, c.JSON(http.StatusOK, productJSON{Name: "preview"})
+		}
+
+		return productJSON{Name: "made"}, nil
+	})
+
+	tests := []struct {
+		target string
+		status int
+		name   string
+	}{
+		{"/projects?dry_run=true", http.StatusOK, "preview"},
+		{"/projects", http.StatusCreated, "made"},
+	}
+
+	for _, tt := range tests {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, tt.target, http.NoBody))
+
+		var got productJSON
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != tt.status || got.Name != tt.name {
+			t.Errorf("POST %s = %d %q (%v), want %d %q", tt.target, rec.Code, rec.Body, err, tt.status, tt.name)
+		}
+	}
+}
