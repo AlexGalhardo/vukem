@@ -1116,6 +1116,7 @@ type BenchScenario struct {
 }
 
 // ExitError is an error that sets the process exit code: Main exits with Code and prints Err.
+// Without Err it prints nothing, so a command with a machine-readable output (--json) keeps stderr empty.
 type ExitError struct {
 	Code int
 	Err  error
