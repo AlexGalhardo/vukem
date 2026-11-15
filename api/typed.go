@@ -82,6 +82,17 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 //		return ItemJSON{}, nil
 //	}
 //
+// Once the handler has touched the response writer (c.JSON, c.Writer().WriteHeader,
+// a redirect) the response is the handler's: Register writes no body and
+// ignores Out, so a handler that picks the status per request writes it
+// itself and returns the zero Out:
+//
+//	if in.DryRun {
+//		return ProjectJSON{}, c.JSON(http.StatusOK, preview)
+//	}
+//
+// Op.Status is the only status Register writes.
+//
 // Use [RegisterWith] when the input needs a rule `validate` tags cannot
 // express.
 func Register[In, Out any](g Registrar, pattern string, op Op, fn func(*web.Ctx, In) (Out, error)) *router.Route {
