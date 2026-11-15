@@ -473,3 +473,44 @@ func TestMiddlewareWithOnLimitReplacesTheDenialBody(t *testing.T) {
 		t.Errorf("headers = %v, want Retry-After and RateLimit-Limit kept", last.Header())
 	}
 }
+
+func TestMemoryPeekDoesNotSpend(t *testing.T) {
+	t.Parallel()
+
+	m := NewMemory(2, time.Minute)
+	ctx := t.Context()
+
+	for range 5 {
+		res, err := m.Peek(ctx, "ip")
+		if err != nil || !res.Allowed || res.Remaining != 2 {
+			t.Fatalf("Peek on an untouched key = %+v, %v, want allowed with 2 remaining", res, err)
+		}
+	}
+
+	if len(m.tat) != 0 {
+		t.Errorf("Peek created %d buckets, want none", len(m.tat))
+	}
+
+	for range 2 {
+		if res, _ := m.Allow(ctx, "ip"); !res.Allowed {
+			t.Fatal("Allow denied: Peek must not have spent credits")
+		}
+	}
+
+	res, _ := m.Peek(ctx, "ip")
+	if res.Allowed || res.Remaining != 0 || res.RetryAfter <= 0 {
+		t.Errorf("Peek on a spent key = %+v, want denied with a RetryAfter", res)
+	}
+
+	if other, _ := m.Peek(ctx, "other"); !other.Allowed {
+		t.Error("another key is denied")
+	}
+
+	long := strings.Repeat("k", 4096)
+	m.Allow(ctx, long)
+	m.Allow(ctx, long)
+
+	if res, _ := m.Peek(ctx, long); res.Allowed {
+		t.Error("Peek(long) allowed after the limit, want the hashed key found")
+	}
+}

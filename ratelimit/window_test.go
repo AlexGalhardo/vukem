@@ -230,3 +230,53 @@ func TestSecurity_A06_RateLimitWindowStoreFailsClosed(t *testing.T) {
 		t.Fatalf("response leaks the store error: %s", body)
 	}
 }
+
+type counts map[string]int64
+
+func (c counts) Increment(_ context.Context, key string, delta int64, _ time.Duration) (int64, error) {
+	c[key] += delta
+	return c[key], nil
+}
+
+func TestWindowPeekDoesNotSpend(t *testing.T) {
+	t.Parallel()
+
+	c := counts{}
+	w := NewWindow(c, "login", 2, time.Minute)
+	w.now = func() time.Time { return time.Date(2026, 1, 1, 12, 0, 30, 0, time.UTC) }
+	ctx := t.Context()
+
+	if res, err := w.Peek(ctx, "ip"); err != nil || !res.Allowed || res.Remaining != 2 {
+		t.Fatalf("Peek = %+v, %v, want allowed with 2 remaining", res, err)
+	}
+
+	w.Allow(ctx, "ip")
+
+	if res, _ := w.Peek(ctx, "ip"); !res.Allowed || res.Remaining != 1 {
+		t.Errorf("Peek after one Allow = %+v, want 1 remaining", res)
+	}
+
+	w.Allow(ctx, "ip")
+
+	res, _ := w.Peek(ctx, "ip")
+	if res.Allowed || res.Remaining != 0 || res.RetryAfter <= 0 {
+		t.Errorf("Peek at the limit = %+v, want denied with a RetryAfter", res)
+	}
+
+	for range 3 {
+		w.Peek(ctx, "ip")
+	}
+
+	if n := c[w.bucket("ip", w.now().Truncate(w.window))]; n != 2 {
+		t.Errorf("counter = %d after peeks, want 2", n)
+	}
+
+	if _, err := NewWindow(c, "bad name", 1, time.Minute).Peek(ctx, "k"); err == nil {
+		t.Error("Peek with an invalid name = nil error")
+	}
+}
+
+var (
+	_ Peeker = (*Memory)(nil)
+	_ Peeker = (*Window)(nil)
+)
