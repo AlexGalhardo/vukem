@@ -15,7 +15,10 @@
 //     design, but it does reach the metadata and from there a consumer's
 //     asset loader, so it is bounded and checked for text that disguises
 //     itself (control characters, a right-to-left override);
-//  5. collision detection on the key. This is the one that **corrupts
+//  5. only regular files: a symbolic link, a device or another special
+//     entry, and an encrypted entry (whose content the policy cannot
+//     bound), are refused;
+//  6. collision detection on the key. This is the one that **corrupts
 //     instead of failing**: "walk/frame.png" and "jump/frame.png" collapse
 //     to one key once the directory is dropped, so an app writes both
 //     frames under one name while its metadata describes one, putting
@@ -36,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"path"
 	"strings"
@@ -70,6 +74,12 @@ var (
 	// rather than overwritten: silently keeping the last one corrupts the
 	// result instead of failing it.
 	ErrDuplicateKey = errors.New("archive: duplicate entry key")
+	// ErrUnsafeEntry reports an entry that is not a regular, readable file:
+	// a symbolic link, a device, a named pipe or a socket, or an encrypted
+	// entry.
+	ErrUnsafeEntry = errors.New("archive: unsafe entry")
+	// ErrRatio reports an entry compressed more than [Policy.MaxRatio].
+	ErrRatio = errors.New("archive: compression ratio over the limit")
 )
 
 // Policy bounds what [Zip] accepts. The three caps are required: there is
@@ -91,6 +101,11 @@ type Policy struct {
 	// returns is validated like any other key, so an application cannot
 	// opt out of the safe-key guarantee by supplying its own.
 	Key func(name string) string
+	// MaxRatio refuses an entry whose declared uncompressed size is more
+	// than MaxRatio times its compressed size (a bomb that stays under the
+	// size caps); zero turns the check off. The sizes come from the central
+	// directory, like the size caps.
+	MaxRatio int
 }
 
 // Entry is one archive member whose key is already safe to use as an
@@ -102,6 +117,11 @@ type Entry struct {
 	// Size is the uncompressed size the archive declares, already checked
 	// against the policy.
 	Size int64
+	// CompressedSize is the size of the entry's data in the archive.
+	CompressedSize int64
+	// Mode is the entry's file mode; [Zip] only returns regular files, so it
+	// carries permission bits and no type bits.
+	Mode fs.FileMode
 
 	file *zip.File
 }
@@ -192,6 +212,10 @@ func Zip(r io.ReaderAt, size int64, p Policy) ([]Entry, error) {
 			continue
 		}
 
+		if err := rejectUnsafeEntry(f, i); err != nil {
+			return nil, err
+		}
+
 		if len(entries) == p.MaxEntries {
 			return nil, fmt.Errorf("%w: more than %d", ErrTooManyEntries, p.MaxEntries)
 		}
@@ -206,6 +230,11 @@ func Zip(r io.ReaderAt, size int64, p Policy) ([]Entry, error) {
 		if declared > math.MaxInt64 || declared > uint64(p.MaxEntrySize) {
 			return nil, fmt.Errorf("%w: entry %d declares %d bytes, limit %d",
 				ErrTooLarge, i, declared, p.MaxEntrySize)
+		}
+
+		if p.MaxRatio > 0 && overRatio(declared, f.CompressedSize64, uint64(p.MaxRatio)) {
+			return nil, fmt.Errorf("%w: entry %d declares %d bytes from %d compressed, limit %d:1",
+				ErrRatio, i, declared, f.CompressedSize64, p.MaxRatio)
 		}
 
 		total += declared
@@ -236,10 +265,42 @@ func Zip(r io.ReaderAt, size int64, p Policy) ([]Entry, error) {
 		}
 
 		seen[key] = struct{}{}
-		entries = append(entries, Entry{Key: key, Size: int64(declared), file: f})
+		entries = append(entries, Entry{
+			Key: key, Size: int64(declared), CompressedSize: int64(min(f.CompressedSize64, math.MaxInt64)),
+			Mode: f.Mode(), file: f,
+		})
 	}
 
 	return entries, nil
+}
+
+// overRatio reports declared > max*compressed without the multiplication,
+// which an attacker-controlled size could overflow.
+func overRatio(declared, compressed, maxRatio uint64) bool {
+	if compressed == 0 {
+		return declared > 0
+	}
+
+	q, r := declared/compressed, declared%compressed
+
+	return q > maxRatio || q == maxRatio && r > 0
+}
+
+// zipEncrypted is bit 0 of the general purpose flags: the entry is encrypted
+// (traditional PKWARE or AES), so its content cannot be bounded or read.
+const zipEncrypted = 0x1
+
+// rejectUnsafeEntry refuses an entry that is not a regular, readable file.
+// The error names the index and not the name.
+func rejectUnsafeEntry(f *zip.File, index int) error {
+	switch {
+	case !f.Mode().IsRegular():
+		return fmt.Errorf("%w: entry %d is not a regular file", ErrUnsafeEntry, index)
+	case f.Flags&zipEncrypted != 0:
+		return fmt.Errorf("%w: entry %d is encrypted", ErrUnsafeEntry, index)
+	}
+
+	return nil
 }
 
 // rejectEscape refuses a raw entry name that reaches outside its own
