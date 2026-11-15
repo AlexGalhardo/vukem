@@ -1,6 +1,8 @@
 package httpclient
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net/http"
@@ -261,4 +263,59 @@ func TestSecurity_A01_SSRFNilWrapTransportFailsClosed(t *testing.T) {
 	if err := fetch(func() (*http.Response, error) { return c.Get(srv.URL) }); !errors.Is(err, ErrNilTransport) {
 		t.Fatalf("Get(loopback) with a nil-returning wrapper = %v, want ErrNilTransport", err)
 	}
+}
+
+func TestSafeTrustsConfiguredCAAndReportsDials(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewTLSServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }),
+	)
+	defer srv.Close()
+
+	loop := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+
+	if resp, err := Safe(Options{Allow: loop}).Get(srv.URL); err == nil {
+		_ = resp.Body.Close()
+
+		t.Fatal("self-signed certificate accepted without TLSConfig")
+	}
+
+	var dialed []string
+
+	c := Safe(Options{
+		Allow:     loop,
+		TLSConfig: &tls.Config{RootCAs: srvPool(srv), MinVersion: tls.VersionTLS12},
+		OnDial:    func(a string) error { dialed = append(dialed, a); return nil },
+	})
+
+	resp, err := c.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = resp.Body.Close()
+
+	if len(dialed) != 1 || !strings.HasPrefix(dialed[0], "127.0.0.1:") {
+		t.Errorf("dialed = %v", dialed)
+	}
+
+	refuse := errors.New("refused")
+	refusing := Safe(Options{Allow: loop, OnDial: func(string) error { return refuse }})
+
+	resp, err = refusing.Get(srv.URL)
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+
+	if !errors.Is(err, refuse) {
+		t.Errorf("OnDial error = %v, want it to refuse the connection", err)
+	}
+}
+
+func srvPool(srv *httptest.Server) *x509.CertPool {
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+
+	return pool
 }

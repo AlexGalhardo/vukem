@@ -17,6 +17,7 @@ package httpclient
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -46,6 +47,16 @@ type Options struct {
 	// ErrNilTransport (http.Client would otherwise use
 	// http.DefaultTransport, which has no address check).
 	WrapTransport func(http.RoundTripper) http.RoundTripper
+	// TLSConfig, when set, is cloned into the transport's TLS client
+	// configuration, for a private CA (RootCAs) or a client certificate. The
+	// address check is independent of it; do not set InsecureSkipVerify for
+	// a public destination.
+	TLSConfig *tls.Config
+	// OnDial, when set, is called with the resolved address of every
+	// connection attempt that passed the address check, from the dialer's
+	// Control hook. Returning an error refuses the connection (a test can
+	// assert which address was reached, an app can add its own rule).
+	OnDial func(address string) error
 }
 
 // ErrBlockedAddress is returned when the destination is an internal address.
@@ -127,6 +138,10 @@ func Safe(o Options) *http.Client {
 				return fmt.Errorf("%w: %s", ErrBlockedAddress, address)
 			}
 
+			if o.OnDial != nil {
+				return o.OnDial(address)
+			}
+
 			return nil
 		},
 	}
@@ -139,6 +154,9 @@ func Safe(o Options) *http.Client {
 		ResponseHeaderTimeout: o.Timeout,
 		MaxIdleConns:          10,
 		IdleConnTimeout:       30 * time.Second,
+	}
+	if o.TLSConfig != nil {
+		transport.TLSClientConfig = o.TLSConfig.Clone()
 	}
 
 	var rt http.RoundTripper = &limitTransport{rt: transport, max: o.MaxBody}
