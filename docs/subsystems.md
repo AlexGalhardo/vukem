@@ -324,7 +324,9 @@ The collision one is the finding's own argument, and it is the one that **corrup
 
 An escaping raw name (`../../etc/passwd`, an absolute path, a drive letter) is refused before `Policy.Key` sees it. The default `Key` is `path.Base`, which would quietly turn that into the perfectly valid key `passwd`: safe to use, an archive that should never have been accepted, and nothing in the log to say so.
 
-What stays with the application is the per-entry content rule: what a frame may contain, how big an image may be, which types are acceptable. Errors (`ErrPolicy`, `ErrTooManyEntries`, `ErrTooLarge`, `ErrNameTooLong`, `ErrUnsafeName`, `ErrDuplicateKey`) never carry the raw entry name, which is attacker-controlled text a naive handler would put in a response body.
+`Zip` also refuses symbolic links, devices and encrypted entries (`ErrUnsafeEntry`) and, with `Policy.MaxRatio`, an entry compressed past that ratio; `Entry.Mode` and `Entry.CompressedSize` are exposed.
+
+What stays with the application is the per-entry content rule: what a frame may contain, how big an image may be, which types are acceptable. Errors (`ErrPolicy`, `ErrTooManyEntries`, `ErrTooLarge`, `ErrNameTooLong`, `ErrUnsafeName`, `ErrDuplicateKey`, `ErrUnsafeEntry`, `ErrRatio`) never carry the raw entry name, which is attacker-controlled text a naive handler would put in a response body.
 
 ## Media types an app produces
 

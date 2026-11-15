@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -410,5 +411,100 @@ func TestSecurity_A05_ArchiveEntriesCannotExceedTheirDeclaredSize(t *testing.T) 
 
 	if n > 10 {
 		t.Errorf("read %d bytes past a declared 10", n)
+	}
+}
+
+// rawZip builds a ZIP whose single entry has the given header and stored data.
+func rawZip(t *testing.T, h *zip.FileHeader, data string) ([]byte, int64) {
+	t.Helper()
+
+	var buf bytes.Buffer
+
+	zw := zip.NewWriter(&buf)
+
+	w, err := zw.CreateRaw(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := io.WriteString(w, data); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	return buf.Bytes(), int64(buf.Len())
+}
+
+func TestSecurity_A01_ZipRefusesNonRegularAndEncryptedEntries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		hdr  zip.FileHeader
+	}{
+		{"symlink", func() zip.FileHeader {
+			h := zip.FileHeader{Name: "link", CreatorVersion: 3 << 8, UncompressedSize64: 6, CompressedSize64: 6}
+			h.SetMode(os.ModeSymlink | 0o777)
+
+			return h
+		}()},
+		{"device", func() zip.FileHeader {
+			h := zip.FileHeader{Name: "dev", CreatorVersion: 3 << 8, UncompressedSize64: 6, CompressedSize64: 6}
+			h.SetMode(os.ModeDevice | 0o666)
+
+			return h
+		}()},
+		{"encrypted", zip.FileHeader{Name: "secret.txt", Flags: 0x1, UncompressedSize64: 6, CompressedSize64: 6}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			raw, size := rawZip(t, &tt.hdr, "target")
+
+			if _, err := archive.Zip(bytes.NewReader(raw), size, policy()); !errors.Is(err, archive.ErrUnsafeEntry) {
+				t.Fatalf("err = %v, want ErrUnsafeEntry", err)
+			}
+		})
+	}
+}
+
+func TestZipExposesModeAndCompressedSize(t *testing.T) {
+	t.Parallel()
+
+	raw, size := zipOf(t, map[string]string{"a.txt": strings.Repeat("a", 4096)}, "a.txt")
+
+	entries, err := archive.Zip(bytes.NewReader(raw), size, policy())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if e := entries[0]; !e.Mode.IsRegular() || e.CompressedSize <= 0 || e.CompressedSize >= e.Size {
+		t.Errorf("mode %v, compressed %d, size %d", e.Mode, e.CompressedSize, e.Size)
+	}
+}
+
+func TestZipRefusesOverTheCompressionRatio(t *testing.T) {
+	t.Parallel()
+
+	raw, size := zipOf(t, map[string]string{"a.txt": strings.Repeat("a", 10000)}, "a.txt")
+
+	p := policy()
+	if _, err := archive.Zip(bytes.NewReader(raw), size, p); err != nil {
+		t.Fatalf("no ratio set: %v", err)
+	}
+
+	p.MaxRatio = 10
+	if _, err := archive.Zip(bytes.NewReader(raw), size, p); !errors.Is(err, archive.ErrRatio) {
+		t.Fatalf("err = %v, want ErrRatio", err)
+	}
+
+	p.MaxRatio = 10000
+	if _, err := archive.Zip(bytes.NewReader(raw), size, p); err != nil {
+		t.Fatalf("generous ratio: %v", err)
 	}
 }
