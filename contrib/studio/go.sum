@@ -1,7 +1,7 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
-github.com/AlexGalhardo/vukem v0.44.0 h1:U9P7e0HPGydvbw6AB9ZxNTDSxgZknKLDNSSmByL8ZBo=
-github.com/AlexGalhardo/vukem v0.44.0/go.mod h1:l6kl1qNA/ROwsDymXx9NQfjs37bfBXnj4EZmScRW/sQ=
+github.com/AlexGalhardo/vukem v0.45.0 h1:kdx42CcArLZ0A/DFL+/y0uHgkANt/op586A6YMe+olw=
+github.com/AlexGalhardo/vukem v0.45.0/go.mod h1:l6kl1qNA/ROwsDymXx9NQfjs37bfBXnj4EZmScRW/sQ=
 github.com/AlexGalhardo/vukem/drivers/mongo v0.2.4 h1:nEw8Vy1KvdYjIJ6JoSU7h7Ott26+RhcOKI3k/u83oyY=
 github.com/AlexGalhardo/vukem/drivers/mongo v0.2.4/go.mod h1:slzRGju2qbIyX7SPuu1YjiXRfohJlfx0wb1cHLYiaak=
 github.com/AlexGalhardo/vukem/drivers/mysql v0.2.2 h1:6u97vQPE6flhGKYcvRH+HxYlSmmlS8WomnkZUeFlUIk=
