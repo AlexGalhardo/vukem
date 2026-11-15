@@ -1001,6 +1001,33 @@ func TestExitCodeOf(t *testing.T) {
 	}
 }
 
+func TestReportError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, ""},
+		{"usage", errUsage, ""},
+		{"exit code only", &ExitError{Code: 5}, ""},
+		{"wrapped exit code only", fmt.Errorf("w: %w", &ExitError{Code: 5}), ""},
+		{"exit with cause", &ExitError{Code: 3, Err: errors.New("thresholds")}, "thresholds\n"},
+		{"plain", errors.New("boom"), "boom\n"},
+	}
+
+	for _, tt := range tests {
+		var buf bytes.Buffer
+
+		reportError(&buf, tt.err)
+
+		if buf.String() != tt.want {
+			t.Errorf("%s: printed %q, want %q", tt.name, buf.String(), tt.want)
+		}
+	}
+}
+
 func TestSecurity_A05_BenchRunProductionCheckFailsClosed(t *testing.T) {
 	t.Parallel()
 

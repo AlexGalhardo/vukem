@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"net/http"
@@ -349,9 +350,21 @@ func MainWith(build BuildFunc, opts ...Option) int {
 	defer stop()
 
 	err := RunMain(ctx, osArgs(), lookupEnv, build, opts...)
-	if err != nil && !errors.Is(err, errUsage) {
-		fmt.Fprintln(stderr(), err)
-	}
+	reportError(stderr(), err)
 
 	return exitCodeOf(err)
+}
+
+// reportError prints err to w, except a usage error (already explained) and
+// an [*ExitError] without a cause, which sets the exit code and nothing else.
+func reportError(w io.Writer, err error) {
+	if err == nil || errors.Is(err, errUsage) {
+		return
+	}
+
+	if ee, ok := errors.AsType[*ExitError](err); ok && ee.Err == nil {
+		return
+	}
+
+	fmt.Fprintln(w, err)
 }
