@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/router"
@@ -612,5 +614,58 @@ func TestI18nSharesLocaleAndMessages(t *testing.T) {
 	again := page(t, hs.do(t, http.MethodGet, "/", xhr("X-Inertia-Except-Once-Props", "i18n:pt-BR")))
 	if props, _ := again["props"].(map[string]any); props["messages"] != nil {
 		t.Errorf("messages resent to a client that has them: %v", props["messages"])
+	}
+}
+
+func TestRenderInvalid(t *testing.T) {
+	t.Parallel()
+
+	hs := newHarness(t, baseConfig(), func(r *router.Router) {
+		r.Post("/projects", func(c *web.Ctx) error {
+			var err error
+
+			switch c.Query("case") {
+			case "invalid":
+				verr := errs.NewValidation()
+				verr.Append("name", "Name is required.")
+				verr.Append("name", "Too short.")
+
+				err = fmt.Errorf("create: %w", verr)
+			case "other":
+				err = errors.New("boom")
+			}
+
+			if err == nil {
+				return c.NoContent()
+			}
+
+			return inertia.RenderInvalid(c, "Projects/Index", inertia.Props{"n": 1}, err)
+		})
+	})
+
+	rec := hs.do(t, http.MethodPost, "/projects?case=invalid", xhr())
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+
+	p := page(t, rec)
+	if p["component"] != "Projects/Index" {
+		t.Errorf("component = %v, want the same page", p["component"])
+	}
+
+	props := p["props"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "Name is required."}, props["errors"]); diff != "" || props["n"] != 1.0 {
+		t.Errorf("props = %v (errors diff %s)", props, diff)
+	}
+
+	rec = hs.do(t, http.MethodPost, "/projects?case=invalid", xhr("X-Inertia-Error-Bag", "createProject"))
+	bag := page(t, rec)["props"].(map[string]any)["errors"].(map[string]any)
+
+	if diff := cmp.Diff(map[string]any{"createProject": map[string]any{"name": "Name is required."}}, bag); diff != "" {
+		t.Errorf("error bag mismatch (-want +got):\n%s", diff)
+	}
+
+	if rec := hs.do(t, http.MethodPost, "/projects?case=other", xhr()); rec.Code != http.StatusInternalServerError {
+		t.Errorf("a non-validation error status = %d, want it returned (500)", rec.Code)
 	}
 }
