@@ -40,7 +40,7 @@ type jsPM struct {
 const (
 	npmVersion  = "12.2.2"
 	bunVersion  = "1.4.4"
-	pnpmVersion = "12.20.0"
+	pnpmVersion = "12.21.0"
 	yarnVersion = "1.22.22"
 )
 

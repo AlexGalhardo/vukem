@@ -678,7 +678,7 @@ func generateAll(env *Env, data stubData, force bool, pairs [][2]string) error {
 // React Email packages make:mail --react asks for: exact stable versions,
 // checked against react 19.3.1 of the React starter.
 const (
-	reactEmailCLIVersion        = "6.11.11"
+	reactEmailCLIVersion        = "6.11.13"
 	reactEmailComponentsVersion = "1.0.12"
 )
 

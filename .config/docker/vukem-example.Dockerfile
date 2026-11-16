@@ -10,7 +10,7 @@
 #   docker build -f .config/docker/vukem-example.Dockerfile --build-arg EXAMPLE=todo -t vukem-example-todo .
 #
 # The app serves HTTP itself, so there is no proxy stage.
-ARG GO_IMAGE=golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
+ARG GO_IMAGE=golang:1.27.4@sha256:fe517acaa580cc7915457080f850c37e618b3c1e750f98b58fc6429b605147a1
 ARG BUN_IMAGE=oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a
 ARG RUNTIME_IMAGE=alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
