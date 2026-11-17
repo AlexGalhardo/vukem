@@ -175,6 +175,30 @@ func WithKind(k Kind) Option {
 	return func(o *options) error { o.kind = k; return nil }
 }
 
+// WithCommands registers commands that [RunMain] can resolve before it builds
+// the app. A command whose NoBoot method returns true then runs with no
+// APP_KEY and without building the app; Run receives a nil [*App]. Any other
+// command is only named and flag-checked early — running it still builds the
+// app. Commands registered by a provider stay available either way.
+func WithCommands(cmds ...Command) Option {
+	return func(o *options) error {
+		o.earlyCommands = append(o.earlyCommands, cmds...)
+
+		return nil
+	}
+}
+
+// withDeferMissingKey allows New to finish when APP_KEY is missing so a
+// console command can be resolved. It does not set WithKeyOptional: Boot still
+// fails closed for a command that is not NoBoot.
+func withDeferMissingKey() Option {
+	return func(o *options) error {
+		o.deferMissingKey = true
+
+		return nil
+	}
+}
+
 // WithProviders appends providers, registered and booted in order.
 func WithProviders(p ...Provider) Option {
 	return func(o *options) error { o.providers = append(o.providers, p...); return nil }

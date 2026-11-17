@@ -137,11 +137,7 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 	}
 
 	if cmd == nil {
-		var names []string
-		for _, c := range app.Commands() {
-			names = append(names, c.Name())
-		}
-
+		names := commandNames(app.Commands())
 		if s := suggest.Closest(name, names); s != "" {
 			fmt.Fprintf(app.stderr, "unknown command %q (did you mean %q?)\n", name, s)
 
@@ -154,33 +150,17 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 		return errUsage
 	}
 
-	fset := flag.NewFlagSet(name, flag.ContinueOnError)
-	// A flag error prints its reason and the usage here; they go to stderr
-	// unless the user asked for help (-h), which is output, not an error.
-	var flagOut bytes.Buffer
-
-	fset.SetOutput(&flagOut)
-	cmd.Flags(fset)
-
-	if _, raw := cmd.(RawArgsCommand); raw {
-		// "--" ends flag parsing, so every argument reaches Run as is.
-		args = append([]string{"--"}, args...)
-	}
-
-	if err := fset.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			_, _ = flagOut.WriteTo(app.stdout)
-
+	args, err := parseCommandArgs(cmd, args, app.stdout, app.stderr)
+	if err != nil {
+		if errors.Is(err, errFlagHelp) {
 			return nil
 		}
 
-		_, _ = flagOut.WriteTo(app.stderr)
-
-		return errUsage
+		return err
 	}
 
 	if nb, ok := cmd.(NoBootCommand); ok && nb.NoBoot() {
-		runErr := cmd.Run(ctx, app, fset.Args())
+		runErr := cmd.Run(ctx, app, args)
 
 		// Providers were never booted unless the command booted the app itself,
 		// so only then is there anything to shut down.
@@ -196,14 +176,199 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 	}
 
 	if app.Kind != KindWarmup {
+		if err := app.requireConfiguredKey(); err != nil {
+			return err
+		}
+
 		if err := app.Boot(ctx); err != nil {
 			return err
 		}
 	}
 
-	runErr := cmd.Run(ctx, app, fset.Args())
+	runErr := cmd.Run(ctx, app, args)
 
 	return errors.Join(runErr, app.Shutdown(context.WithoutCancel(ctx)))
+}
+
+// errFlagHelp is parseCommandArgs reporting that the user passed -h.
+var errFlagHelp = errors.New("flag help")
+
+// dispatchBeforeBuild runs a NoBoot command registered with WithCommands, and
+// reports an unknown flag of a known command, without building the app. Any
+// other name returns handled false so RunMain builds.
+func dispatchBeforeBuild(ctx context.Context, name string, args []string, opts []Option) (bool, error) {
+	if name == "serve" || isWarmupCommand(name) {
+		return false, nil
+	}
+
+	cmd, ok := findNamed(name, earlyCommandSet(opts))
+	if !ok {
+		return false, nil
+	}
+
+	stdout, stderrOut := commandStreams(opts)
+
+	parsed, err := parseCommandArgs(cmd, args, stdout, stderrOut)
+	if err != nil {
+		if errors.Is(err, errFlagHelp) {
+			return true, nil
+		}
+
+		return true, err
+	}
+
+	nb, isNoBoot := cmd.(NoBootCommand)
+	if !isNoBoot || !nb.NoBoot() {
+		return false, nil
+	}
+
+	return true, cmd.Run(ctx, nil, parsed)
+}
+
+// unknownIfUnbuilt turns a build that died on a missing APP_KEY into an
+// unknown-command error when the name is not a command we could already see.
+// A real command keeps the configuration error.
+func unknownIfUnbuilt(name string, opts []Option, err error) error {
+	if err == nil || name == "serve" || isWarmupCommand(name) || !mentionsAppKey(err) {
+		return err
+	}
+
+	known := earlyCommandSet(opts)
+	if _, ok := findNamed(name, known); ok {
+		return err
+	}
+
+	_, stderrOut := commandStreams(opts)
+
+	return rejectUnknown(name, commandNames(known), stderrOut)
+}
+
+func mentionsAppKey(err error) bool {
+	return errors.Is(err, config.ErrKeyMissing) || strings.Contains(err.Error(), "APP_KEY")
+}
+
+func earlyCommandSet(opts []Option) []Command {
+	var o options
+
+	for _, opt := range opts {
+		_ = opt(&o)
+	}
+
+	return append(builtinCommands(), o.earlyCommands...)
+}
+
+func findNamed(name string, cmds []Command) (Command, bool) {
+	for _, c := range cmds {
+		if c.Name() == name {
+			return c, true
+		}
+	}
+
+	return nil, false
+}
+
+func commandNames(cmds []Command) []string {
+	names := make([]string, 0, len(cmds))
+	for _, c := range cmds {
+		names = append(names, c.Name())
+	}
+
+	return names
+}
+
+func commandStreams(opts []Option) (stdout, stderr io.Writer) {
+	var o options
+
+	for _, opt := range opts {
+		_ = opt(&o)
+	}
+
+	return cmp.Or(o.stdout, io.Writer(os.Stdout)), cmp.Or(o.stderr, io.Writer(os.Stderr))
+}
+
+func rejectUnknown(name string, names []string, stderrOut io.Writer) error {
+	if s := suggest.Closest(name, names); s != "" {
+		fmt.Fprintf(stderrOut, "unknown command %q (did you mean %q?)\n", name, s)
+
+		return errUsage
+	}
+
+	fmt.Fprintf(stderrOut, "unknown command %q\n\n", name)
+	fmt.Fprintln(stderrOut, "Available commands:")
+
+	for _, n := range names {
+		fmt.Fprintf(stderrOut, "  %s\n", n)
+	}
+
+	return errUsage
+}
+
+// parseCommandArgs parses args the way runCommand does. A usage problem is
+// printed to stderr (with a suggestion when the flag name is close to one the
+// command defines) and returned as errUsage. -h is printed to stdout and
+// returned as errFlagHelp.
+func parseCommandArgs(cmd Command, args []string, stdout, stderrOut io.Writer) ([]string, error) {
+	fset := flag.NewFlagSet(cmd.Name(), flag.ContinueOnError)
+
+	var flagOut bytes.Buffer
+
+	fset.SetOutput(&flagOut)
+	cmd.Flags(fset)
+
+	if _, raw := cmd.(RawArgsCommand); raw {
+		// "--" ends flag parsing, so every argument reaches Run as is.
+		args = append([]string{"--"}, args...)
+	}
+
+	if err := fset.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			_, _ = flagOut.WriteTo(stdout)
+
+			return nil, errFlagHelp
+		}
+
+		writeFlagError(fset, err, &flagOut, stderrOut)
+
+		return nil, errUsage
+	}
+
+	return fset.Args(), nil
+}
+
+func writeFlagError(fset *flag.FlagSet, parseErr error, captured *bytes.Buffer, stderrOut io.Writer) {
+	const prefix = "flag provided but not defined: "
+
+	msg := parseErr.Error()
+	if shown, ok := strings.CutPrefix(msg, prefix); ok {
+		bare := strings.TrimLeft(shown, "-")
+
+		var names []string
+
+		fset.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
+
+		if s := suggest.Closest(bare, names); s != "" {
+			fmt.Fprintf(stderrOut, "unknown flag %q (did you mean %q?)\n", shown, "-"+s)
+
+			return
+		}
+	}
+
+	_, _ = captured.WriteTo(stderrOut)
+}
+
+// requireConfiguredKey repeats the missing-key rule for a command that boots.
+// Console resolution may build without APP_KEY; that must not let a normal
+// command run keyless outside development and test.
+func (a *App) requireConfiguredKey() error {
+	if a == nil || a.keyOptional || a.Kind == KindWarmup || !a.Key.IsZero() {
+		return nil
+	}
+
+	if a.Source != nil && a.Source.EnvSet() && !a.Config.IsProduction() {
+		return nil
+	}
+
+	return config.ErrKeyMissing
 }
 
 // isWarmupCommand reports whether a command runs in [KindWarmup]: it needs
@@ -491,14 +656,15 @@ func aboutCommand() Command {
 }
 
 // Process-level helpers, kept tiny so RunMain stays testable.
+// The funcs are variables so a test can drive MainWith without a subprocess.
 
 func osDirFS(dir string) fs.FS { return os.DirFS(dir) }
 
-func osArgs() []string { return os.Args }
+var osArgs = func() []string { return os.Args }
 
-func lookupEnv(k string) (string, bool) { return os.LookupEnv(k) }
+var lookupEnv = os.LookupEnv
 
-func stderr() io.Writer { return os.Stderr }
+var stderr = func() io.Writer { return os.Stderr }
 
 func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -310,17 +310,21 @@ func RunMain(ctx context.Context, args []string, getenv func(string) (string, bo
 		return runBench(ctx, rest, getenv, build, opts, stdinIsTerminal())
 	}
 
+	if handled, err := dispatchBeforeBuild(ctx, cmd, rest, opts); handled {
+		return err
+	}
+
 	base := []Option{WithEnv(osDirFS("."), getenv)}
 	switch {
 	case isWarmupCommand(cmd):
 		base = append(base, WithKind(KindWarmup))
 	case cmd != "serve":
-		base = append(base, WithKind(KindConsole))
+		base = append(base, WithKind(KindConsole), withDeferMissingKey())
 	}
 
 	app, err := build(append(base, opts...)...)
 	if err != nil {
-		return err
+		return unknownIfUnbuilt(cmd, opts, err)
 	}
 
 	switch cmd {
