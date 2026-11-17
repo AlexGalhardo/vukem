@@ -1946,6 +1946,57 @@ func TestMiddlewareI18nPathPrefixes(t *testing.T) {
 	}
 }
 
+func TestDefaultMiddlewareBeforeLocaleSetsAcceptLanguage(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{
+		"en.json": {Data: []byte(`{"hello": "Hello"}`)},
+		"pt.json": {Data: []byte(`{"hello": "Olá"}`)},
+	}
+
+	var seen string
+
+	app := newTestApp(t, WithTranslations(lang), WithRoutes(func(r *router.Router, app *App) error {
+		r.Get("/", func(c *web.Ctx) error { return c.String(http.StatusOK, i18n.T(c.Context(), "hello")) })
+
+		return DefaultMiddlewareWith(app, r, MiddlewareOptions{
+			I18n: &i18n.MiddlewareConfig{Order: []i18n.Source{i18n.SourceHeader}},
+			BeforeLocale: []router.Middleware{
+				func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if custom := r.Header.Get("Vukem-Video-Lang"); custom != "" {
+							r.Header.Set("Accept-Language", custom)
+						}
+
+						seen = r.Header.Get("Accept-Language")
+						next.ServeHTTP(w, r)
+					})
+				},
+			},
+		})
+	}))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+	req.Header.Set("Vukem-Video-Lang", "pt")
+
+	rec := httptest.NewRecorder()
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Body.String() != "Olá" {
+		t.Fatalf("body = %q, want Olá (locale saw Accept-Language pt)", rec.Body.String())
+	}
+
+	if seen != "pt" {
+		t.Fatalf("Accept-Language before locale = %q, want pt", seen)
+	}
+}
+
 func TestDefaultMiddlewareWithI18n(t *testing.T) {
 	t.Parallel()
 

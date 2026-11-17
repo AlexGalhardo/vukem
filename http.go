@@ -577,6 +577,12 @@ type MiddlewareOptions struct {
 	// their order, or the selectable locales. It is validated at boot and
 	// needs WithTranslations.
 	I18n *i18n.MiddlewareConfig
+	// BeforeLocale is router middleware installed immediately before the locale
+	// middleware (after sessions and CSRF). Use it to copy a product header
+	// onto Accept-Language before the locale is resolved, without registering
+	// middleware outside this stack. It is installed in that position even
+	// when the app has no translations.
+	BeforeLocale []router.Middleware
 	// MaxBody is the router-wide request body limit in bytes; zero keeps
 	// web.DefaultMaxBody (10 MiB), a negative value is a boot error. Prefer
 	// it to a UseServer(middleware.BodyLimit(n)) of your own: the router
@@ -697,6 +703,10 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 	useLocalePrefixes(app, r, opts.I18n)
 
 	r.Use(append(routerMW, csrfMW)...)
+
+	if len(opts.BeforeLocale) > 0 {
+		r.Use(opts.BeforeLocale...)
+	}
 
 	if localeMW != nil {
 		r.Use(localeMW)
