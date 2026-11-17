@@ -66,3 +66,8 @@ fc3b71bd2af8a8e68120dd4aadd7680c36fa7519:contrib/stripe/stripe_test.go:stripe-ac
 7aa134f29f81d802e979c4d623de81fa3f459a94:internal/cli/scaffolds/finance/tests/finance_auth_test.go.tmpl:generic-password:79
 7aa134f29f81d802e979c4d623de81fa3f459a94:internal/cli/scaffolds/finance/database/seeders/finance_admin_seeder.go.tmpl:generic-password:77
 7aa134f29f81d802e979c4d623de81fa3f459a94:internal/cli/scaffolds/finance/setup-local.md.tmpl:generic-password:41
+# 2026-11-17: the weekly --all scan still sees ef03a766 because
+# origin/feat/finance-scaffold-ui points at it. Same three lines as 7aa134f2.
+ef03a76626a6edaa39b63139a0cbe93ef04ee88f:internal/cli/scaffolds/finance/tests/finance_auth_test.go.tmpl:generic-password:79
+ef03a76626a6edaa39b63139a0cbe93ef04ee88f:internal/cli/scaffolds/finance/database/seeders/finance_admin_seeder.go.tmpl:generic-password:77
+ef03a76626a6edaa39b63139a0cbe93ef04ee88f:internal/cli/scaffolds/finance/setup-local.md.tmpl:generic-password:41
