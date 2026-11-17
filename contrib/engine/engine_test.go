@@ -651,6 +651,76 @@ func TestRunWithFeedsTheChildStandardInput(t *testing.T) {
 	waitGoroutines(t, base)
 }
 
+func TestRunWithOSFileStdinAndStdout(t *testing.T) {
+	tool := find(t, engine.Config{Name: "faketool"})
+	dir := t.TempDir()
+
+	inPath := filepath.Join(dir, "in.bin")
+	if err := os.WriteFile(inPath, []byte("abcdef"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	in, err := os.Open(inPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = in.Close() })
+
+	outPath := filepath.Join(dir, "out.txt")
+
+	out, err := os.Create(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := tool.RunWith(t.Context(), engine.RunOptions{
+		Dir: dir, Stdin: in, Stdout: out,
+	}, "stdin-len")
+	if err != nil {
+		t.Fatalf("RunWith(*os.File) = %v\n%s", err, res.Stderr)
+	}
+
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.TrimSpace(string(got)) != "6" {
+		t.Fatalf("stdout file = %q, want 6", got)
+	}
+
+	if res.Stdout != "" {
+		t.Fatalf("Result.Stdout = %q, want empty when Stdout is an *os.File", res.Stdout)
+	}
+}
+
+func TestSuspendedStartIsDocumented(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("engine.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(src)
+	for _, name := range []string{"func (t *Tool) Run(", "type Limits struct"} {
+		i := strings.Index(text, name)
+		if i < 0 {
+			t.Fatalf("engine.go has no %s", name)
+		}
+
+		chunk := text[max(0, i-900):i]
+		if !strings.Contains(chunk, "created suspended") || !strings.Contains(chunk, "first output byte") {
+			t.Errorf("%s godoc = %q, want the suspended-start sentence", name, chunk)
+		}
+	}
+}
+
 func TestRunWithStreamsStdoutAndStderrAlongsideStdin(t *testing.T) {
 	tool := find(t, engine.Config{Name: "faketool"})
 
