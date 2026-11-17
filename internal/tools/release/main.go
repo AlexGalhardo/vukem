@@ -1,6 +1,15 @@
 // Command release cuts a release at the end of a PLAN.md task group:
 //
 //	go run ./internal/tools/release [-push] [-ref <commit>] vX.Y.Z
+//	go run ./internal/tools/release -prepare vX.Y.Z
+//	go run ./internal/tools/release -tag [-push] vX.Y.Z
+//	go run ./internal/tools/release -image-tags [-tags-file path] vX.Y.Z image...
+//
+// -prepare writes the changelog and the chore(release) commit on any branch
+// (including release/vX.Y.Z) and does not tag. -tag creates the annotated tag
+// only on main, and only when that commit is the tip. -image-tags prints the
+// registry tags for a version: X.Y and latest only when it is the highest
+// stable vX.Y.Z already published.
 //
 // It requires a clean tree on main, generates the version's changelog
 // section with git-cliff (Keep a Changelog 1.1.0), inserts it below
@@ -31,7 +40,26 @@ import (
 	"time"
 )
 
-var errUsageModules = errors.New("usage: release -modules [-dry-run] [-push] [-only dir[=vX.Y.Z],...]")
+var (
+	errUsageModules   = errors.New("usage: release -modules [-dry-run] [-push] [-only dir[=vX.Y.Z],...]")
+	errUsageImageTags = errors.New("usage: release -image-tags [-tags-file path] vX.Y.Z image")
+)
+
+// releaseFlags is the parsed command line of the release tool.
+type releaseFlags struct {
+	push        bool
+	ref         string
+	noCommit    bool
+	publishOnly bool
+	modules     bool
+	dryRun      bool
+	only        string
+	prepare     bool
+	tagOnly     bool
+	imageTags   bool
+	tagsFile    string
+	args        []string
+}
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
@@ -41,54 +69,147 @@ func main() {
 }
 
 func run(args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("release", flag.ContinueOnError)
-	push := fs.Bool("push", false, "push the commit and tag and create the GitHub release")
-	ref := fs.String("ref", "HEAD", "commit to tag (use an older commit for retroactive releases)")
-	noCommit := fs.Bool("no-commit", false, "only update CHANGELOG.md (batch retroactive releases)")
-	publishOnly := fs.Bool("publish-only", false, "only create the GitHub release for an existing pushed tag")
-
-	modules := fs.Bool("modules", false, "tag changed drivers/* and contrib/* modules")
-	dryRun := fs.Bool("dry-run", false, "with -modules: print the plan and exit")
-	only := fs.String("only", "", "with -modules: limit to dir[=vX.Y.Z],... (forces the version)")
-
-	if err := fs.Parse(args); err != nil {
+	f, err := parseReleaseFlags(args)
+	if err != nil {
 		return err
 	}
 
-	if !*modules && (*dryRun || *only != "") {
+	switch {
+	case f.imageTags:
+		return runImageTagMode(out, f)
+	case f.modules || f.dryRun || f.only != "":
+		return runModuleFlags(out, f)
+	default:
+		return runVersion(out, f)
+	}
+}
+
+func parseReleaseFlags(args []string) (releaseFlags, error) {
+	fs := flag.NewFlagSet("release", flag.ContinueOnError)
+	f := releaseFlags{}
+	fs.BoolVar(&f.push, "push", false, "push the commit and tag and create the GitHub release")
+	fs.StringVar(&f.ref, "ref", "HEAD", "commit to tag (use an older commit for retroactive releases)")
+	fs.BoolVar(&f.noCommit, "no-commit", false, "only update CHANGELOG.md (batch retroactive releases)")
+	fs.BoolVar(&f.publishOnly, "publish-only", false, "only create the GitHub release for an existing pushed tag")
+	fs.BoolVar(&f.modules, "modules", false, "tag changed drivers/* and contrib/* modules")
+	fs.BoolVar(&f.dryRun, "dry-run", false, "with -modules: print the plan and exit")
+	fs.StringVar(&f.only, "only", "", "with -modules: limit to dir[=vX.Y.Z],... (forces the version)")
+	fs.BoolVar(&f.prepare, "prepare", false, "write the changelog commit on any branch; do not tag")
+	fs.BoolVar(&f.tagOnly, "tag", false, "tag vX.Y.Z on main when HEAD is the chore(release) commit")
+	fs.BoolVar(
+		&f.imageTags,
+		"image-tags",
+		false,
+		"print image tags; latest and X.Y only for the highest stable version",
+	)
+	fs.StringVar(&f.tagsFile, "tags-file", "", "with -image-tags: published tag names, one per line")
+
+	if err := fs.Parse(args); err != nil {
+		return releaseFlags{}, err
+	}
+
+	f.args = fs.Args()
+
+	return f, nil
+}
+
+func runImageTagMode(out io.Writer, f releaseFlags) error {
+	mixed := f.modules || f.prepare || f.tagOnly || f.publishOnly || f.noCommit || f.push || f.dryRun || f.only != "" ||
+		f.ref != "HEAD"
+	if mixed || len(f.args) < 2 || !validVersion(canonicalTag(f.args[0])) {
+		return errUsageImageTags
+	}
+
+	return printImageTags(out, f.args[0], f.args[1:], f.tagsFile)
+}
+
+func runModuleFlags(out io.Writer, f releaseFlags) error {
+	if !f.modules {
 		return errUsageModules
 	}
 
-	if *modules {
-		plain := fs.NArg() == 0 && *ref == "HEAD" && !*noCommit && !*publishOnly
+	plain := len(f.args) == 0 && f.ref == "HEAD" && !f.noCommit && !f.publishOnly && !f.prepare && !f.tagOnly
 
-		return runModulesMode(plain, out, *dryRun, *push, *only)
-	}
+	return runModulesMode(plain, out, f.dryRun, f.push, f.only)
+}
 
-	if fs.NArg() != 1 || !validVersion(fs.Arg(0)) {
+func runVersion(out io.Writer, f releaseFlags) error {
+	if len(f.args) != 1 || !validVersion(f.args[0]) {
 		return errors.New("usage: release [-push] [-ref commit] vX.Y.Z")
 	}
 
-	version := fs.Arg(0)
+	version := f.args[0]
 
-	if *publishOnly {
+	switch {
+	case f.publishOnly:
 		return publishExisting(version)
+	case f.prepare && f.tagOnly:
+		return errors.New("use -prepare and -tag in separate runs")
+	case f.prepare && (f.push || f.noCommit):
+		return errors.New("-prepare only writes the changelog commit; open one pull request, then run -tag on main")
+	case f.tagOnly:
+		return tagOnMain(out, version, f.push)
+	default:
+		return cutRelease(out, f, version)
+	}
+}
+
+func cutRelease(out io.Writer, f releaseFlags, version string) error {
+	branch, err := releaseBranch(f.prepare)
+	if err != nil {
+		return err
 	}
 
-	if branch := git("rev-parse", "--abbrev-ref", "HEAD"); branch != "main" {
-		return fmt.Errorf("releases are cut from main, not %q", branch)
-	}
-
-	if dirty := git("status", "--porcelain", "--untracked-files=no"); dirty != "" && !*noCommit {
+	if dirty := git("status", "--porcelain", "--untracked-files=no"); dirty != "" && !f.noCommit {
 		return fmt.Errorf("working tree is not clean:\n%s", dirty)
 	}
 
-	// Only core tags: driver and contrib tags (drivers/x/v0.1.0) are not releases.
-	previous := git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", *ref+"^")
+	updated, err := writeChangelog(f.ref, version, !f.noCommit)
+	if err != nil {
+		return err
+	}
 
-	rangeArg := *ref
+	fmt.Fprintf(
+		out,
+		"CHANGELOG.md updated for %s (previous %s)\n",
+		version,
+		orNone(git(previousDescribeArgs(f.ref+"^")...)),
+	)
+
+	if f.noCommit {
+		return nil
+	}
+
+	if err := commitRelease(f, version); err != nil {
+		return err
+	}
+
+	return finishRelease(out, f, version, branch, updated)
+}
+
+func releaseBranch(prepare bool) (string, error) {
+	branch := git("rev-parse", "--abbrev-ref", "HEAD")
+	if prepare {
+		if branch == "" || branch == "HEAD" {
+			return "", fmt.Errorf("-prepare needs a branch, not %q", branch)
+		}
+
+		return branch, nil
+	}
+
+	if branch != "main" {
+		return "", fmt.Errorf("releases are cut from main, not %q", branch)
+	}
+
+	return branch, nil
+}
+
+func writeChangelog(ref, version string, bumpPlan bool) (string, error) {
+	previous := git(previousDescribeArgs(ref + "^")...)
+	rangeArg := ref
+
 	if previous != "" {
-		rangeArg = previous + ".." + *ref
+		rangeArg = previous + ".." + ref
 	}
 
 	section, err := output(
@@ -103,7 +224,7 @@ func run(args []string, out io.Writer) error {
 		"all",
 	)
 	if err != nil {
-		return fmt.Errorf("git cliff: %w", err)
+		return "", fmt.Errorf("git cliff: %w", err)
 	}
 
 	if !strings.Contains(section, "### ") {
@@ -112,38 +233,38 @@ func run(args []string, out io.Writer) error {
 
 	current, err := os.ReadFile("CHANGELOG.md")
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	updated, err := insertRelease(string(current), section, version, previous)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if err := os.WriteFile("CHANGELOG.md", []byte(updated), 0o600); err != nil {
-		return err
+		return "", err
 	}
 
-	if !*noCommit {
+	if bumpPlan {
 		if err := bumpPlanFile(); err != nil {
-			return err
+			return "", err
 		}
 	}
 
-	fmt.Fprintf(out, "CHANGELOG.md updated for %s (previous %s)\n", version, orNone(previous))
+	return updated, nil
+}
 
-	if *noCommit {
-		return nil
-	}
-
-	msg := "chore(release): " + version
+func commitRelease(f releaseFlags, version string) error {
 	steps := [][]string{
 		{"git", "add", "CHANGELOG.md", "docs/PLAN.md"},
-		{"git", "commit", "-m", msg},
-		{"git", "tag", "-a", version, "-m", version, tagTarget(*ref)},
+		{"git", "commit", "-m", "chore(release): " + version},
 	}
 
-	if *push {
+	if !f.prepare {
+		steps = append(steps, []string{"git", "tag", "-a", version, "-m", version, tagTarget(f.ref)})
+	}
+
+	if f.push {
 		steps = append(steps,
 			[]string{"git", "push", "origin", "main"},
 			[]string{"git", "push", "origin", version},
@@ -156,7 +277,11 @@ func run(args []string, out io.Writer) error {
 		}
 	}
 
-	if *push {
+	return nil
+}
+
+func finishRelease(out io.Writer, f releaseFlags, version, branch, updated string) error {
+	if f.push {
 		if err := publish(version, releaseNotes(updated, version)); err != nil {
 			return err
 		}
@@ -166,7 +291,59 @@ func run(args []string, out io.Writer) error {
 		return bumpNestedModules(out, version)
 	}
 
+	if f.prepare {
+		fmt.Fprintf(
+			out,
+			"prepared %s on %s; open one pull request and rebase-merge it (GitHub refuses a rebase merge above 100 commits), then run -tag on main\n",
+			version,
+			branch,
+		)
+
+		return nil
+	}
+
 	fmt.Fprintf(out, "tagged %s; push with: git push origin main %s\n", version, version)
+
+	return nil
+}
+
+// previousDescribeArgs finds the previous core product tag. The match keeps
+// module tags and pins (ffmpeg-*, anything that is not vX.Y.Z) out of the
+// range git-cliff reads.
+func previousDescribeArgs(ref string) []string {
+	return []string{"describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", ref}
+}
+
+// tagOnMain creates the annotated tag for version. It refuses every branch
+// other than main, and it refuses a tip that is not the prepare commit.
+func tagOnMain(out io.Writer, version string, push bool) error {
+	branch := git("rev-parse", "--abbrev-ref", "HEAD")
+	if branch != "main" {
+		return fmt.Errorf("the tag is created on main, not %q", branch)
+	}
+
+	subject := git("log", "-1", "--format=%s")
+	want := "chore(release): " + version
+
+	if subject != want {
+		return fmt.Errorf("HEAD is %q, want %q", subject, want)
+	}
+
+	if dirty := git("status", "--porcelain", "--untracked-files=no"); dirty != "" {
+		return fmt.Errorf("working tree is not clean:\n%s", dirty)
+	}
+
+	if _, err := output("git", "tag", "-a", version, "-m", version, "HEAD"); err != nil {
+		return fmt.Errorf("git tag: %w", err)
+	}
+
+	if push {
+		if _, err := output("git", "push", "origin", version); err != nil {
+			return fmt.Errorf("git push origin %s: %w", version, err)
+		}
+	}
+
+	fmt.Fprintf(out, "tagged %s on main\n", version)
 
 	return nil
 }
