@@ -8,7 +8,7 @@ Every change reaches `main` through a pull request, including the maintainer's:
 
 1. Branch from `main` (`feat/…`, `fix/…`, `docs/…`, `release/vX.Y.Z`), commit with Conventional Commits, run `task ci`.
 2. `gh pr create --fill`; the PR title is validated by `pr-title.yml` and becomes the squash commit.
-3. Wait for the required checks (below), then merge: squash a single-change PR; rebase-merge a batch of Conventional Commits (`gh pr merge --rebase`), since git-cliff builds the changelog from each commit and a squash would leave only the PR title. GitHub refuses a rebase merge of a PR with more than 100 commits: split such a batch into several PRs.
+3. Wait for the required checks (below), then merge: squash a single-change PR; rebase-merge a batch of Conventional Commits (`gh pr merge --rebase`), since git-cliff builds the changelog from each commit and a squash would leave only the PR title. GitHub refuses a rebase merge of a PR with more than 100 commits: split such a batch into several PRs. Do not open a draft pull request on the same commit as another open pull request. GitHub groups check runs by commit and shows the newest run of each name, so cancelling the draft marks the other pull request's required checks as cancelled.
 
 The `protect-main` ruleset enforces this. Its intended state is versioned in [`.config/ruleset-protect-main.json`](../.config/ruleset-protect-main.json): a pull request with 0 required approvals (stale reviews dismissed on push, review threads resolved), the required status checks `Lint (Go)`, `API compatibility (apidiff)`, `Lint (OpenAPI golden)`, `Lint (Markdown)` and `Test (<os>, Go stable)` on Linux, Windows and macOS (branch must be up to date with `main`), linear history, no force push, no deletion and no bypass actors. Apply or re-apply it with:
 
@@ -20,11 +20,11 @@ A job renamed in `ci.yml` must be renamed in that file in the same PR, or every 
 
 ### Releasing through a pull request
 
-`task release -- vX.Y.Z` pushes the release commit and the nested-module bumps straight to `main`, which the ruleset rejects. Until the release tool opens the PR itself:
+One release is one pull request. `task release -- vX.Y.Z` pushes the release commit straight to `main`, which the ruleset rejects. Prepare the changelog on a branch and create the tag only after that commit is the tip of `main`:
 
-1. On an up-to-date local `main`, `go run ./internal/tools/release vX.Y.Z` (no `-push`; the tool refuses other branches): it writes `CHANGELOG.md` and the PLAN.md status, commits `chore(release): vX.Y.Z` and creates a local tag.
-2. Move that commit to a branch: `git tag -d vX.Y.Z`, `git switch -c release/vX.Y.Z`, `git branch -f main origin/main`, `git push -u origin release/vX.Y.Z`. Open the PR, wait for CI, squash-merge.
-3. `git switch main && git pull`, then `git tag -a vX.Y.Z -m vX.Y.Z` on the merged commit and `git push origin vX.Y.Z` (one tag per push, [Tag pushes](tooling.md#tag-pushes)).
+1. Branch from an up-to-date `main` (`release/vX.Y.Z`, or any other branch). `go run ./internal/tools/release -prepare vX.Y.Z` writes `CHANGELOG.md` and the PLAN.md status and commits `chore(release): vX.Y.Z`. It does not tag and it does not push. `-modules` still refuses every branch other than `main`: module tags are cut after this pull request merges.
+2. Open one pull request. Do not open a draft pull request on the same commit as another open pull request (see the flow above). Rebase-merge (`gh pr merge --rebase`) so the `chore(release)` commit stays the tip. GitHub refuses a rebase merge of more than 100 commits: split the branch into several pull requests before `-prepare`.
+3. `git switch main && git pull`. `go run ./internal/tools/release -tag vX.Y.Z` creates the annotated tag only when the branch is `main` and `HEAD`'s subject is `chore(release): vX.Y.Z`. `git push origin vX.Y.Z` (one tag per push, [Tag pushes](tooling.md#tag-pushes)).
 4. `go run ./internal/tools/release -publish-only vX.Y.Z` publishes the GitHub release notes.
 5. Raise the nested modules' core requirement in a second PR (`chore(deps): require vukem vX.Y.Z in nested modules`), then run `go run ./internal/tools/release -modules -push` on the merged `main` ([tooling.md](tooling.md#release-process)).
 
