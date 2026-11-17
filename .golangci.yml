@@ -172,7 +172,7 @@ linters:
       - site/
     # No "comments" preset: it hides revive's exported and package-comments
     # findings, and every exported identifier needs a doc comment that
-    # starts with its name (.claude/rules/go.md, docs/v1-api-review.md).
+    # starts with its name (.agents/rules/go.md, docs/v1-api-review.md).
     presets:
       - std-error-handling
       - common-false-positives

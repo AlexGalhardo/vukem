@@ -26,7 +26,7 @@ tasks:
       - golangci-lint version
       - lefthook version
       - lefthook install
-      # Agent worktrees under .claude/worktrees/ outlive their branches.
+      # Agent worktrees under .agents/worktrees/ outlive their branches.
       - git worktree prune
 
   hooks:

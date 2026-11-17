@@ -1,6 +1,6 @@
 # World-class documentation site workflow
 
-How the docs at <https://vukem.dev> (`site/`) are written, structured and kept current. It distils what makes the [AdonisJS](https://docs.adonisjs.com/introduction), [Laravel](https://laravel.com/docs) and [Resend](https://resend.com/docs/introduction) docs excellent and turns it into rules for Vukem. The short, enforceable version lives in [`.claude/rules/docs-content.md`](../.claude/rules/docs-content.md); [docs/site.md](site.md) covers the site's code and hosting.
+How the docs at <https://vukem.dev> (`site/`) are written, structured and kept current. It distils what makes the [AdonisJS](https://docs.adonisjs.com/introduction), [Laravel](https://laravel.com/docs) and [Resend](https://resend.com/docs/introduction) docs excellent and turns it into rules for Vukem. The short, enforceable version lives in [`.agents/rules/docs-content.md`](../.agents/rules/docs-content.md); [docs/site.md](site.md) covers the site's code and hosting.
 
 ## Who we write for
 

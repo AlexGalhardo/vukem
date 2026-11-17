@@ -474,12 +474,12 @@ vukem/                    module github.com/AlexGalhardo/vukem   tags v0.x.y
 
 ## 16. Skills and rules for agents
 
-- **samber/cc-skills-golang** (~3.5k★, 46 skills, MIT) — **already installed in `.claude/skills/`**. `golang-how-to` orchestrates; `/golang-how-to configure` writes directives into `CLAUDE.md`/`AGENTS.md`.
+- **samber/cc-skills-golang** (~3.5k★, 46 skills, MIT) — **already installed in `.agents/skills/`**. `golang-how-to` orchestrates; `/golang-how-to configure` writes directives into `CLAUDE.md`/`AGENTS.md`.
 - **anthropics/skills** — SKILL.md spec and `skill-creator`.
-- **PatrickJS/awesome-cursorrules** — Go rules (ServeMux REST, Go+HTMX) as raw material for `.claude/rules/`.
+- **PatrickJS/awesome-cursorrules** — Go rules (ServeMux REST, Go+HTMX) as raw material for `.agents/rules/`.
 - **obra/superpowers** — TDD, debugging, brainstorming (partially installed).
 - **AGENTS.md** (<https://agents.md>, Agentic AI Foundation / Linux Foundation): read by Codex, Copilot, Cursor, Gemini, Amp. Claude Code reads `CLAUDE.md`; recommended pattern: **canonical content in `AGENTS.md`, `CLAUDE.md` with `@AGENTS.md`**.
-- **`.claude/rules/`:** one topic per file; `paths:` in the frontmatter loads it only when touching matching files. Suggested: `go.md` (`**/*.go`), `testing.md` (`**/*_test.go`), `commits.md`, `changelog.md`, `markdown.md`, `drivers.md` (`drivers/**`: core never imports a driver).
+- **`.agents/rules/`:** one topic per file; `paths:` in the frontmatter loads it only when touching matching files. Suggested: `go.md` (`**/*.go`), `testing.md` (`**/*_test.go`), `commits.md`, `changelog.md`, `markdown.md`, `drivers.md` (`drivers/**`: core never imports a driver).
 
 ---
 

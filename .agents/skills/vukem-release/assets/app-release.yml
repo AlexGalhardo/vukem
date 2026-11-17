@@ -15,6 +15,12 @@ name: release
 #      like a successful release, which is how eight releases shipped with no
 #      notes before anyone noticed.
 #
+# Image tags, when an app publishes them: emit X.Y and latest only when the
+# version is the highest stable vX.Y.Z already published. Ignore tags that
+# are not vX.Y.Z (do not special-case only ffmpeg-*). A pre-release must not
+# move latest. Use the same decision as the framework workflow:
+#   go run ./internal/tools/release -image-tags vX.Y.Z <image>
+#
 # workflow_dispatch is the recovery path. GitHub creates no push event when
 # more than three tags go up in a single push, so `on: push: tags` does not
 # fire and nothing is published, silently. Push version tags one at a time;
