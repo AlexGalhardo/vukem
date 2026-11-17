@@ -26,9 +26,12 @@ function Item({ href, title, active, onNavigate }: { href: string; title: string
 }
 
 /**
- * Category-grouped page list. On mobile (`collapsible`) each group is a
- * Base UI Collapsible, open when it contains the current page. Shows the
- * groups of the docs version the current pathname belongs to.
+ * Category-grouped page list. When `collapsible` (the desktop sidebar and the
+ * mobile drawer) each group is its own Base UI Collapsible: a button with
+ * aria-expanded, open when it contains the current page, toggled on its own.
+ * The desktop column is static HTML, so Base.astro toggles those buttons;
+ * keepMounted leaves every link in the page while a section is collapsed.
+ * Shows the groups of the docs version the current pathname belongs to.
  */
 function useBrowserPath(): string {
   const [path, setPath] = useState("");
@@ -83,7 +86,9 @@ export function Sidebar({
               {group.title}
               <ChevronRight aria-hidden className="size-3.5 text-faint transition-transform group-data-panel-open:rotate-90" />
             </Collapsible.Trigger>
-            <Collapsible.Panel className="mt-1">{list}</Collapsible.Panel>
+            <Collapsible.Panel className="mt-1" hiddenUntilFound keepMounted>
+              {list}
+            </Collapsible.Panel>
           </Collapsible.Root>
         );
       })}
