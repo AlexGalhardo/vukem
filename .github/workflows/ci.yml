@@ -104,30 +104,26 @@ jobs:
         with:
           globs: "**/*.md"
 
-  test:
-    name: Test (${{ matrix.os }}, Go ${{ matrix.go }})
+  # Required check names are literal strings, the same ones the protect-main
+  # ruleset lists. A matrix expression in the job name stays unexpanded when
+  # a run is cancelled, so GitHub would show the wrong check on every pull
+  # request that shares the commit. Do not open a draft pull request on the
+  # same commit as another open pull request: cancelling the draft cancels
+  # those shared checks.
+  test-ubuntu:
+    name: Test (ubuntu-latest, Go stable)
     permissions:
       contents: read
       id-token: write # Codecov verifies the upload with OIDC. No token is stored.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        go: [stable]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # TestStripeVersionIsLatestTag compares the pin with the tags
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ matrix.go }}
+          go-version: stable
           cache-dependency-path: "**/go.sum"
-      # golang/go#81238 corrupts the heap on Intel AMX hosts: the CPU tells a
-      # runtime crash of that bug from a real one (docs/maintenance.md#known-ci-issues).
-      - name: Runner CPU
-        if: runner.os == 'Windows'
-        run: (Get-CimInstance Win32_Processor).Name
       - name: go test
         shell: bash # PowerShell would split -coverprofile=coverage.out at the dot
         # internal/cli builds every starter end to end: ~7 min on a slow Windows runner, near the 10 min default
@@ -135,10 +131,8 @@ jobs:
       - name: go test (vukem_nosqlite)
         run: go test -tags vukem_nosqlite -count=1 -run TestOpenSQLiteWithoutDriver ./database/
       - name: Coverage gate
-        if: matrix.os == 'ubuntu-latest'
         run: go run ./internal/tools/covergate -v coverage.out
       - name: Upload coverage
-        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage
@@ -147,13 +141,54 @@ jobs:
       # found" until its GitHub App includes this repository. The covergate
       # above is the required coverage check, so that rejection stays green.
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true
           files: coverage.out
           disable_search: true
           fail_ci_if_error: false
+
+  test-windows:
+    name: Test (windows-latest, Go stable)
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # TestStripeVersionIsLatestTag compares the pin with the tags
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      # golang/go#81238 corrupts the heap on Intel AMX hosts: the CPU tells a
+      # runtime crash of that bug from a real one (docs/maintenance.md#known-ci-issues).
+      - name: Runner CPU
+        run: (Get-CimInstance Win32_Processor).Name
+      - name: go test
+        shell: bash # PowerShell would split -coverprofile=coverage.out at the dot
+        run: go test -race -count=1 -timeout=20m -coverprofile=coverage.out ./...
+      - name: go test (vukem_nosqlite)
+        run: go test -tags vukem_nosqlite -count=1 -run TestOpenSQLiteWithoutDriver ./database/
+
+  test-macos:
+    name: Test (macos-latest, Go stable)
+    permissions:
+      contents: read
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # TestStripeVersionIsLatestTag compares the pin with the tags
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      - name: go test
+        shell: bash # PowerShell would split -coverprofile=coverage.out at the dot
+        run: go test -race -count=1 -timeout=20m -coverprofile=coverage.out ./...
+      - name: go test (vukem_nosqlite)
+        run: go test -tags vukem_nosqlite -count=1 -run TestOpenSQLiteWithoutDriver ./database/
 
   vuln:
     name: Vulnerabilities
