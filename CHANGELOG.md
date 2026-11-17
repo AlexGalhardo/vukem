@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-11-17
+
+### Added
+
+- **archive:** Write zip entries under the same policy as the reader ([1682bea](https://github.com/AlexGalhardo/vukem/commit/1682bea8170b80e176fb0491b5ae5e5a7eb61548))
+- **http:** Run caller middleware before locale resolution ([ac97f19](https://github.com/AlexGalhardo/vukem/commit/ac97f19c7e5314d42ff251408991f33b9494b04e))
+- **site:** Collapse each docs sidebar section on its own ([968c71e](https://github.com/AlexGalhardo/vukem/commit/968c71e077c59f2d1c3e1c0fe56fe84a0e8c54c1))
+- **release:** Prepare off main and float tags only for the newest stable ([ec23229](https://github.com/AlexGalhardo/vukem/commit/ec2322910be1883e507461dc8321ca6d1f742225))
+
+### Changed
+
+- **repo:** Move agent config from .claude to .agents ([fa47d94](https://github.com/AlexGalhardo/vukem/commit/fa47d94ca15925b99d641b9f3030396fdfc709c9))
+
+### Fixed
+
+- **commitlint:** Accept a Copilot Autofix trailer or say how to rewrite it ([12e3c6a](https://github.com/AlexGalhardo/vukem/commit/12e3c6a289bb5f516c0b7745196e918b4ae326a4))
+- **ci:** Give the required test jobs static names ([d2bf5d3](https://github.com/AlexGalhardo/vukem/commit/d2bf5d3d8d3b63e78960621866bcd1ca8ffe5ff6))
+
+### Security
+
+- **cli:** Run noboot commands before the app builds ([c580ead](https://github.com/AlexGalhardo/vukem/commit/c580eade97e588c5277fa69f5101a1f3b7b62323))
+- **engine:** Stop a Windows child that exceeds its address space ([c84bd71](https://github.com/AlexGalhardo/vukem/commit/c84bd713f5868f6572bae0c681f13a1e83303c80))
+
 ## [0.45.0] - 2026-11-15
 
 ### Added
@@ -1692,7 +1715,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/AlexGalhardo/vukem/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/AlexGalhardo/vukem/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/AlexGalhardo/vukem/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/AlexGalhardo/vukem/compare/v0.42.0...v0.43.0
