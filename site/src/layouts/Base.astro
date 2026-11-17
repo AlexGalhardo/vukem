@@ -103,6 +103,27 @@ const groupsByVersion = getNavGroupsByVersion();
       document.addEventListener("click", (event) => {
         const target = event.target;
         if (!(target instanceof Element)) return;
+        // The docs sidebar is static HTML (the article is prerendered), so these
+        // buttons do not hydrate. Each section toggles on its own.
+        const section = target.closest('aside[aria-label="Sidebar"] button[aria-expanded]');
+        if (section instanceof HTMLButtonElement) {
+          const panel = section.nextElementSibling;
+          if (panel instanceof HTMLElement) {
+            const next = section.getAttribute("aria-expanded") !== "true";
+            section.setAttribute("aria-expanded", next ? "true" : "false");
+            section.toggleAttribute("data-panel-open", next);
+            const root = section.parentElement;
+            if (root) {
+              root.toggleAttribute("data-open", next);
+              root.toggleAttribute("data-closed", !next);
+            }
+            panel.toggleAttribute("data-open", next);
+            panel.toggleAttribute("data-closed", !next);
+            panel.removeAttribute("data-starting-style");
+            panel.toggleAttribute("hidden", !next);
+          }
+          return;
+        }
         const tab = target.closest("[data-tabs] [role='tab']");
         if (!tab) return;
         const root = tab.closest("[data-tabs]");

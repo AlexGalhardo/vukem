@@ -15,7 +15,7 @@ export function DocsFrame({
         aria-label="Sidebar"
         className="sticky top-(--header-h) hidden h-[calc(100dvh-var(--header-h))] w-64 shrink-0 overflow-y-auto py-8 pr-6 scroll-slim lg:block"
       >
-        <Sidebar groupsByVersion={getNavGroupsByVersion()} pathname={pathname} />
+        <Sidebar groupsByVersion={getNavGroupsByVersion()} pathname={pathname} collapsible />
       </aside>
       <div className="min-w-0 flex-1">{children}</div>
     </div>
