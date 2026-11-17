@@ -32,7 +32,7 @@ func checkBootConfig(
 		errs = append(errs, err)
 	}
 
-	key, err := checkConfig(cfg, src.EnvSet(), o.kind == KindWarmup, o.keyOptional)
+	key, err := checkConfig(cfg, src.EnvSet(), o.kind == KindWarmup, o.keyOptional || o.deferMissingKey)
 	if err != nil {
 		errs = append(errs, err)
 	}

@@ -468,8 +468,12 @@ type options struct {
 	noHTTP         bool
 	devtools       bool
 	keyOptional    bool
-	telegram       []func(*telegram.Config)
-	flags          []flags.AnyFlag
+	// deferMissingKey lets a console command be resolved before APP_KEY is
+	// required. Boot still refuses a missing key (see requireConfiguredKey).
+	deferMissingKey bool
+	earlyCommands   []Command
+	telegram        []func(*telegram.Config)
+	flags           []flags.AnyFlag
 }
 
 // New builds an App: it loads and validates configuration and registers
@@ -627,6 +631,10 @@ func New(opts ...Option) (*App, error) {
 
 	if err := app.registerProvidersAndRoutes(&o); err != nil {
 		return nil, err
+	}
+
+	for _, c := range o.earlyCommands {
+		app.AddCommand(c)
 	}
 
 	app.bootRoutes = o.bootRoutes
