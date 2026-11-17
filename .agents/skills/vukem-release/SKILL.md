@@ -32,7 +32,22 @@ Before releasing: no open `ci-failure` issue (`gh issue list --label ci-failure`
 go run ./internal/tools/release -push vX.Y.Z
 ```
 
-When the `protect-main` ruleset requires pull requests (check `gh api repos/AlexGalhardo/vukem/rulesets/25297704 --jq '.rules[].type'` for `pull_request`), `-push` is rejected: follow [Releasing through a pull request](../../../docs/maintenance.md#releasing-through-a-pull-request) instead, and land the nested-module bumps of step 4 through a PR too.
+When the `protect-main` ruleset requires pull requests (check `gh api repos/AlexGalhardo/vukem/rulesets/25297704 --jq '.rules[].type'` for `pull_request`), `-push` is rejected. One release is one pull request:
+
+```sh
+go run ./internal/tools/release -prepare vX.Y.Z   # any branch, including release/vX.Y.Z; changelog commit, no tag
+# rebase-merge the pull request (GitHub refuses a rebase merge above 100 commits)
+go run ./internal/tools/release -tag vX.Y.Z       # main only, HEAD subject is chore(release): vX.Y.Z
+git push origin vX.Y.Z                            # one tag, never --tags
+```
+
+Follow [Releasing through a pull request](../../../docs/maintenance.md#releasing-through-a-pull-request). Do not open a draft pull request on the same commit as another open pull request. Land the nested-module bumps of step 4 through a PR too.
+
+Image tags (`latest` and `X.Y`) move only when the version is the highest stable `vX.Y.Z` already published. Tags that are not `vX.Y.Z` are ignored, and a pre-release does not move `latest`. `release.yml` and this skill use the same command:
+
+```sh
+go run ./internal/tools/release -image-tags [-tags-file published.txt] vX.Y.Z <image>
+```
 
 The tool generates the section from `.config/cliff.toml` (every entry links its commit), commits `chore(release): vX.Y.Z`, tags, pushes `main` and the tag in **separate pushes**, and publishes the GitHub release. It refuses to publish when the section it extracted is empty, so a release never goes out with an empty body.
 

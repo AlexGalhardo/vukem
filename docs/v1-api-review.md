@@ -25,7 +25,7 @@ Every package has a `// Package x` comment. Struct fields and interface methods 
 
 ### Doc-comment gate
 
-`.claude/rules/go.md` requires a doc comment starting with the name on every exported identifier, but the `comments` exclusion preset in `.golangci.yml` silently dropped revive's `exported` and `package-comments` findings, so nothing enforced it. This branch removes the preset; the only finding it exposed was the starter package `internal/cli/starter/routes`, whose package comment lives in its `.go.tmpl` files and is now excluded by path. A missing or misnamed doc comment on new API now fails `task lint`. revive accepts `Name: …`, so the scanner remains the stricter check for a later review.
+`.agents/rules/go.md` requires a doc comment starting with the name on every exported identifier, but the `comments` exclusion preset in `.golangci.yml` silently dropped revive's `exported` and `package-comments` findings, so nothing enforced it. This branch removes the preset; the only finding it exposed was the starter package `internal/cli/starter/routes`, whose package comment lives in its `.go.tmpl` files and is now excluded by path. A missing or misnamed doc comment on new API now fails `task lint`. revive accepts `Name: …`, so the scanner remains the stricter check for a later review.
 
 ## Naming
 

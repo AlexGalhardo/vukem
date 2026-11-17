@@ -23,7 +23,7 @@ golangci-lint run ./pkg/...          # revive, gocritic, errorlint, nakedret, go
 go vet ./pkg/...
 ```
 
-For an audit, run `golangci-lint run ./...` at the root and in each nested module (`contrib/*`, `drivers/*`). Zero issues is the bar; never add `//nolint` to pass (see `.claude/rules/go.md`).
+For an audit, run `golangci-lint run ./...` at the root and in each nested module (`contrib/*`, `drivers/*`). Zero issues is the bar; never add `//nolint` to pass (see `.agents/rules/go.md`).
 
 Covered by the linter (do not re-check by hand): MixedCaps and initialisms (`ID`, `URL`), a doc comment on every exported name that starts with the name and ends with a period, lowercase error strings without punctuation, `context.Context` first, short consistent receiver names, import groups, no naked returns in long functions, `errors.Is`/`errors.As` instead of `==`, early return and no `else` after `return`, no import shadowing, no dot imports, `any` instead of `interface{}`, named results when a function returns two or more values of the same type (`confusing-results`), and a parameter that shadows an import (`import-shadowing`, e.g. `fs` next to `io/fs`). Two revive rules stay off on purpose: `struct-tag` (the `validate` tags) and `modifies-value-receiver` (the immutable `orm.Query` builders).
 

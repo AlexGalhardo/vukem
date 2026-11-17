@@ -42,13 +42,13 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 
 ## Markdown
 
-`markdownlint-cli2` with `.markdownlint-cli2.jsonc`: ATX headings, dash lists, fenced code, `MD010` ignores `go`/`makefile` fences (tabs), `MD024` siblings-only (Keep a Changelog repeats `### Added`), `MD013` off, `MD033` allows a few HTML tags, `.claude/**` ignored.
+`markdownlint-cli2` with `.markdownlint-cli2.jsonc`: ATX headings, dash lists, fenced code, `MD010` ignores `go`/`makefile` fences (tabs), `MD024` siblings-only (Keep a Changelog repeats `### Added`), `MD013` off, `MD033` allows a few HTML tags, `.agents/**` ignored.
 
 ## Git hooks (lefthook)
 
 | Hook | Jobs |
 | --- | --- |
-| `pre-commit` | `golangci-lint fmt` on staged `.go` (re-staged), `golangci-lint run --new-from-rev=HEAD`, `task tidy:check` (`go mod tidy -diff` in every module), `markdownlint-cli2` on staged `.md` (not `.claude/skills/`) |
+| `pre-commit` | `golangci-lint fmt` on staged `.go` (re-staged), `golangci-lint run --new-from-rev=HEAD`, `task tidy:check` (`go mod tidy -diff` in every module), `markdownlint-cli2` on staged `.md` (not `.agents/skills/`) |
 | `commit-msg` | `go run ./internal/tools/commitlint {1}` |
 | `pre-push` | `go vet ./...`, `govulncheck ./...`, `doc dates` (refreshes `site/content/last-updated.json` when `site/content/` changed; [maintenance](maintenance.md#release-routine)); tests, race and the OS matrix run in GitHub Actions |
 
@@ -116,7 +116,7 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
    - rewrites the "Updated" row of the [PLAN.md](PLAN.md#status) status table in the same commit;
    - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag as two separate pushes (see [Tag pushes](#tag-pushes));
    - publishes a GitHub release whose notes are that changelog section (only tags with a pre-release suffix, `-rc.N` or `-beta.N`, are marked pre-release; `v0.x` releases are normal releases), and **refuses to publish an empty body**: a release with an empty body is indistinguishable from a successful one, so an extraction that silently returns nothing fails the command instead.
-   - while `protect-main` requires pull requests, `-push` is rejected: use [Releasing through a pull request](maintenance.md#releasing-through-a-pull-request) instead;
+   - while `protect-main` requires pull requests, `-push` is rejected. One release is one pull request: `-prepare` writes the changelog commit on `release/vX.Y.Z` (or any branch) and `-tag` creates the tag on `main` only after that commit is the tip. GitHub refuses a rebase merge above 100 commits. See [Releasing through a pull request](maintenance.md#releasing-through-a-pull-request);
    - with `-push`, once the tag is pushed, raises the `github.com/AlexGalhardo/vukem` requirement of every `contrib/*`, `drivers/*` and `examples/*` module to the released version (a `v0.0.0` placeholder is left alone), runs `GOWORK=off go mod tidy` in each changed module and pushes a follow-up `chore(deps): require vukem vX.Y.Z in nested modules` commit. It runs after the push because `go.sum` needs the version to resolve from the module proxy; `task mod:check` verifies the result.
 3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
 4. Nested modules (`drivers/*`, `contrib/*`) are tagged separately as `<dir>/vX.Y.Z` (e.g. `drivers/redis/v0.4.0`) after the core release, from an up-to-date `main`, with `go run ./internal/tools/release -modules -dry-run` (the plan) and then `-modules -push` (`task release:modules -- -dry-run`). Module tags do not trigger `release.yml` and get no GitHub release: the tag is the record, so find a module's current version with `git tag -l 'drivers/websocket/*' --sort=-v:refname` (or `go list -m -versions`), not on the Releases page. The tool:
@@ -154,7 +154,7 @@ Workflows declare `permissions: contents: read` at the top; jobs widen it only f
 
 **Push version tags one at a time; never `git push origin --tags`.** GitHub creates no push event when more than three tags go up in a single push, so `on: push: tags` workflows do not fire at all — eight tags pushed together started zero runs and published nothing, with no error anywhere. `internal/tools/release` pushes `main` and the version tag as separate pushes for this reason; nested module tags (`drivers/*`, `contrib/*`) are pushed one per `git push` by `release -modules -push`.
 
-The limit is GitHub's and cannot be worked around, so every release workflow is recoverable instead: both this repository's `release.yml` and the app `release.yml` ([the canonical copy](../.claude/skills/vukem-release/assets/app-release.yml)) take the version as a `workflow_dispatch` input and check out that tag, so a tag whose push started no run is published by dispatching the workflow rather than by hand-written `gh release create` calls or by moving the tag.
+The limit is GitHub's and cannot be worked around, so every release workflow is recoverable instead: both this repository's `release.yml` and the app `release.yml` ([the canonical copy](../.agents/skills/vukem-release/assets/app-release.yml)) take the version as a `workflow_dispatch` input and check out that tag, so a tag whose push started no run is published by dispatching the workflow rather than by hand-written `gh release create` calls or by moving the tag.
 
 ### Changelog extraction in app workflows
 
@@ -184,7 +184,7 @@ The regex form that used to be copied between the apps, `'$0 ~ "^## \[" v "\]"'`
 Every stable tag (`vX.Y.Z`, no pre-release suffix) also publishes `ghcr.io/alexgalhardo/vukem`, a toolchain image: the `vukem` CLI built from the tag, Go (the version in `go.mod`), Bun, git and ca-certificates. A pre-release tag (`-rc.1`, `-beta.1`) publishes nothing and never moves `latest`.
 
 - **Build**: the `image` job of `release.yml` runs after `goreleaser`, from `.config/docker/vukem.Dockerfile` (`linux/amd64` and `linux/arm64`). It is a separate job, not GoReleaser `dockers_v2`, so `packages: write` stays on that job alone and GoReleaser keeps its single purpose (archives, SBOMs, checksum signature).
-- **Tags**: `X.Y.Z`, `X.Y` and `latest`. Pin the exact version or the digest in anything that matters; `latest` moves on every stable release.
+- **Tags**: `X.Y.Z` on every stable release. `X.Y` and `latest` are added only when that version is the highest stable `vX.Y.Z` already published. Tags that are not `vX.Y.Z` (module tags, `ffmpeg-*`, any other pin) are ignored, and a pre-release never moves `latest`. `release.yml` asks `go run ./internal/tools/release -image-tags` for that decision (`floatingImageTags`). Pin the exact version or the digest in anything that matters.
 - **Base**: the Debian `golang:<go.mod version>` image, pinned by digest (the same one `task test:linux` uses; update both together). Debian, not Alpine, because Bun's default Linux build links glibc. Bun is downloaded from its GitHub release at a pinned version and checked against pinned SHA-256 sums per architecture (`BUN_VERSION`, `BUN_SHA256_*` in the Dockerfile; bump all three together). `templ` is not installed: projects run it with `go tool templ`.
 - **Runtime**: non-root user `vukem` (uid 1000), `WORKDIR /work`, `ENTRYPOINT ["vukem"]`, writable `GOPATH`, Go build cache and Bun cache under `/home/vukem`. `HOST=0.0.0.0` and `PORT=3000` are set because `vukem serve` binds `localhost` by default, which a published port cannot reach.
 - **Supply chain**: the build attaches an SBOM and `mode=max` provenance, the digest is signed with cosign keyless (same OIDC identity as the binaries) and attested with `actions/attest-build-provenance`. Verification: [SECURITY.md](../.github/SECURITY.md#verifying-the-container-image).
@@ -298,7 +298,7 @@ The root keeps only what tools or Go require there; everything else has a fixed 
 | root | the `vukem` package (grouped by theme: `app.go`, `http.go`, `database.go`, `background.go`, `services.go`, `command.go`, `codegen.go`, `boost.go`, `doc.go` and their tests), one directory per public package, `go.mod`/`go.sum`/`go.work`, `README.md`, `LICENSE`, `CHANGELOG.md`, `AGENTS.md`, `Taskfile.yml`, `lefthook.yml` and the configs tools only discover at the root (`.editorconfig`, `.gitattributes`, `.gitignore`, `.golangci.yml`, `.markdownlint-cli2.jsonc`) |
 | `.config/` | `cliff.toml` (passed with `--config`), `goreleaser.yaml` (GoReleaser finds it on its own), `docker/vukem.Dockerfile` (the [toolchain image](#container-image), built from the repo root with `-f`) and its `.dockerignore`, `compose.yaml` (passed with `-f`; `name: vukem` keeps the container names), `apicheck-exceptions.json` (read by `internal/tools/apicheck`, see [Security exceptions](#security-exceptions)), `ruleset-protect-main.json` (the `main` ruleset, applied with `gh api`, see [maintenance](maintenance.md#pull-request-flow)) |
 | `.github/` | workflows, Dependabot, issue/PR templates and the community files `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` (GitHub detects them there) |
-| `.claude/` | `CLAUDE.md`, rules, skills and settings |
+| `.agents/` | `CLAUDE.md`, rules, skills and settings |
 | `docs/` | design docs and the roadmap `PLAN.md` |
 
 Add a new file to the root only when a tool cannot be pointed elsewhere; new root package code goes into the matching theme file instead of a new one.
@@ -313,7 +313,7 @@ Add a new file to the root only when a tool cannot be pointed elsewhere; new roo
 ## Agent configuration
 
 - `AGENTS.md` — canonical agent instructions (≤ 50 lines, links to docs); the roadmap is [`docs/PLAN.md`](PLAN.md).
-- `.claude/CLAUDE.md` — imports `@../AGENTS.md`, Claude-specific notes.
-- `.claude/rules/` — path-scoped rules (`go.md`, `testing.md`, `commits.md`, `changelog.md`, `markdown.md`, `drivers.md`, `secure-coding.md`, `site.md`, `release.md`, `docs-content.md`, `workflows.md`).
-- `.claude/skills/` — samber/cc-skills-golang + workflow skills, and `vukem-release` (the end-to-end release and app-bump cycle).
-- `.claude/settings.json` — permission allowlist (`go`, `golangci-lint`, `task`, `git` read commands) and a PostToolUse hook that runs `golangci-lint fmt` on edited `.go` files.
+- `.agents/CLAUDE.md` — imports `@../AGENTS.md`, Claude-specific notes.
+- `.agents/rules/` — path-scoped rules (`go.md`, `testing.md`, `commits.md`, `changelog.md`, `markdown.md`, `drivers.md`, `secure-coding.md`, `site.md`, `release.md`, `docs-content.md`, `workflows.md`).
+- `.agents/skills/` — samber/cc-skills-golang + workflow skills, and `vukem-release` (the end-to-end release and app-bump cycle).
+- `.agents/settings.json` — permission allowlist (`go`, `golangci-lint`, `task`, `git` read commands) and a PostToolUse hook that runs `golangci-lint fmt` on edited `.go` files. Claude Code only applies that file when it is `.claude/settings.json`.

@@ -20,7 +20,7 @@ pre-commit:
     - name: markdownlint
       glob: "*.md"
       exclude:
-        - ".claude/skills/**"
+        - ".agents/skills/**"
       run: npx --yes markdownlint-cli2 {staged_files}
 
 commit-msg:
