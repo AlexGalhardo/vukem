@@ -48,6 +48,15 @@ func TestValidate(t *testing.T) {
 		{name: "empty description", msg: "feat: ", wantErr: "format"},
 		{name: "too long", msg: "feat: " + strings.Repeat("a", 100), wantErr: "100"},
 		{name: "no blank line before body", msg: "feat: add x\nbody", wantErr: "blank line"},
+		{
+			name: "copilot autofix with trailer",
+			msg:  "Potential fix for pull request finding 'Incomplete string escaping'\n\nCo-authored-by: Copilot Autofix <175728472+Copilot@users.noreply.github.com>",
+		},
+		{
+			name:    "copilot autofix without trailer",
+			msg:     "Potential fix for pull request finding 'Incomplete string escaping'\n",
+			wantErr: "fixup!",
+		},
 	}
 
 	for _, tt := range tests {
