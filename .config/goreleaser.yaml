@@ -5,6 +5,15 @@ version: 2
 
 project_name: vukem
 
+# Product versions are vX.Y.Z with an optional pre-release suffix. GoReleaser
+# passes each ignore_tags entry to `git describe --exclude`. The globs drop
+# every other tag (module tags, ffmpeg pins, nightly names), not only ffmpeg-*.
+git:
+  ignore_tags:
+    - "[!v]*"
+    - "v[!0-9]*"
+    - "*/*"
+
 builds:
   - id: vukem
     main: ./cmd/vukem

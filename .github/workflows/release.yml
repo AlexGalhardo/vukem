@@ -140,19 +140,19 @@ jobs:
           ref: refs/tags/${{ env.TAG }}
           fetch-depth: 0
           persist-credentials: false
+      # latest and X.Y move only for the highest stable vX.Y.Z. Tags that are
+      # not vX.Y.Z are ignored. A pre-release never reaches this job.
       - name: Resolve the image tags
         id: meta
         run: |
           version="${TAG#v}"
+          git tag --list >"$RUNNER_TEMP/published-tags.txt"
           {
             echo "version=$version"
             echo "revision=$(git rev-parse HEAD)"
             echo "tags<<EOF"
-            for image in "$GHCR_IMAGE" "$HUB_IMAGE"; do
-              echo "$image:$version"
-              echo "$image:${version%.*}"
-              echo "$image:latest"
-            done
+            go run ./internal/tools/release -image-tags -tags-file "$RUNNER_TEMP/published-tags.txt" \
+              "$TAG" "$GHCR_IMAGE" "$HUB_IMAGE"
             echo "EOF"
           } >>"$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
