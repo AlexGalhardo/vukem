@@ -22,11 +22,27 @@ import (
 // to the process group of the platform.
 type runJob struct {
 	h        windows.Handle
+	port     windows.Handle
 	limited  bool
 	assigned atomic.Bool
 	// suspended is set by prepare: the process was created suspended and
 	// assign must resume it.
 	suspended bool
+	memory    atomic.Bool
+	stop      atomic.Bool
+	done      chan struct{}
+}
+
+// Job notification codes (winnt.h). Not exported by golang.org/x/sys/windows.
+const (
+	jobMsgProcessMemoryLimit = 9
+	jobMsgJobMemoryLimit     = 10
+)
+
+// jobAssociateCompletionPort is JOBOBJECT_ASSOCIATE_COMPLETION_PORT.
+type jobAssociateCompletionPort struct {
+	CompletionKey  uintptr
+	CompletionPort windows.Handle
 }
 
 // newRunJob creates the job for a run with l. Without limits a failure to
@@ -78,7 +94,72 @@ func newRunJob(l Limits) (*runJob, error) {
 		return nil, fmt.Errorf("engine: set the job object limits: %w", err)
 	}
 
-	return &runJob{h: h, limited: limited}, nil
+	j := &runJob{h: h, limited: limited}
+	if l.AddressSpace > 0 {
+		if err := j.armMemoryWatch(); err != nil {
+			_ = windows.CloseHandle(h)
+
+			return nil, err
+		}
+	}
+
+	return j, nil
+}
+
+// armMemoryWatch listens for the job memory-limit message and terminates the
+// job when it arrives. ProcessMemoryLimit alone only fails the next allocation,
+// which leaves a child that grows in steps blocked at the ceiling.
+func (j *runJob) armMemoryWatch() error {
+	port, err := windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 1)
+	if err != nil {
+		return fmt.Errorf("engine: create the job completion port: %w", err)
+	}
+
+	assoc := jobAssociateCompletionPort{CompletionKey: 1, CompletionPort: port}
+	_, err = windows.SetInformationJobObject(
+		j.h,
+		windows.JobObjectAssociateCompletionPortInformation,
+		uintptr(unsafe.Pointer(&assoc)),
+		uint32(unsafe.Sizeof(assoc)),
+	)
+	if err != nil {
+		_ = windows.CloseHandle(port)
+
+		return fmt.Errorf("engine: associate the job completion port: %w", err)
+	}
+
+	j.port = port
+	j.done = make(chan struct{})
+
+	go j.watchMemory()
+
+	return nil
+}
+
+func (j *runJob) watchMemory() {
+	defer close(j.done)
+
+	for {
+		var qty uint32
+
+		var key uintptr
+
+		var ov *windows.Overlapped
+
+		err := windows.GetQueuedCompletionStatus(j.port, &qty, &key, &ov, windows.INFINITE)
+		if err != nil || j.stop.Load() {
+			return
+		}
+
+		if qty == jobMsgProcessMemoryLimit || qty == jobMsgJobMemoryLimit {
+			j.memory.Store(true)
+			_ = windows.TerminateJobObject(j.h, 1)
+		}
+	}
+}
+
+func (j *runJob) hitMemoryLimit() bool {
+	return j != nil && j.memory.Load()
 }
 
 // prepare makes cmd start suspended, so the process runs no code, spawns
@@ -200,7 +281,17 @@ func (j *runJob) kill(cmd *exec.Cmd) error {
 // close closes the job; KILL_ON_JOB_CLOSE ends any process that outlived
 // the run. Call it after Wait, when nothing else uses the handle.
 func (j *runJob) close() {
-	if j != nil {
-		_ = windows.CloseHandle(j.h)
+	if j == nil {
+		return
 	}
+
+	if j.port != 0 {
+		j.stop.Store(true)
+		// Wake watchMemory. The overlapped value is unused; qty 0 is not a limit message.
+		_ = windows.PostQueuedCompletionStatus(j.port, 0, 0, nil)
+		<-j.done
+		_ = windows.CloseHandle(j.port)
+	}
+
+	_ = windows.CloseHandle(j.h)
 }

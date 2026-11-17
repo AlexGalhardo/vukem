@@ -51,10 +51,10 @@ func TestJobObjectStopsAChildOverTheMemoryLimit(t *testing.T) {
 		t.Error("Run(alloc 16) printed nothing")
 	}
 
-	// Far over it: the allocation fails and the child dies before reporting.
+	// Far over it: the allocation fails and the job kills the child before it reports.
 	res, err = tool.Run(t.Context(), t.TempDir(), "alloc", "2048")
-	if !errors.Is(err, engine.ErrRun) {
-		t.Fatalf("Run(alloc 2048) = %v, want ErrRun", err)
+	if !errors.Is(err, engine.ErrMemoryLimit) {
+		t.Fatalf("Run(alloc 2048) = %v, want ErrMemoryLimit", err)
 	}
 
 	if res.Stdout != "" {
@@ -146,6 +146,43 @@ func TestJobObjectKillsLeftoversWhenTheRunEnds(t *testing.T) {
 		}
 
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestJobObjectKillsChunkedAllocationPromptly(t *testing.T) {
+	t.Parallel()
+
+	bin := faketool(t)
+	tool := find(t, engine.Config{
+		Path: bin, Name: "faketool", Limits: engine.Limits{AddressSpace: 192 << 20},
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	res, err := tool.Run(ctx, t.TempDir(), "alloc-chunks", "64")
+	took := time.Since(start)
+
+	if took > 15*time.Second {
+		t.Fatalf("chunked allocation took %s (stderr %q), want a kill well under 60s", took, res.Stderr)
+	}
+
+	if !errors.Is(err, engine.ErrMemoryLimit) {
+		t.Fatalf("Run(alloc-chunks) = %v after %s, stderr %q, want ErrMemoryLimit", err, took, res.Stderr)
+	}
+}
+
+func TestLimitsForRunsWithFileSizeOnWindows(t *testing.T) {
+	t.Parallel()
+
+	bin := faketool(t)
+	// The caller does not zero FileSize. For drops the field Windows cannot apply.
+	limits := engine.Limits{AddressSpace: 256 << 20, FileSize: 1 << 20}.For("windows")
+	tool := find(t, engine.Config{Path: bin, Name: "faketool", Limits: limits})
+
+	if _, err := tool.Run(t.Context(), t.TempDir(), "alloc", "16"); err != nil {
+		t.Fatalf("Run with For(windows) = %v, want success", err)
 	}
 }
 

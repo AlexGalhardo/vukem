@@ -149,6 +149,11 @@ var (
 	// ErrRun reports a tool that exited non-zero, was killed, or could not
 	// be started. The Result returned alongside holds the captured output.
 	ErrRun = errors.New("engine: run failed")
+	// ErrMemoryLimit reports a run terminated because it passed
+	// Limits.AddressSpace. On Windows the job is killed when the process
+	// memory limit is signalled, so a child that grows in small steps does
+	// not sit at the ceiling until some other deadline.
+	ErrMemoryLimit = errors.New("engine: memory limit exceeded")
 	// ErrDir reports a working directory that is missing or not a
 	// directory. Every run needs one: it is the tool's HOME, its temp
 	// directory and the only place it should be writing.
@@ -161,10 +166,12 @@ var (
 // has no mechanism that bounds a child instead of the server. See trap 3 in
 // the package comment for why they cannot be set from Go.
 //
-// The Windows column is not the Linux one with another name. The run is
-// created suspended, put in its Job Object and only then resumed, so the
-// limits hold from the tool's first instruction and a grandchild can never
-// start outside the job.
+// The Windows column is not the Linux one with another name. The child is
+// created suspended, assigned to its job, and only then resumed, so the
+// limits hold from the tool's first instruction, a grandchild can never
+// start outside the job, and the first output byte can arrive later than
+// on other systems. Do not assume the child has written anything after a
+// fixed delay.
 type Limits struct {
 	// CPUTime is RLIMIT_CPU on Linux, rounded up to whole seconds; the
 	// kernel sends SIGKILL when it is exceeded, so it is the backstop for a
@@ -174,9 +181,9 @@ type Limits struct {
 	CPUTime time.Duration
 	// AddressSpace is RLIMIT_AS in bytes on Linux: the ceiling on a decoder
 	// handed a file that claims enormous dimensions. On Windows it is the
-	// job's ProcessMemoryLimit, the memory a process may commit; an
-	// allocation beyond it fails, and a tool that cannot continue without it
-	// dies, which is the point.
+	// job's ProcessMemoryLimit. Crossing it fails the allocation and the job
+	// is terminated, so the caller gets [ErrMemoryLimit] instead of a process
+	// that sits at the ceiling.
 	AddressSpace int64
 	// FileSize is RLIMIT_FSIZE in bytes on Linux: the ceiling on what one
 	// run can write, whatever the tool thinks it is producing. Windows has
@@ -193,6 +200,19 @@ type Limits struct {
 // zero reports whether no limit is set.
 func (l Limits) zero() bool {
 	return l.CPUTime <= 0 && l.AddressSpace <= 0 && l.FileSize <= 0 && l.Processes <= 0
+}
+
+// For returns the limits that apply on goos. Windows has no file-size limit
+// in a Job Object, so FileSize is zero there and the other fields are kept.
+// [Find] still refuses a positive FileSize on Windows: pass the value this
+// returns when one Limits must run on Linux and Windows. Refusing an
+// unsupported field stays the default.
+func (l Limits) For(goos string) Limits {
+	if goos == "windows" {
+		l.FileSize = 0
+	}
+
+	return l
 }
 
 // args are the prlimit(1) options for these limits.
@@ -380,8 +400,13 @@ type Result struct {
 // dir is the run's working directory, HOME and temp directory, so give
 // each run its own and delete it afterwards.
 //
+// On Windows the child is created suspended, assigned to its job, and only
+// then resumed, so the first output byte can arrive later than on other
+// systems. Do not assume the child has written anything after a fixed delay.
+//
 // A non-zero exit is an error wrapping [ErrRun]; the Result is returned
-// either way, so a caller can log the tail of stderr on failure.
+// either way, so a caller can log the tail of stderr on failure. A run
+// killed for [Limits.AddressSpace] wraps [ErrMemoryLimit] instead.
 func (t *Tool) Run(ctx context.Context, dir string, args ...string) (Result, error) {
 	return t.RunWith(ctx, RunOptions{Dir: dir}, args...)
 }
@@ -391,19 +416,19 @@ type RunOptions struct {
 	// Dir is the run's working directory, HOME and temp directory, as for
 	// [Tool.Run].
 	Dir string
-	// Stdin, when set, is copied to the tool's standard input. The tool sees
-	// end of file when Stdin returns [io.EOF]. A Stdin error other than
-	// io.EOF, like a cancelled context, ends the run and kills the process
+	// Stdin, when set, is the tool's standard input. A [*os.File] is handed to
+	// the child directly (os/exec does not copy it). Any other reader is
+	// copied, and the tool sees end of file when Stdin returns [io.EOF]. A
+	// copy's error other than io.EOF ends the run and kills the process
 	// tree, so a tool never takes a truncated stream for a complete one; the
-	// error wraps [ErrRun] and the reader's error. A Stdin that blocks in Read
-	// must return once ctx is done (read from a pipe the caller closes, or a
-	// channel it also selects on with ctx): the copy goroutine cannot
-	// interrupt a Read it is blocked in, and ends only when Read returns.
-	// When nil the tool's standard input is empty (the null device).
+	// error wraps [ErrRun] and the reader's error. A reader that blocks in
+	// Read must return once ctx is done: the copy cannot interrupt a Read it
+	// is blocked in. When nil the tool's standard input is empty.
 	Stdin io.Reader
 	// Stdout, when set, receives the tool's standard output as it arrives
-	// and [Result].Stdout stays empty (as in [Tool.RunStream]). When nil the
-	// tail is captured in Result.Stdout (as in [Tool.Run]).
+	// and [Result].Stdout stays empty (as in [Tool.RunStream]). A [*os.File]
+	// is handed to the child directly, with no copy in this process. When
+	// nil the tail is captured in Result.Stdout (as in [Tool.Run]).
 	Stdout io.Writer
 	// Stderr, when set, also receives the standard error as it arrives (as in
 	// [Tool.RunStreams]); the tail in [Result].Stderr is kept either way.
@@ -432,6 +457,36 @@ func (t *Tool) RunWith(ctx context.Context, o RunOptions, args ...string) (Resul
 	res.StdoutTruncated = out.over
 
 	return res, err
+}
+
+// passThroughFile reports v when it is an *os.File, which os/exec hands to
+// the child with no copy goroutine. A nil file is not a file.
+func passThroughFile(v any) *os.File {
+	f, ok := v.(*os.File)
+	if !ok || f == nil {
+		return nil
+	}
+
+	return f
+}
+
+// applyDirectStdio sets the child's stdout and stdin. An *os.File is stored
+// on the command so os/exec passes the handle through. A copied stdin replaces
+// that file; a nil stdin leaves the command's stdin empty.
+func applyDirectStdio(cmd *exec.Cmd, stdout io.Writer, directIn *os.File, copied io.Reader) {
+	cmd.Stdout = stdout
+	if f := passThroughFile(stdout); f != nil {
+		cmd.Stdout = f
+	}
+
+	switch {
+	case copied != nil:
+		cmd.Stdin = copied
+	case directIn != nil:
+		cmd.Stdin = directIn
+	default:
+		cmd.Stdin = nil
+	}
 }
 
 // stdinReader reports a failure of the caller's reader to the run, which
@@ -513,10 +568,12 @@ func (t *Tool) run(
 		return Result{}, err
 	}
 
-	// A reader error cancels the run, which kills the tree like any cancel.
+	// A *os.File is the child's handle. Any other reader is copied, and a
+	// read error cancels the run so the tool never sees a short stream as EOF.
+	directIn := passThroughFile(stdin)
 	var in *stdinReader
 
-	if stdin != nil {
+	if stdin != nil && directIn == nil {
 		var cancelCause context.CancelCauseFunc
 
 		ctx, cancelCause = context.WithCancelCause(ctx)
@@ -547,19 +604,18 @@ func (t *Tool) run(
 	cmd := exec.CommandContext(ctx, name, full...)
 	cmd.Dir = dir
 	cmd.Env = t.environ(dir)
-	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
 	if liveStderr != nil {
 		cmd.Stderr = io.MultiWriter(stderr, liveStderr)
 	}
-	// Without a RunOptions.Stdin there is nothing to read: a tool waiting
-	// on stdin would otherwise hang until the timeout rather than failing at
-	// once. (The nil check keeps a nil *stdinReader out of the interface.)
-	cmd.Stdin = nil
+
+	var copied io.Reader
 	if in != nil {
-		cmd.Stdin = in
+		copied = in
 	}
+
+	applyDirectStdio(cmd, stdout, directIn, copied)
 
 	setProcessGroup(cmd)
 
@@ -586,6 +642,18 @@ func (t *Tool) run(
 	// After Prepare, so the suspended flag is merged with whatever it set.
 	job.prepare(cmd)
 
+	// os/exec closes the stdin pipe as soon as Read returns. Kill the child
+	// before that close, or a fast tool reads it as EOF and reports the short
+	// stream as a successful run.
+	if in != nil {
+		cause := in.fail
+
+		in.fail = func(err error) {
+			cause(err)
+			_ = job.kill(cmd)
+		}
+	}
+
 	start := time.Now()
 	err = startAndWait(cmd, job)
 	res := Result{
@@ -600,6 +668,11 @@ func (t *Tool) run(
 			return res, fmt.Errorf("%w: %s stdin reader failed after %s: %w",
 				ErrRun, t.cfg.Name, res.Duration.Round(time.Millisecond), rerr)
 		}
+	}
+
+	if job.hitMemoryLimit() {
+		return res, fmt.Errorf("%w: %s exceeded AddressSpace after %s",
+			ErrMemoryLimit, t.cfg.Name, res.Duration.Round(time.Millisecond))
 	}
 
 	if err == nil {

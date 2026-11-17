@@ -89,6 +89,28 @@ func main() {
 		}
 
 		fmt.Println("allocated", len(buf)>>20, "MiB")
+	case "alloc-chunks":
+		// alloc-chunks <chunkMiB> keeps committing chunkMiB blocks. A job
+		// memory limit that only fails the next allocation leaves this loop
+		// running; the engine must kill the process instead.
+		chunk, _ := strconv.Atoi(os.Args[2])
+		if chunk <= 0 {
+			chunk = 64
+		}
+
+		var held [][]byte
+
+		for n := 1; n <= 64; n++ {
+			buf := make([]byte, chunk<<20)
+			for i := 0; i < len(buf); i += 4096 {
+				buf[i] = 1
+			}
+
+			held = append(held, buf)
+			fmt.Println("chunk", n)
+		}
+
+		fmt.Println("chunks", len(held))
 	case "spin":
 		// Burn user-mode CPU until killed.
 		for x := 0; ; x++ {
