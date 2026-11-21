@@ -164,6 +164,12 @@ func (h *TwoFactorHandlers) Challenge(c *web.Ctx) error {
 		return expiredChallenge(c, err)
 	}
 
+	if accounts.TwoFactorLocked(c.Context(), h.failed, u) {
+		accounts.ClearTwoFactorChallenge(c)
+
+		return expiredChallenge(c, accounts.ErrNoTwoFactorChallenge)
+	}
+
 	in, err := web.Parse(c, requests.TwoFactorChallengeSchema)
 	if err != nil {
 		return err
@@ -176,6 +182,14 @@ func (h *TwoFactorHandlers) Challenge(c *web.Ctx) error {
 
 	if !ok {
 		web.SecurityEvent(c.Request(), "auth.2fa_failed", "user_id", u.AuthID(), "stage", "challenge")
+
+		// Ten failures in 15 minutes, from any IPs, close the challenge and
+		// tell the user.
+		if locked, err := h.a.RecordTwoFactorFailure(c.Context(), h.failed, u); locked || err != nil {
+			accounts.ClearTwoFactorChallenge(c)
+
+			return expiredChallenge(c, accounts.ErrNoTwoFactorChallenge)
+		}
 
 		if in.Code == "" {
 			return errs.NewValidation().Add("recovery_code", "The recovery code is invalid.")

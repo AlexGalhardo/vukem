@@ -32,3 +32,17 @@ func (m ResetPassword) Envelope() mail.Envelope {
 
 // Content implements mail.Mailable.
 func (m ResetPassword) Content() mail.Content { return mail.View("mail/reset_password", m) }
+
+// TwoFactorLocked tells a user that their login challenge was closed after
+// too many wrong codes.
+type TwoFactorLocked struct {
+	User models.User
+}
+
+// Envelope implements mail.Mailable.
+func (m TwoFactorLocked) Envelope() mail.Envelope {
+	return mail.Envelope{To: []string{m.User.Email}, Subject: "Too many wrong sign-in codes"}
+}
+
+// Content implements mail.Mailable.
+func (m TwoFactorLocked) Content() mail.Content { return mail.View("mail/two_factor_locked", m) }

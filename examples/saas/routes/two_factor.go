@@ -19,7 +19,7 @@ func TwoFactor(r *router.Router, app *vukem.App) error {
 		return err
 	}
 
-	h := account.NewTwoFactor(acc, app.Config.Name)
+	h := account.NewTwoFactor(acc, app.Config.Name, accounts.NewTwoFactorAccountLimiter())
 	required := auth.Required(acc.Web)
 	// 5 codes per minute per user and IP: 6-digit codes cannot be guessed.
 	challenge := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.TwoFactorThrottleKey)
