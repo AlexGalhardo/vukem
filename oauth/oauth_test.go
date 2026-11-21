@@ -534,15 +534,15 @@ func TestSecurity_A02_AccessTokenAlgorithms(t *testing.T) {
 	claims := map[string]any{"iss": issuer, "sub": "u", "aud": resource, "exp": now + 600, "iat": now}
 
 	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	otherTok, _ := jwt.Sign(
+	otherTok, _ := atSign(
 		jwt.ES256("k1", other),
 		jwt.Claims{Issuer: issuer, Subject: "u", Audience: []string{resource}, ExpiresAt: time.Unix(now+600, 0)},
 	)
-	expired, _ := jwt.Sign(
+	expired, _ := atSign(
 		jwt.ES256("k1", e.key),
 		jwt.Claims{Issuer: issuer, Subject: "u", Audience: []string{resource}, ExpiresAt: time.Unix(now-3600, 0)},
 	)
-	wrongIss, _ := jwt.Sign(
+	wrongIss, _ := atSign(
 		jwt.ES256("k1", e.key),
 		jwt.Claims{
 			Issuer:    "https://evil.example.com",
@@ -551,7 +551,7 @@ func TestSecurity_A02_AccessTokenAlgorithms(t *testing.T) {
 			ExpiresAt: time.Unix(now+600, 0),
 		},
 	)
-	wrongAud, _ := jwt.Sign(
+	wrongAud, _ := atSign(
 		jwt.ES256("k1", e.key),
 		jwt.Claims{
 			Issuer:    issuer,
@@ -560,7 +560,7 @@ func TestSecurity_A02_AccessTokenAlgorithms(t *testing.T) {
 			ExpiresAt: time.Unix(now+600, 0),
 		},
 	)
-	multiAud, _ := jwt.Sign(
+	multiAud, _ := atSign(
 		jwt.ES256("k1", e.key),
 		jwt.Claims{
 			Issuer:    issuer,
@@ -588,7 +588,16 @@ func TestSecurity_A02_AccessTokenAlgorithms(t *testing.T) {
 		return signing + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	}()
 
+	idToken, err := jwt.Sign(
+		jwt.ES256("k1", e.key),
+		jwt.Claims{Issuer: issuer, Subject: "u", Audience: []string{resource}, ExpiresAt: time.Unix(now+600, 0)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	tests := map[string]string{
+		"typ JWT, not at+jwt":      idToken,
 		"alg none":                 sign(t, map[string]any{"alg": "none", "typ": "JWT"}, claims, nil),
 		"alg None":                 sign(t, map[string]any{"alg": "None", "typ": "JWT"}, claims, nil),
 		"HS256 keyed with pub key": hs,
@@ -878,3 +887,6 @@ func TestRateLimitHook(t *testing.T) {
 		t.Errorf("revoke = %d, hook saw %v", rec.Code, seen)
 	}
 }
+
+// atSign signs like the server does: an RFC 9068 access token.
+func atSign(k jwt.Key, c jwt.Claims) (string, error) { return jwt.SignTyped(k, "at+jwt", c) }

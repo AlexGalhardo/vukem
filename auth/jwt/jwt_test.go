@@ -1,6 +1,7 @@
 package jwt_test
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -373,5 +374,40 @@ func TestSecurity_A07_VerifierChecksTyp(t *testing.T) {
 				t.Fatalf("Verify() error = %v, want ErrInvalid naming typ", err)
 			}
 		})
+	}
+}
+
+func TestSignTypedSetsTyp(t *testing.T) {
+	t.Parallel()
+
+	key := jwt.HS256("k", bytes.Repeat([]byte{1}, 32))
+	claims := jwt.Claims{Subject: "u", ExpiresAt: time.Now().Add(time.Minute)}
+
+	tok, err := jwt.SignTyped(key, "at+jwt", claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	only := func(types ...string) *jwt.Verifier {
+		return jwt.NewVerifier(jwt.StaticKeys(key), jwt.VerifyOptions{Types: types})
+	}
+
+	if _, err := only("at+jwt").Verify(t.Context(), tok); err != nil {
+		t.Errorf("Verify with Types at+jwt = %v, want it accepted", err)
+	}
+
+	if _, err := only("JWT").Verify(t.Context(), tok); err == nil {
+		t.Error("an at+jwt token passed a verifier that wants JWT")
+	}
+
+	plain, _ := jwt.Sign(key, claims)
+	if _, err := only("at+jwt").Verify(t.Context(), plain); err == nil {
+		t.Error("a JWT-typ token passed a verifier that wants at+jwt")
+	}
+
+	for _, typ := range []string{"", "a b", "x\"y", "a\nb"} {
+		if _, err := jwt.SignTyped(key, typ, claims); err == nil {
+			t.Errorf("SignTyped(%q) succeeded, want an error", typ)
+		}
 	}
 }
