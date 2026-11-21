@@ -80,6 +80,7 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
   const probe = useRef<HTMLSpanElement>(null);
   const cache = useRef(new LineCache());
   const escaped = useRef(false);
+  const blurSel = useRef<{ start: number; end: number } | null>(null);
   const id = useId();
 
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
@@ -98,7 +99,18 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => taRef.current?.focus(),
+      focus: () => {
+        const ta = taRef.current;
+        if (!ta) {
+          return;
+        }
+        ta.focus();
+        // After a modal dialog closes the browser can hand focus back with the caret reset and Ctrl+A dead: put the caret back where it was.
+        const at = blurSel.current;
+        if (at) {
+          ta.setSelectionRange(Math.min(at.start, ta.value.length), Math.min(at.end, ta.value.length));
+        }
+      },
       statement: (scope) => {
         const ta = taRef.current;
         const text = ta?.value ?? value;
@@ -500,7 +512,8 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
             onSelect={(e) => setSel({ start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd })}
             onScroll={(e) => setScroll({ top: e.currentTarget.scrollTop, left: e.currentTarget.scrollLeft })}
             onFocus={() => setHasFocus(true)}
-            onBlur={() => {
+            onBlur={(e) => {
+              blurSel.current = { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd };
               setHasFocus(false);
               setPop(null);
             }}
