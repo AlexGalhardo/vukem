@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -52,6 +53,8 @@ type Router struct {
 	// patterns build registers for them.
 	exclusive []*Group
 	catchAll  map[string]bool
+	// secretPaths are the patterns of SecretPaths.
+	secretPaths []string
 
 	once     sync.Once
 	compiled atomic.Bool
@@ -82,6 +85,16 @@ func (r *Router) Services() *web.Services { return r.services }
 
 // UseServer appends middleware that runs for every request.
 func (r *Router) UseServer(mw ...Middleware) { r.server = append(r.server, mw...) }
+
+// SecretPaths marks path patterns whose wildcards carry secrets for requests
+// that no registered route serves, typically a webhook handled by a
+// UseServer middleware before the session and CSRF middleware. Every log
+// line of a matching request (the request line, error and security-event
+// logs) writes "{name}" instead of the value of each named wildcard, as
+// Route.SecretParams does for a route. A pattern uses the ServeMux syntax
+// ("/hooks/{secret}"); an invalid one is an error from Handler. It applies
+// whatever the order of UseServer and SecretPaths calls.
+func (r *Router) SecretPaths(patterns ...string) { r.secretPaths = append(r.secretPaths, patterns...) }
 
 // Use appends middleware that runs for every matched route.
 func (r *Router) Use(mw ...Middleware) { r.router = append(r.router, mw...) }
@@ -304,9 +317,20 @@ func (r *Router) build() {
 	}
 
 	// Outermost: expose services to middleware (web.Fail, web.ServicesFrom).
+	secret, err := compileSecretPaths(r.secretPaths)
+	if err != nil {
+		r.buildErr = err
+		return
+	}
+
 	inner := h
 	r.handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		inner.ServeHTTP(w, req.WithContext(web.WithServices(req.Context(), r.services)))
+		ctx := web.WithServices(req.Context(), r.services)
+		if len(secret) > 0 {
+			ctx = redactPaths(ctx, req, secret)
+		}
+
+		inner.ServeHTTP(w, req.WithContext(ctx))
 	})
 }
 
@@ -681,6 +705,63 @@ func redactParams(next http.Handler, names []string) http.Handler {
 		next.ServeHTTP(w, req.WithContext(ctx))
 	})
 }
+
+// secretPath matches a SecretPaths pattern with a private ServeMux, so it
+// follows the same wildcard rules as routes.
+type secretPath struct {
+	mux   *http.ServeMux
+	names []string
+}
+
+var wildcardName = regexp.MustCompile(`\{([^}.$]+)(?:\.{3})?\}`)
+
+func compileSecretPaths(patterns []string) ([]secretPath, error) {
+	out := make([]secretPath, 0, len(patterns))
+
+	for _, pattern := range patterns {
+		var names []string
+		for _, m := range wildcardName.FindAllStringSubmatch(pattern, -1) {
+			names = append(names, m[1])
+		}
+
+		sp := secretPath{mux: http.NewServeMux(), names: names}
+
+		handler := http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+			for _, n := range sp.names {
+				web.RedactLogPath(req.Context(), n, req.PathValue(n))
+			}
+		})
+		if err := register(sp.mux, pattern, handler); err != nil {
+			return nil, fmt.Errorf("router: SecretPaths %q: %w", pattern, err)
+		}
+
+		out = append(out, sp)
+	}
+
+	return out, nil
+}
+
+// redactPaths hides the wildcard values of every secret pattern the request
+// matches. It returns a context with a log holder, which middleware.Logger
+// reuses wherever it sits in the server chain.
+func redactPaths(ctx context.Context, req *http.Request, secret []secretPath) context.Context {
+	ctx, _ = web.WithLogAttrs(ctx)
+	probe := req.WithContext(ctx)
+
+	for _, sp := range secret {
+		if _, pattern := sp.mux.Handler(probe); pattern != "" {
+			sp.mux.ServeHTTP(discardWriter{}, probe)
+		}
+	}
+
+	return ctx
+}
+
+type discardWriter struct{}
+
+func (discardWriter) Header() http.Header         { return http.Header{} }
+func (discardWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (discardWriter) WriteHeader(int)             {}
 
 func (r *Router) adapt(h web.HandlerFunc, rt *Route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
