@@ -431,7 +431,7 @@ Up: func(s *schema.Schema) error {
 },
 ```
 
-`vukem migrate` refuses a pending migration whose ID sorts before one already applied (usually another branch's) and runs nothing: it fails with `schema.ErrOutOfOrder` and the list. Review them, then run `vukem migrate -allow-out-of-order` (`Migrator.AllowOutOfOrder()` in code). Migrations a vukem module ships under a fixed `_vukem_` ID (queue, session, cache, webhook) are exempt, so enabling a module later still works.
+`vukem migrate` refuses a pending migration whose ID sorts before one already applied (usually another branch's) and runs nothing: it fails with `schema.ErrOutOfOrder` and the list. Review them, then run `vukem migrate -allow-out-of-order` (`Migrator.AllowOutOfOrder()` in code). A migration with `AnyOrder: true`, which the modules that ship a fixed ID set (queue, session, cache, webhook), is exempt, so enabling a module later still works.
 
 `vukem migrate:check` finds colliding migrations, `vukem db:pull` writes a baseline from an existing database and `vukem migrate:diff` writes a migration stub from your models; see [the database guide](/docs/database/overview) and the [CLI reference](/docs/cli/reference-database). In production `vukem migrate` refuses a pending migration that drops a table or column unless you pass `--allow-destructive`.
 

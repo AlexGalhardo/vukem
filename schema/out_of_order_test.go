@@ -72,18 +72,21 @@ func TestUpAllowsFrameworkMigrationsAddedLate(t *testing.T) {
 
 	db := migratedDB(t)
 
+	module := mig("20260201000000_vukem_create_queue_tables", createTable("jobs_queue"))
+	module.AnyOrder = true
+
 	m, err := NewMigrator(db, []Migration{
 		mig("20260101_a", createTable("a")),
 		mig("20260301_c", createTable("c")),
-		mig("20261018000000_vukem_create_queue_tables", createTable("jobs_queue")),
+		module,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	ran, err := m.Up(t.Context())
-	if err != nil || !cmp.Equal(ran, []string{"20261018000000_vukem_create_queue_tables"}) {
-		t.Fatalf("Up = %v, %v; want the framework migration to run", ran, err)
+	if err != nil || !cmp.Equal(ran, []string{module.ID}) {
+		t.Fatalf("Up = %v, %v; want the module migration to run", ran, err)
 	}
 
 	st, err := m.Status(t.Context())
@@ -95,6 +98,23 @@ func TestUpAllowsFrameworkMigrationsAddedLate(t *testing.T) {
 		if s.OutOfOrder {
 			t.Errorf("Status marks %s out of order, want none", s.ID)
 		}
+	}
+}
+
+func TestUpRefusesAnAppMigrationNamedLikeAModule(t *testing.T) {
+	t.Parallel()
+
+	m, err := NewMigrator(migratedDB(t), []Migration{
+		mig("20260101_a", createTable("a")),
+		mig("20260201_vukem_import", createTable("b")),
+		mig("20260301_c", createTable("c")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.Up(t.Context()); !errors.Is(err, ErrOutOfOrder) {
+		t.Fatalf("Up = %v, want ErrOutOfOrder", err)
 	}
 }
 
