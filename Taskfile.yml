@@ -125,6 +125,20 @@ tasks:
     cmds:
       - '{{default "tailwindcss" .TAILWIND_BIN}} -i contrib/studio/styles/studio.input.css -o contrib/studio/assets/studio.css --minify'
 
+  studio:ui:
+    desc: Build the Studio React interface into contrib/studio/ui (committed, embedded in the binary); needs Bun
+    dir: contrib/studio/web
+    cmds:
+      - bun install --frozen-lockfile
+      - bun run build
+
+  studio:ui:check:
+    desc: Rebuild the Studio interface and fail if contrib/studio/ui differs from what is committed
+    cmds:
+      - task: studio:ui
+      - git diff --exit-code -- contrib/studio/ui
+      - 'test -z "$(git status --porcelain -- contrib/studio/ui)" || { echo "contrib/studio/ui has untracked or changed files"; exit 1; }'
+
   secrets:scan:
     desc: Scan the git history for secrets with Betterleaks v1.9.0 (pass -- --log-opts=main..HEAD for a range)
     cmds:
