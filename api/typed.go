@@ -249,15 +249,18 @@ func register[In, Out any](
 // A JSON request also has a non-nil PostForm after ParseForm, so the media
 // type decides.
 func formParsedPastLimit(r *http.Request, limit int64) bool {
+	return formParsed(r) && (r.ContentLength > limit || r.ContentLength < 0)
+}
+
+// formParsed reports an urlencoded body that middleware already consumed.
+func formParsed(r *http.Request) bool {
 	if r.PostForm == nil {
 		return false
 	}
 
-	if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/x-www-form-urlencoded" {
-		return false
-	}
+	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 
-	return r.ContentLength > limit || r.ContentLength < 0
+	return ct == "application/x-www-form-urlencoded"
 }
 
 // bindRequest applies the route's body limit, then binds and validates In;
