@@ -296,8 +296,9 @@ func TestSecurity_A07_TwoFactorAccountLimit(t *testing.T) {
 	// The tenth failure, from yet another address, ends the challenge and warns the user.
 	ip(attacker, 10).PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).AssertRedirect("/login")
 
-	if sent := app.Mails().SentTo("lock2fa@example.com"); len(sent) != before+1 || !strings.Contains(sent[before].Subject, "wrong") {
-		t.Fatalf("lock mails = %+v, want one", sent)
+	lockMails := app.Mails().SentTo("lock2fa@example.com")
+	if len(lockMails) != before+1 || !strings.Contains(lockMails[before].Subject, "wrong") {
+		t.Fatalf("lock mails = %+v, want one", lockMails)
 	}
 
 	// A fresh challenge from a new address is refused even with the right code.
