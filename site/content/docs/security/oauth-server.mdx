@@ -1,0 +1,132 @@
+---
+title: An OAuth 2.1 authorization server
+description: Let clients such as AI agents sign users in to your API with the oauth package - authorization code with PKCE, resource indicators, rotating refresh tokens, client metadata documents and JWT access tokens.
+---
+
+An AI agent or a mobile app that wants to call your API for a user needs a token that says so. The `oauth` package is the server that issues those tokens: it shows the user a consent screen, then hands the client an access token and a refresh token. It pairs with [an MCP server](/docs/rest-apis/mcp) but works for any API.
+
+You will learn how to:
+
+- configure the server, its keys and its store
+- mount the five endpoints
+- supply the sign-in and consent screens
+- verify the tokens in your API
+- accept clients without registering each one by hand
+
+## The idea
+
+The package implements the safe subset of OAuth 2.1: the **authorization code** flow with **PKCE** (`S256` only) and nothing else. There is no implicit flow, no password grant and no Dynamic Client Registration.
+
+Every request names a `resource`, the API the token is for ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)). The resource becomes the `aud` of the access token and is bound to the code and the refresh token, so a token for one API is useless at another.
+
+## Quick start
+
+```go title="app/oauth.go"
+as, err := oauth.New(oauth.Config{
+	Issuer:          "https://auth.example.com",
+	Keys:            []jwt.Key{jwt.ES256("2026-11", signingKey)},
+	Store:           oauth.NewSQLStore(db),
+	Clients:         oauth.Resolvers{oauth.StaticClients{webApp}, &oauth.MetadataDocuments{}},
+	Consent:         consent{},
+	Resources:       []string{"https://api.example.com/mcp"},
+	ScopesSupported: []string{"invoices:read", "invoices:write"},
+	CSRFKey:         csrfKey, // 32 or more random bytes
+})
+if err != nil {
+	return err
+}
+
+r.Handle("GET /authorize", as.AuthorizeHandler())
+r.Handle("POST /authorize", as.AuthorizeHandler())
+r.Handle("POST /token", as.TokenHandler())
+r.Handle("POST /revoke", as.RevokeHandler())
+r.Handle("GET /.well-known/oauth-authorization-server", as.MetadataHandler())
+r.Handle("GET /.well-known/jwks.json", as.JWKSHandler())
+```
+
+Create the tables with a migration: `oauth.Migration("20261121_oauth")`. `SQLStore` uses portable SQL with the dialect placeholders, so it runs on SQLite, PostgreSQL and MySQL. `oauth.NewMemoryStore()` is for tests and single-process apps.
+
+## The consent screen
+
+The app owns the screens; the server owns every decision. You implement two methods:
+
+```go title="app/consent.go"
+type consent struct{ sessions Sessions }
+
+func (c consent) Subject(w http.ResponseWriter, r *http.Request) (string, bool) {
+	user, ok := c.sessions.User(r)
+	if !ok {
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+		return "", false
+	}
+
+	return user.ID, true
+}
+
+func (c consent) Render(w http.ResponseWriter, r *http.Request, req oauth.ConsentRequest) error {
+	return consentPage(req.Client.Name, req.Scopes, req.Action, req.Fields).Render(r.Context(), w)
+}
+```
+
+The form posts to `req.Action` with every entry of `req.Fields` as a hidden input and a `decision` field of `approve` or `deny`. One of the fields is `csrf`, an HMAC over the signed-in user and the exact request, valid for ten minutes. A form for another user, another client or another redirect is refused, and so is a cross-site post.
+
+## What the server enforces
+
+- The `redirect_uri` must match a registered one character for character. Until the client and the redirect are validated an error is shown, never redirected, so the endpoint is not an open redirector.
+- `code_challenge_method=S256` is required. A wrong verifier burns the code and revokes the grant.
+- A code works once. Using it twice revokes the grant and every token from it.
+- Refresh tokens are opaque, stored as SHA-256, and rotated on every use. Presenting a used one revokes the whole grant; of two concurrent uses exactly one wins.
+- The authorization response carries `iss` ([RFC 9207](https://www.rfc-editor.org/rfc/rfc9207)) and the metadata says so.
+- Access tokens are JWTs signed with RS256, ES256 or EdDSA, ten minutes by default, with the resource as only audience. HMAC keys are refused at boot.
+- Errors name a code (`invalid_grant`) and never a reason.
+
+## Keys and rotation
+
+`Config.Keys` lists the signing key first and older keys after it. Tokens are signed with the first; `JWKSHandler` publishes all of them, so tokens signed before a rotation keep verifying until they expire. To rotate, put the new key first and drop the old one after `AccessTokenTTL`.
+
+## Clients
+
+Pre-register with `oauth.StaticClients`. A public client has no `SecretHash` and relies on PKCE. A confidential client has `SecretHash: oauth.SecretHash(secret)` and authenticates with HTTP Basic or the body; the compare is constant time.
+
+`oauth.MetadataDocuments` accepts a client whose `client_id` is an HTTPS URL that serves a [Client ID Metadata Document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/). The server fetches it, so the fetch is boxed in:
+
+- HTTPS only, no user info, no fragment, a path
+- public addresses only, checked after DNS and again when the socket connects, IPv6 and IPv4-mapped forms included
+- no redirects, 5 seconds, 5 KiB
+- the document must name itself, list valid redirect URIs and use no secret
+
+## Verifying tokens
+
+In your API, `as.VerifyAccessToken(ctx, token, resource)` checks the signature against the allow list of algorithms (never `none`, never a symmetric one), the issuer, the expiry and that the audience is exactly `resource`. For an MCP server use the adapter, which keeps both packages independent:
+
+```go title="app/mcp.go"
+h, err := srv.HTTPHandler(mcp.HTTPConfig{
+	Verifier: mcpoauth.Verifier(as), Resource: "https://api.example.com/mcp",
+	AuthorizationServers: []string{"https://auth.example.com"},
+})
+```
+
+## Configuration
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `Issuer` | required | HTTPS URL, no trailing slash; the `iss` of tokens and responses |
+| `Keys` | required | asymmetric keys; the first signs |
+| `Store`, `Clients`, `Consent` | required | persistence, client lookup and screens |
+| `Resources` | required | audiences tokens may be issued for |
+| `CSRFKey` | required | at least 32 bytes |
+| `AccessTokenTTL` | 10 minutes | access token lifetime |
+| `RefreshTokenTTL` | 30 days | refresh token lifetime |
+| `CodeTTL` | 60 seconds | authorization code lifetime |
+| `Allow` | none | rate-limit hook, called as `Allow(r, "token")`; false answers 429 |
+
+## Common mistakes
+
+Wrong: a `Resource` in the MCP handler that differs from the one in `Resources` here. Every token is refused with `invalid_token`.
+
+Wrong: an `Issuer` with a trailing slash. `New` refuses it, because clients compare the issuer as a string.
+
+## Next steps
+
+- [An MCP server for your app](/docs/rest-apis/mcp)
+- [JWT](/docs/security/jwt)

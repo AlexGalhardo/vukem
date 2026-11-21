@@ -77,6 +77,7 @@ export const navigation: NavCategory[] = [
       "authentication",
       "social-login",
       "jwt",
+      "oauth-server",
       "api-tokens",
       "two-factor",
       "passkeys",
