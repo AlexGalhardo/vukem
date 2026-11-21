@@ -138,7 +138,8 @@ export function Grid({
 
   useEffect(() => {
     setSelected(new Set());
-    setFocus({ row: 0, col: 1 });
+    // A header stays where it is, so Enter on it can cycle the sort; a data cell goes back to the first row.
+    setFocus((f) => (f.row < 0 ? f : { row: 0, col: Math.max(f.col, 1) }));
     scroller.current?.scrollTo({ top: 0, left: 0 });
   }, [resetKey]);
 
