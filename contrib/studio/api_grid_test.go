@@ -76,11 +76,12 @@ func TestAPICountTimeout(t *testing.T) {
 	}
 }
 
-func userName(t *testing.T, sh *sqlHarness, id int) string {
+// userName is the name of the user with id 1, the row these tests change.
+func userName(t *testing.T, sh *sqlHarness) string {
 	t.Helper()
 
 	var name string
-	if err := sh.db.QueryRowContext(t.Context(), `SELECT name FROM users WHERE id = ?`, id).Scan(&name); err != nil {
+	if err := sh.db.QueryRowContext(t.Context(), `SELECT name FROM users WHERE id = 1`).Scan(&name); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +111,7 @@ func TestUpdateExpectGuard(t *testing.T) {
 		t.Errorf("conflict body = %s, want code conflict and current name ada", rec.Body)
 	}
 
-	if got := userName(t, sh, 1); got != "ada" {
+	if got := userName(t, sh); got != "ada" {
 		t.Errorf("name = %q after a refused update, want ada", got)
 	}
 
@@ -128,7 +129,7 @@ func TestUpdateExpectGuard(t *testing.T) {
 		t.Fatalf("matching expect = %d, want 200", res)
 	}
 
-	if got := userName(t, sh, 1); got != "ada2" {
+	if got := userName(t, sh); got != "ada2" {
 		t.Errorf("name = %q, want ada2", got)
 	}
 
@@ -143,7 +144,7 @@ func TestUpdateExpectGuard(t *testing.T) {
 		t.Errorf("expect on an unknown column = %d, want 422", res)
 	}
 
-	if got := userName(t, sh, 1); got != "ada2" {
+	if got := userName(t, sh); got != "ada2" {
 		t.Errorf("name = %q after refused updates, want ada2", got)
 	}
 
@@ -229,7 +230,7 @@ func TestAPIUpdateRefusals(t *testing.T) {
 		}
 	}
 
-	if got := userName(t, sh, 1); got != "ada" {
+	if got := userName(t, sh); got != "ada" {
 		t.Errorf("name = %q after refused updates, want ada", got)
 	}
 
@@ -250,7 +251,7 @@ func TestAPIUpdateOversizedBodyIsRefused(t *testing.T) {
 		t.Errorf("an oversized value = %d, want 413", rec.Code)
 	}
 
-	if got := userName(t, sh, 1); got != "ada" {
+	if got := userName(t, sh); got != "ada" {
 		t.Errorf("name = %q after an oversized update, want ada", got)
 	}
 }
