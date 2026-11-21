@@ -125,4 +125,4 @@ With `admin.Config{Flags: ff}` (`ff, err := app.Flags()`) the panel lists every 
 - When the store is down the page answers 503 instead of showing defaults that would invite wrong toggles.
 - Flag values are not secrets: never store credentials in a string flag.
 
-`Panel.AddPage(slug, label, func(*web.Ctx) (template.HTML, error))` adds a custom GET page at `<Prefix>/<slug>` inside the panel layout, with the same navigation, title and guard as the resources (template `page.html`). Slugs share the resources' namespace; call it before `Mount`.
+`Panel.AddPage(slug, label, func(*web.Ctx) (template.HTML, error))` adds a custom GET page at `<Prefix>/<slug>` inside the panel layout, with the same navigation, title and guard as the resources (template `page.html`). Slugs share the resources' namespace; call it before `Mount`. `Mount` registers no wildcard: `<Prefix>/<slug>` and `<Prefix>/<slug>/<id>` for a slug that is neither a resource nor a page is 404, while a route the app adds beside the panel (with `panel.Guard()`) keeps working (`TestUnknownSlugIsNotFound`, `TestUnknownSlugKeepsCustomRoutes`).
