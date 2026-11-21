@@ -65,6 +65,9 @@ describe("copy", () => {
     expect(parsed[2]?.id).toBe("9007199254740993");
     expect(parsed[2]?.meta).toBe("{broken");
     expect(jsonValue({ t: "1.5", l: true }, "number")).toBe(1.5);
+    expect(jsonValue({ t: "0", l: true }, "boolean")).toBe(false);
+    expect(jsonValue({ t: "1", l: true }, "boolean")).toBe(true);
+    expect(jsonValue({ t: "1", l: true }, "number")).toBe(1);
   });
 });
 

@@ -87,6 +87,10 @@ export function jsonValue(cell: ApiCell, kind: ColumnKind): unknown {
     return null;
   }
   if (cell.l) {
+    // SQLite and MySQL hold booleans as 0 and 1.
+    if (kind === "boolean" && (cell.t === "0" || cell.t === "1")) {
+      return cell.t === "1";
+    }
     if (cell.t === "true" || cell.t === "false") {
       return cell.t === "true";
     }
