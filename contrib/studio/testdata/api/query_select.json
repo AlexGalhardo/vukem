@@ -4,6 +4,7 @@
     "name"
   ],
   "elapsedMs": 0,
+  "kind": "SELECT",
   "rows": [
     [
       {
