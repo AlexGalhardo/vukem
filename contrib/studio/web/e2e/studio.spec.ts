@@ -66,6 +66,7 @@ test("opens a source and lists its tables with row estimates", async ({ page, st
 
   await table.getByRole("link", { name: "posts" }).click();
   await expect(page).toHaveURL(`${studio.origin}/ui/s/db/t/posts`);
+  await page.getByText("Columns", { exact: true }).click();
   await expect(page.getByRole("table", { name: "Columns" }).getByRole("row", { name: /user_id\s+integer\s+no/ })).toBeVisible();
 });
 
