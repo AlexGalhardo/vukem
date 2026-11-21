@@ -34,7 +34,7 @@ one-time start token is traded for. Without the cookie every route answers
   | 413 | `body_too_large` | Body over 1 MiB |
   | 415 | `unsupported_media_type` | Not `application/json` |
   | 409 | `conflict` | A guarded update found the row changed; `current` has its values |
-| 422 | `invalid_input` | The request is refused; the message says why |
+  | 422 | `invalid_input` | The request is refused; the message says why |
   | 500 | `query_failed`, `internal` | The database or Studio failed; Studio's log has its class, never the database's text |
   | 504 | `timeout` | A console statement ran past its 30 seconds and was stopped |
   | 499 | `canceled` | The client closed the connection while the statement ran |
