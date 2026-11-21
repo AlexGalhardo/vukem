@@ -111,6 +111,8 @@ export function SourcePage({ source }: { source: Source }): ReactElement {
       {source.kind === "sql" ? (
         <p>
           <Link route={{ name: "console", source: source.name }}>Open the SQL console</Link>
+          {" · "}
+          <Link route={{ name: "schema", source: source.name }}>Open the schema</Link>
         </p>
       ) : null}
       {source.kind === "sql" ? <TableList source={source} /> : null}

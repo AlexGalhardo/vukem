@@ -36,6 +36,8 @@ func write(path string) error {
 		`INSERT INTO users (id, name, email) VALUES (1, 'ada', 'ada@example.test'), (2, 'linus', NULL)`,
 		`CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users (id), title TEXT)`,
 		`INSERT INTO posts (id, user_id, title) VALUES (1, 1, 'first'), (2, 1, 'second'), (3, 2, 'third')`,
+		`CREATE UNIQUE INDEX users_email ON users (email)`,
+		`CREATE INDEX posts_user_title ON posts (user_id, title)`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			return err

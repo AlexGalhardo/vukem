@@ -112,3 +112,31 @@ export interface QueryResponse {
   kind: string;
   affected?: number;
 }
+
+export interface SchemaIndex {
+  /** Empty for the index a database makes by itself for a UNIQUE column. */
+  name: string;
+  columns: string[];
+  unique: boolean;
+  primary: boolean;
+  /** A part of the index is an expression: columns lists only its plain columns. */
+  expression?: boolean;
+}
+
+export interface SchemaTable {
+  name: string;
+  columns: Column[];
+  primaryKey: string[];
+  foreignKeys: ForeignKey[];
+  indexes: SchemaIndex[];
+}
+
+export interface SchemaResponse {
+  tables: SchemaTable[];
+  /** The database reports a CREATE statement through a read-only query (SQLite, MySQL). */
+  canShowCreate: boolean;
+}
+
+export interface CreateResponse {
+  statement: string;
+}
