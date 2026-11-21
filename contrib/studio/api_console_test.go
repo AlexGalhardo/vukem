@@ -44,7 +44,11 @@ func TestAPIQueryWriteIsAtomicAndNeedsTheSwitch(t *testing.T) {
 	}
 
 	// Without the write flag in the body the console stays read-only even with --write.
-	if rec := post("DELETE FROM users WHERE id = 1", false); rec.Code != http.StatusUnprocessableEntity || h.users(t) != 5 {
+	if rec := post(
+		"DELETE FROM users WHERE id = 1",
+		false,
+	); rec.Code != http.StatusUnprocessableEntity ||
+		h.users(t) != 5 {
 		t.Fatalf("the console wrote without the write switch: %d, users = %d", rec.Code, h.users(t))
 	}
 
@@ -84,7 +88,8 @@ func TestAPIQueryReportsRowsAffected(t *testing.T) {
 	// A statement that returns rows reports them as rows.
 	rec = apiDo(s, c, http.MethodPost, "/api/v1/sources/db/query",
 		queryBodyJSON(t, "DELETE FROM users WHERE id = 5 RETURNING id", true))
-	if !strings.Contains(rec.Body.String(), `"rows":[[{"t":"5","l":true}]]`) || strings.Contains(rec.Body.String(), `"affected"`) {
+	if !strings.Contains(rec.Body.String(), `"rows":[[{"t":"5","l":true}]]`) ||
+		strings.Contains(rec.Body.String(), `"affected"`) {
 		t.Errorf("delete returning = %s", rec.Body)
 	}
 }
@@ -137,7 +142,8 @@ func TestAPIRedisConsoleAuditsOnlyTheCommandName(t *testing.T) {
 	}
 
 	out := h.logs.String()
-	if !strings.Contains(out, "action=console") || !strings.Contains(out, "target=SET") || !strings.Contains(out, "args=2") {
+	if !strings.Contains(out, "action=console") || !strings.Contains(out, "target=SET") ||
+		!strings.Contains(out, "args=2") {
 		t.Errorf("the audit lacks the command name and the argument count: %s", out)
 	}
 

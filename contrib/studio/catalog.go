@@ -63,7 +63,10 @@ func tableOf(t schema.TableInfo) Table {
 	}
 
 	for _, ix := range t.Indexes {
-		out.Indexes = append(out.Indexes, Index{Name: ix.Name, Columns: ix.Columns, Unique: ix.Unique, Expression: ix.Expression})
+		out.Indexes = append(
+			out.Indexes,
+			Index{Name: ix.Name, Columns: ix.Columns, Unique: ix.Unique, Expression: ix.Expression},
+		)
 	}
 
 	for _, fk := range t.ForeignKeys {

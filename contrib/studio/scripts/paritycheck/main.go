@@ -21,6 +21,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"maps"
@@ -66,7 +67,9 @@ func main() {
 	}
 
 	if len(problems) == 0 && *bun {
-		problems = append(problems, runFiles(rows, "bun", "web", []string{"bun", "test"}, func(r ref) string { return r.name })...)
+		problems = append(
+			problems,
+			runFiles(rows, "bun", "web", []string{"bun", "test"}, func(r ref) string { return r.name })...)
 	}
 
 	if len(problems) == 0 && *e2e {
@@ -157,26 +160,25 @@ func check(rows []row) []string {
 }
 
 // collectGoTests maps every Go test function to the directory of its package.
+// Only the root package and the commands under cmd/ hold tests the ledger names.
 func collectGoTests() map[string]string {
 	out := map[string]string{}
 	fn := regexp.MustCompile(`(?m)^func (Test\w+)\(`)
 
-	_ = filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, "_test.go") || strings.HasPrefix(path, "web") {
-			return nil
-		}
+	for _, pattern := range []string{"*_test.go", filepath.Join("cmd", "*", "*_test.go")} {
+		files, _ := filepath.Glob(pattern)
 
-		src, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return nil
-		}
+		for _, path := range files {
+			src, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
 
-		for _, m := range fn.FindAllStringSubmatch(string(src), -1) {
-			out[m[1]] = filepath.Dir(path)
+			for _, m := range fn.FindAllStringSubmatch(string(src), -1) {
+				out[m[1]] = filepath.Dir(path)
+			}
 		}
-
-		return nil
-	})
+	}
 
 	return out
 }
@@ -211,7 +213,7 @@ func checkRef(x ref, goTests map[string]string) string {
 			return fmt.Sprintf("%s reference %s has no #title", x.kind, x.name)
 		}
 
-		for _, line := range strings.Split(string(src), "\n") {
+		for line := range strings.SplitSeq(string(src), "\n") {
 			t := strings.TrimSpace(line)
 			if (strings.HasPrefix(t, "test(") || strings.HasPrefix(t, "test.skip(")) && strings.Contains(t, x.title) {
 				return ""
@@ -243,7 +245,16 @@ func runGo(rows []row) []string {
 		names := byPkg[dir]
 		pattern := "^(" + strings.Join(names, "|") + ")$"
 
-		cmd := exec.Command("go", "test", "-count=1", "-v", "-run", pattern, "./"+filepath.ToSlash(dir))
+		cmd := exec.CommandContext(
+			context.Background(),
+			"go",
+			"test",
+			"-count=1",
+			"-v",
+			"-run",
+			pattern,
+			"./"+filepath.ToSlash(dir),
+		)
 		cmd.Env = append(os.Environ(), "GOWORK=off")
 
 		out, err := cmd.CombinedOutput()
@@ -282,7 +293,8 @@ func runFiles(rows []row, kind, dir string, command []string, file func(ref) str
 		return nil
 	}
 
-	cmd := exec.Command(command[0], append(command[1:], files...)...)
+	//nolint:gosec // the command and its arguments are fixed by this program and the ledger of this repository
+	cmd := exec.CommandContext(context.Background(), command[0], append(command[1:], files...)...)
 	cmd.Dir = dir
 
 	if out, err := cmd.CombinedOutput(); err != nil {

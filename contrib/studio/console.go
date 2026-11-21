@@ -91,7 +91,6 @@ func (s *SQLDB) exec(ctx context.Context, text string, write bool) (ResultSet, e
 
 	if write && !readOnlyStatement(text, s.family()) && !returningRe.MatchString(text) {
 		// A write that returns no rows: Rows cannot say how many it changed, Exec can.
-		//nolint:gosec // the console runs the developer's own statement, in a transaction that rolls back on failure
 		res, err := tx.ExecContext(ctx, text)
 		if err != nil {
 			return ResultSet{}, &queryError{err}
@@ -101,7 +100,6 @@ func (s *SQLDB) exec(ctx context.Context, text string, write bool) (ResultSet, e
 			rs.Affected, rs.HasAffected = n, true
 		}
 	} else {
-		//nolint:gosec // the console runs the developer's own statement; the read-only transaction is the guard
 		rows, err := tx.QueryContext(ctx, text)
 		if err != nil {
 			return ResultSet{}, &queryError{err}

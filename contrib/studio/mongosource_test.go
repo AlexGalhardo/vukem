@@ -29,13 +29,6 @@ type fakeMongo struct {
 
 func (f *fakeMongo) listCollections(context.Context) ([]string, error) { return f.colls, nil }
 
-// addDoc appends a document while a handler may be reading.
-func (f *fakeMongo) addDoc(d bson.Raw) {
-	f.mu.Lock()
-	f.docs = append(f.docs, d)
-	f.mu.Unlock()
-}
-
 func (f *fakeMongo) estimate(context.Context, string) (int64, error) { return 7, nil }
 
 func (f *fakeMongo) find(_ context.Context, _ string, filter, sort bson.D, skip, limit int64) ([]bson.Raw, error) {

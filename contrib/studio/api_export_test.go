@@ -120,7 +120,13 @@ func TestAPIRedisSetKeepsTTLAndTTLAction(t *testing.T) {
 		t.Errorf("set = %d", rec.Code)
 	}
 
-	if rec := apiDo(h.s, h.login, "PATCH", target, `{"action":"ttl","seconds":"abc"}`); rec.Code != http.StatusUnprocessableEntity {
+	if rec := apiDo(
+		h.s,
+		h.login,
+		"PATCH",
+		target,
+		`{"action":"ttl","seconds":"abc"}`,
+	); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("ttl with text = %d, want 422", rec.Code)
 	}
 
