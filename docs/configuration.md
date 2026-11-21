@@ -176,6 +176,7 @@ Every exported `With*` option of the root package, grouped in the source by subs
 
 | Option | Subsystem | Defined in | Doc |
 | --- | --- | --- | --- |
+| `WithAbout` | CLI | `options.go` | [cli.md](cli.md) |
 | `WithAppSeeders` | Database | `database.go` | [database.md](database.md) |
 | `WithCacheStore` | Cache | `services.go` | [subsystems.md](subsystems.md) |
 | `WithCacheStoreFunc` | Cache | `services.go` | [subsystems.md](subsystems.md) |
