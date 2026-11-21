@@ -37,7 +37,7 @@ for _ in $(seq 1 100); do
 done
 [ -n "$url" ] || { echo "no start URL printed" >&2; exit 1; }
 
-base="${url%%/\?token=*}"
+base="${url%%/ui/\?token=*}"
 jar="$work/cookies.txt"
 curl -sS -o /dev/null -c "$jar" "$url"
 status="$(curl -sS -o "$work/ui.html" -w '%{http_code}' -b "$jar" "$base/ui/")"

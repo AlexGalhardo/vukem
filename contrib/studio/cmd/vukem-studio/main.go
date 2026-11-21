@@ -260,7 +260,7 @@ func serve(ctx context.Context, s *studio.Studio, sources []studio.Source, o opt
 		return exitError
 	}
 
-	startURL := fmt.Sprintf("http://%s/?token=%s", ln.Addr(), s.Token())
+	startURL := fmt.Sprintf("http://%s/ui/?token=%s", ln.Addr(), s.Token())
 
 	mode := "(read-only)"
 	if o.write {

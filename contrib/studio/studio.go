@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"html/template"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
@@ -37,12 +36,8 @@ type Studio struct {
 	sessionID string // the cookie value
 	tokenUsed atomic.Bool
 	mux       *http.ServeMux
-	pages     map[string]*template.Template
 
-	livePatterns map[string]bool // read routes /events may poll
-	liveConns    atomic.Int32
-	newTicker    ticker
-	exportMax    int // rows per export; 0 means 100000 (tests lower it)
+	exportMax int // rows per export; 0 means 100000 (tests lower it)
 }
 
 // New validates cfg and returns a Studio with a fresh session token.
@@ -69,15 +64,7 @@ func New(cfg Config) (*Studio, error) {
 		return nil, err
 	}
 
-	pages, err := loadTemplates()
-	if err != nil {
-		return nil, err
-	}
-
-	s := &Studio{
-		cfg: cfg, token: token, sessionID: sessionID, mux: http.NewServeMux(), pages: pages,
-		livePatterns: map[string]bool{}, newTicker: realTicker,
-	}
+	s := &Studio{cfg: cfg, token: token, sessionID: sessionID, mux: http.NewServeMux()}
 	s.routes()
 
 	return s, nil

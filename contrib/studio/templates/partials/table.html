@@ -1,7 +1,0 @@
-{{/* A table. Data: Head (strings), Rows (lists of cells with Text, Null and Link) and optionally Sorts (a header link and aria-sort per column). */}}
-{{define "partials/table"}}<div class="overflow-x-auto rounded-xl border">
-<table class="table">
-	<thead><tr>{{range $i, $h := .Head}}{{with $.Sorts}}{{with index . $i}}<th scope="col"{{if .Dir}} aria-sort="{{.Dir}}"{{end}}><a class="underline" data-sort="{{$h}}" href="{{.Link}}">{{$h}}</a></th>{{end}}{{else}}<th scope="col">{{$h}}</th>{{end}}{{end}}</tr></thead>
-	<tbody>{{range .Rows}}<tr>{{range .}}<td>{{if .Null}}<span class="null-cell">NULL</span>{{else if .Link}}<a class="underline" href="{{.Link}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}</td>{{end}}</tr>{{end}}</tbody>
-</table>
-</div>{{end}}

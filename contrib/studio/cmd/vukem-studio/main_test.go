@@ -185,7 +185,7 @@ func TestRunServesAndStops(t *testing.T) {
 		done <- run(ctx, []string{"--dir", dir, "--port", "0", "--no-open"}, &stdout, io.Discard, noEnv)
 	}()
 
-	urlRe := regexp.MustCompile(`open {2}(http://127\.0\.0\.1:\d+/\?token=\S+)`)
+	urlRe := regexp.MustCompile(`open {2}(http://127\.0\.0\.1:\d+/ui/\?token=\S+)`)
 
 	var startURL string
 
@@ -371,5 +371,23 @@ func TestVersionComesFromTheBuild(t *testing.T) {
 		if got := resolveVersion(tc.linked, tc.info); got != tc.want {
 			t.Errorf("%s: resolveVersion(%q) = %q, want %q", name, tc.linked, got, tc.want)
 		}
+	}
+}
+
+// TestStartURLPointsToUI: the address vukem-studio prints opens the React
+// interface, not a page of the old one.
+func TestStartURLPointsToUI(t *testing.T) {
+	t.Parallel()
+
+	dir := project(t, "development")
+
+	out, code := firstLines(t, "--dir", dir, "--port", "0", "--no-open")
+	if code != 0 {
+		t.Fatalf("run = %d %q", code, out)
+	}
+
+	m := regexp.MustCompile(`open {2}http://127\.0\.0\.1:\d+(/\S*)\?token=\S+`).FindStringSubmatch(out)
+	if m == nil || m[1] != "/ui/" {
+		t.Errorf("start URL path = %v in %q, want /ui/", m, out)
 	}
 }
