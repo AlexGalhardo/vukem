@@ -164,3 +164,43 @@ func TestBootstrapSessionKey(t *testing.T) {
 		t.Error("the session key shows the session cookie")
 	}
 }
+
+func TestConsoleExplainOfAWrite(t *testing.T) {
+	t.Parallel()
+
+	h := newSQLHarness(t)
+
+	// A plain EXPLAIN shows the plan of a write and changes nothing.
+	for _, q := range []string{
+		"EXPLAIN QUERY PLAN DELETE FROM users",
+		"EXPLAIN QUERY PLAN UPDATE users SET name = 'x'",
+		"EXPLAIN DELETE FROM users",
+	} {
+		if _, err := h.src.Query(t.Context(), q, false); err != nil && errorClass(err) == "invalid_input" {
+			t.Errorf("%q was refused: %v", q, err)
+		}
+	}
+
+	if n := h.users(t); n != 5 {
+		t.Errorf("users has %d rows after the explains, want 5", n)
+	}
+
+	// EXPLAIN ANALYZE runs the statement it explains, so a write behind it is a write.
+	for _, family := range []string{"postgres", "mysql"} {
+		for _, q := range []string{
+			"EXPLAIN ANALYZE DELETE FROM users",
+			"explain (analyze, buffers) update users set name = 'x'",
+			"EXPLAIN ANALYSE INSERT INTO users VALUES (1)",
+		} {
+			if readOnlyStatement(q, family) {
+				t.Errorf("readOnlyStatement(%q, %s) accepts an EXPLAIN ANALYZE of a write", q, family)
+			}
+		}
+
+		for _, q := range []string{"EXPLAIN ANALYZE SELECT 1", "EXPLAIN DELETE FROM users", "EXPLAIN (VERBOSE) UPDATE users SET a = 1"} {
+			if !readOnlyStatement(q, family) {
+				t.Errorf("readOnlyStatement(%q, %s) refuses a read or a plain EXPLAIN", q, family)
+			}
+		}
+	}
+}
