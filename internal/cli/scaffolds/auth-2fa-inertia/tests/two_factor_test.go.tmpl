@@ -248,15 +248,10 @@ func TestTwoFactorChallengeNeedsPasswordStep(t *testing.T) {
 	c.PostJSON("/two-factor-challenge", map[string]any{"code": "123456"}).AssertRedirect("/login")
 }
 
-// ip gives each request its own address, so the per-IP limit never applies.
-func ip(c *vukemtest.Client, n int) *vukemtest.Client {
-	return c.WithHeader("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", n))
-}
-
-func proxiedApp(t *testing.T) *vukemtest.App {
-	t.Helper()
-
-	return vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"TRUSTED_PROXIES": "0.0.0.0/0"}})
+// peer is the n-th client address; WithIP gives each request its own, so the
+// per-IP limit never applies.
+func peer(n int) string {
+	return fmt.Sprintf("203.0.113.%d", n)
 }
 
 func guess(c *vukemtest.Client, code string) *vukemtest.Response {
@@ -268,7 +263,7 @@ func guess(c *vukemtest.Client, code string) *vukemtest.Response {
 func TestSecurity_A07_TwoFactorAccountLimit(t *testing.T) {
 	t.Parallel()
 
-	app := proxiedApp(t)
+	app := vukemtest.New(t, bootstrap.New)
 	secret, _ := enableTwoFactor(t, app, app.Client(t).Inertia(""), "lock2fa@example.com")
 	before := len(app.Mails().SentTo("lock2fa@example.com"))
 
@@ -276,14 +271,14 @@ func TestSecurity_A07_TwoFactorAccountLimit(t *testing.T) {
 	passwordStep(attacker, "lock2fa@example.com", false).AssertRedirect("/two-factor-challenge")
 
 	for i := range 9 {
-		guess(ip(attacker, i+1), wrongCode(t, secret))
+		guess(attacker.WithIP(peer(i+1)), wrongCode(t, secret))
 	}
 
 	if n := len(app.Mails().SentTo("lock2fa@example.com")); n != before {
 		t.Fatalf("mails before the limit = %d, want %d", n, before)
 	}
 
-	guess(ip(attacker, 10), wrongCode(t, secret)).AssertRedirect("/login")
+	guess(attacker.WithIP(peer(10)), wrongCode(t, secret)).AssertRedirect("/login")
 
 	lockMails := app.Mails().SentTo("lock2fa@example.com")
 	if len(lockMails) != before+1 || !strings.Contains(lockMails[before].Subject, "wrong") {
@@ -292,28 +287,28 @@ func TestSecurity_A07_TwoFactorAccountLimit(t *testing.T) {
 
 	// A fresh challenge from a new address is refused even with the right code.
 	again := app.Client(t).Inertia("")
-	passwordStep(ip(again, 50), "lock2fa@example.com", false).AssertRedirect("/two-factor-challenge")
-	guess(ip(again, 51), totpCode(t, secret, 1)).AssertRedirect("/login")
-	ip(again, 52).Get("/dashboard").AssertRedirect("/login")
+	passwordStep(again.WithIP(peer(50)), "lock2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+	guess(again.WithIP(peer(51)), totpCode(t, secret, 1)).AssertRedirect("/login")
+	again.WithIP(peer(52)).Get("/dashboard").AssertRedirect("/login")
 }
 
 // Requests with no pending challenge and successful codes spend nothing.
 func TestTwoFactorAccountLimitCountsOnlyFailuresWithAPendingChallenge(t *testing.T) {
 	t.Parallel()
 
-	app := proxiedApp(t)
+	app := vukemtest.New(t, bootstrap.New)
 	secret, _ := enableTwoFactor(t, app, app.Client(t).Inertia(""), "count2fa@example.com")
 
 	for i := range 30 {
-		guess(ip(app.Client(t).Inertia(""), i+1), wrongCode(t, secret))
+		guess(app.Client(t).Inertia("").WithIP(peer(i+1)), wrongCode(t, secret))
 	}
 
 	user := app.Client(t).Inertia("")
 	passwordStep(user, "count2fa@example.com", false).AssertRedirect("/two-factor-challenge")
 
 	for i := range 9 {
-		guess(ip(user, 100+i), wrongCode(t, secret))
+		guess(user.WithIP(peer(100+i)), wrongCode(t, secret))
 	}
 
-	guess(ip(user, 120), totpCode(t, secret, 1)).AssertRedirect("/dashboard")
+	guess(user.WithIP(peer(120)), totpCode(t, secret, 1)).AssertRedirect("/dashboard")
 }
