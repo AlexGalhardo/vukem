@@ -213,6 +213,24 @@ api.Register(g, "POST /images/import", api.Op{Name: "images.import", MaxBody: 64
 
 The reader is limited by `Op.MaxBody`, else the router-wide limit, else `web.DefaultMaxBody`. A declared `Content-Length` over the limit answers `413` before your function runs; a body that crosses it later makes `Read` return the same `413` error, so return it. `Register` panics for a `RawBody` on `GET`, `HEAD` or `DELETE`, on a field without `json:"-"`, and on a second `RawBody`. The document describes the body as `application/octet-stream` (binary); the generated TypeScript and Go clients only read JSON bodies, so they omit it.
 
+### Checking input types in a test
+
+A `validate` tag the validator does not know (`gt=0` on a number) makes `Register` panic when the server boots, and every test that builds the app fails with it. Check the input types in one test instead, so the mistake points at the type:
+
+```go
+func TestInputTypes(t *testing.T) {
+	err := api.CheckInputs(
+		reflect.TypeFor[StoreTask](),
+		reflect.TypeFor[ListTasks](),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+```
+
+`CheckInputs` reports every bad type in one joined error, each naming its type. `Register` still panics; this is the same check without registering a route.
+
 ### Rules tags cannot express
 
 Some rules depend on a value only known at runtime (a list of allowed abilities) or compare two fields. A `validate` tag cannot say that. `api.RegisterWith` takes a [`z` schema](/docs/basics/validation) for the input instead of deriving one from the tags; binding, the `422` answer and the output work exactly as with `Register`:
