@@ -32,12 +32,13 @@ Exit code 1, nothing changed. With `-force` it runs. `migrate`, `migrate:rollbac
 Run every pending migration, in timestamp order, as one new batch.
 
 ```text
-vukem migrate [-allow-destructive]
+vukem migrate [-allow-destructive] [-allow-out-of-order]
 ```
 
 | Flag | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `-allow-destructive` | bool | `false` | In production, run pending migrations that drop a table or a column. Without it `migrate` refuses them and runs nothing. |
+| `-allow-out-of-order` | bool | `false` | Run pending migrations whose ID sorts before one already applied (usually from another branch). Without it `migrate` fails with the list and runs nothing. Migrations a vukem module ships under a fixed `_vukem_` ID never count as out of order. |
 
 No arguments.
 

@@ -160,9 +160,10 @@ func migrateCommands() []Command {
 
 // migrateRunCommand is "migrate": it runs the pending migrations. In
 // production it refuses a pending migration that drops a table or a column
-// unless --allow-destructive is given.
+// unless --allow-destructive is given, and a pending migration older than an
+// applied one unless --allow-out-of-order is given.
 func migrateRunCommand() Command {
-	var allow *bool
+	var allow, allowOrder *bool
 
 	return CommandFunc{
 		CommandName: "migrate",
@@ -172,6 +173,11 @@ func migrateRunCommand() Command {
 				"allow-destructive",
 				false,
 				"run pending migrations that drop tables or columns in production",
+			)
+			allowOrder = fs.Bool(
+				"allow-out-of-order",
+				false,
+				"run pending migrations whose ID sorts before an applied one",
 			)
 		},
 		Fn: func(ctx context.Context, app *App, _ []string) error {
@@ -184,6 +190,10 @@ func migrateRunCommand() Command {
 				if err := checkDestructive(ctx, app, m); err != nil {
 					return err
 				}
+			}
+
+			if *allowOrder {
+				m.AllowOutOfOrder()
 			}
 
 			ran, err := m.Up(ctx)
