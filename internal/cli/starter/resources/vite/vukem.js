@@ -17,7 +17,7 @@ export default function vukem({ input, publicDir = "resources/public", buildDir 
 
   return {
     name: "vukem",
-    config(_, { command, isSsrBuild }) {
+    config(userConfig, { command, isSsrBuild }) {
       // `vite build --ssr` (vukem build -ssr): the server bundle goes to
       // bootstrap/ssr, never into the public build dir, and leaves the client
       // build alone. @inertiajs/vite picks resources/js/ssr.(ts|tsx) as the
@@ -32,7 +32,9 @@ export default function vukem({ input, publicDir = "resources/public", buildDir 
         publicDir: false,
         build: {
           manifest: true,
-          outDir: path.join(publicDir, buildDir),
+          // `vite build --outDir <dir>` reaches this hook as userConfig, and a
+          // plugin's return value overrides the command line, so it is kept.
+          outDir: userConfig.build?.outDir ?? path.join(publicDir, buildDir),
           emptyOutDir: true,
           rollupOptions: { input },
         },
