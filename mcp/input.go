@@ -122,6 +122,7 @@ type state struct {
 	Key     string `json:"k"`
 	Digest  string `json:"h"`
 	Subject string `json:"s"`
+	Client  string `json:"c"`
 	Expires int64  `json:"e"`
 }
 
@@ -146,7 +147,7 @@ func (s *Server) sign(payload []byte) string {
 func (s *Server) sealState(c *call, key string, args any) string {
 	st := state{Method: c.msg.Method, Key: key, Digest: digest(args), Expires: time.Now().Add(s.cfg.StateTTL).Unix()}
 	if c.token != nil {
-		st.Subject = c.token.Subject
+		st.Subject, st.Client = c.token.Subject, c.token.ClientID
 	}
 
 	b, err := json.Marshal(st)
@@ -187,12 +188,13 @@ func (s *Server) openState(c *call, token, key string, args any) bool {
 		return false
 	}
 
-	subject := ""
+	subject, client := "", ""
 	if c.token != nil {
-		subject = c.token.Subject
+		subject, client = c.token.Subject, c.token.ClientID
 	}
 
-	return st.Method == c.msg.Method && st.Key == key && st.Digest == digest(args) && st.Subject == subject
+	return st.Method == c.msg.Method && st.Key == key && st.Digest == digest(args) &&
+		st.Subject == subject && st.Client == client
 }
 
 // withInputs attaches the answers of a retry to the context, but only when the
