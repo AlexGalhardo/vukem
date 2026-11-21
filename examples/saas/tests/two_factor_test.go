@@ -175,7 +175,8 @@ func TestTwoFactorRecoveryCodes(t *testing.T) {
 	owner.Get("/user/two-factor").AssertInertia("Auth/TwoFactor").PropEquals("recoveryCodesLeft", 6)
 
 	// Regenerating replaces every code.
-	owner.PostJSON("/user/two-factor/recovery-codes", map[string]any{"password": "correct horse battery"}).AssertRedirect("/user/two-factor")
+	owner.PostJSON("/user/two-factor/recovery-codes", map[string]any{"password": "correct horse battery"}).
+		AssertRedirect("/user/two-factor")
 
 	if fresh := recoveryCodes(t, owner); len(fresh) != 8 || fresh[0] == codes[2] {
 		t.Fatalf("regenerated codes = %v", fresh)
@@ -263,21 +264,16 @@ func TestTwoFactorRecoveryCodesNeedPassword(t *testing.T) {
 	}
 }
 
-// ip gives each request its own address, so the per-IP limit never applies.
-func ip(c *vukemtest.Client, n int) *vukemtest.Client {
-	return c.WithHeader("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", n))
-}
-
-func proxiedApp(t *testing.T) *vukemtest.App {
-	t.Helper()
-
-	return vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"TRUSTED_PROXIES": "0.0.0.0/0"}})
+// peer is the n-th client address; WithIP gives each request its own, so the
+// per-IP limit never applies.
+func peer(n int) string {
+	return fmt.Sprintf("203.0.113.%d", n)
 }
 
 func TestSecurity_A07_TwoFactorAccountLimit(t *testing.T) {
 	t.Parallel()
 
-	app := proxiedApp(t)
+	app := vukemtest.New(t, bootstrap.New)
 	secret, _ := enableTwoFactor(t, app, app.Client(t).Inertia(""), "lock2fa@example.com")
 
 	before := len(app.Mails().SentTo("lock2fa@example.com"))
@@ -286,7 +282,9 @@ func TestSecurity_A07_TwoFactorAccountLimit(t *testing.T) {
 	passwordStep(attacker, "lock2fa@example.com", false).AssertRedirect("/two-factor-challenge")
 
 	for i := range 9 {
-		ip(attacker, i+1).PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).AssertStatus(303)
+		attacker.WithIP(peer(i+1)).
+			PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).
+			AssertStatus(303)
 	}
 
 	if n := len(app.Mails().SentTo("lock2fa@example.com")); n != before {
@@ -294,7 +292,9 @@ func TestSecurity_A07_TwoFactorAccountLimit(t *testing.T) {
 	}
 
 	// The tenth failure, from yet another address, ends the challenge and warns the user.
-	ip(attacker, 10).PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).AssertRedirect("/login")
+	attacker.WithIP(peer(10)).
+		PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).
+		AssertRedirect("/login")
 
 	lockMails := app.Mails().SentTo("lock2fa@example.com")
 	if len(lockMails) != before+1 || !strings.Contains(lockMails[before].Subject, "wrong") {
@@ -303,29 +303,38 @@ func TestSecurity_A07_TwoFactorAccountLimit(t *testing.T) {
 
 	// A fresh challenge from a new address is refused even with the right code.
 	again := app.Client(t).Inertia("")
-	passwordStep(ip(again, 50), "lock2fa@example.com", false).AssertRedirect("/two-factor-challenge")
-	ip(again, 51).PostJSON("/two-factor-challenge", map[string]any{"code": totpCode(t, secret, 1)}).AssertRedirect("/login")
-	ip(again, 52).Get("/dashboard").AssertRedirect("/login")
+	passwordStep(again.WithIP(peer(50)), "lock2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+	again.WithIP(peer(51)).
+		PostJSON("/two-factor-challenge", map[string]any{"code": totpCode(t, secret, 1)}).
+		AssertRedirect("/login")
+	again.WithIP(peer(52)).Get("/dashboard").AssertRedirect("/login")
 }
 
 func TestTwoFactorAccountLimitCountsOnlyFailuresWithAPendingChallenge(t *testing.T) {
 	t.Parallel()
 
-	app := proxiedApp(t)
+	app := vukemtest.New(t, bootstrap.New)
 	secret, _ := enableTwoFactor(t, app, app.Client(t).Inertia(""), "count2fa@example.com")
 
 	// Requests with no pending challenge touch no account budget.
 	for i := range 30 {
-		ip(app.Client(t).Inertia(""), i+1).PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)})
+		app.Client(t).
+			Inertia("").
+			WithIP(peer(i+1)).
+			PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)})
 	}
 
 	user := app.Client(t).Inertia("")
 	passwordStep(user, "count2fa@example.com", false).AssertRedirect("/two-factor-challenge")
 
 	for i := range 9 {
-		ip(user, 100+i).PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).AssertStatus(303)
+		user.WithIP(peer(100+i)).
+			PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).
+			AssertStatus(303)
 	}
 
 	// Nine failures and one right code: successes are not counted.
-	ip(user, 120).PostJSON("/two-factor-challenge", map[string]any{"code": totpCode(t, secret, 1)}).AssertRedirect("/dashboard")
+	user.WithIP(peer(120)).
+		PostJSON("/two-factor-challenge", map[string]any{"code": totpCode(t, secret, 1)}).
+		AssertRedirect("/dashboard")
 }
