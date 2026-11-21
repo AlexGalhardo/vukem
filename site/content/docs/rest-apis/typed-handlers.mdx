@@ -189,6 +189,30 @@ Details that matter:
 Validation messages of typed handlers follow the request locale, like `web.Bind` and `web.Parse`: they validate through `web.ParseMap`, which uses the request's context (for the [i18n middleware](/docs/digging-deeper/localization#validation-messages)) and logger (the raw error of a failed `Refine` or `Custom` check is logged, never sent).
 </Callout>
 
+### Query parameters and raw bodies
+
+A `query:"name"` tag names the input key of a field the way `json` does, and tells the OpenAPI document the field is a **query parameter**: it is listed in `parameters` and left out of the JSON body schema. (On `GET`, `HEAD` and `DELETE` every field is already a query parameter.)
+
+To receive the bytes of a file instead of JSON, give `In` one `api.RawBody` field tagged `json:"-"`. The route does not decode the body; the handler reads it from the field, and the other fields come from the query string and the path:
+
+```go
+type ImportImage struct {
+	Format string      `query:"format" validate:"required,oneof=png jpeg"`
+	Body   api.RawBody `json:"-"`
+}
+
+api.Register(g, "POST /images/import", api.Op{Name: "images.import", MaxBody: 64 << 20},
+	func(c *web.Ctx, in ImportImage) (ImageJSON, error) {
+		data, err := io.ReadAll(in.Body) // over the limit: a 413 error, return it
+		if err != nil {
+			return ImageJSON{}, err
+		}
+		...
+	})
+```
+
+The reader is limited by `Op.MaxBody`, else the router-wide limit, else `web.DefaultMaxBody`. A declared `Content-Length` over the limit answers `413` before your function runs; a body that crosses it later makes `Read` return the same `413` error, so return it. `Register` panics for a `RawBody` on `GET`, `HEAD` or `DELETE`, on a field without `json:"-"`, and on a second `RawBody`. The document describes the body as `application/octet-stream` (binary); the generated TypeScript and Go clients only read JSON bodies, so they omit it.
+
 ### Rules tags cannot express
 
 Some rules depend on a value only known at runtime (a list of allowed abilities) or compare two fields. A `validate` tag cannot say that. `api.RegisterWith` takes a [`z` schema](/docs/basics/validation) for the input instead of deriving one from the tags; binding, the `422` answer and the output work exactly as with `Register`:
