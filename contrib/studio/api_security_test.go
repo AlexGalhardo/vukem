@@ -230,6 +230,15 @@ func TestSecurityAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("the console refuses a write however it is disguised", func(t *testing.T) {
+		t.Parallel()
+
+		for name, write := range map[string]bool{"--write on, write switch off": true, "no --write": false} {
+			sh, h := mixedStudio(t, write)
+			consoleRefusesDisguisedWrites(t, name, sh, h)
+		}
+	})
+
 	t.Run("errors never contain database text", func(t *testing.T) {
 		t.Parallel()
 
