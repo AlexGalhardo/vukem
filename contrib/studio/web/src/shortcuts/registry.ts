@@ -1,13 +1,13 @@
 /**
  * A small registry of Studio's keyboard shortcuts, written for this project.
  *
- * The rules are those of a careful web app: a shortcut is one plain key, never
- * a combination the browser or the system owns, and it never fires while the
- * person is typing in a field.
+ * The rules are those of a careful web app: a shortcut is one plain key (or two
+ * in a row, a chord such as "q n"), never a combination the browser or the
+ * system owns, and it never fires while the person is typing in a field.
  */
 
 export interface Shortcut {
-  /** The key as event.key reports it: "/", "r", "n", "?". */
+  /** The key as event.key reports it: "/", "r", "n", "?". Two keys in a row are written with a space: "q n". */
   key: string;
   /** What it does, for the help dialog. */
   description: string;
@@ -28,8 +28,18 @@ export interface KeyEventLike {
   target: unknown;
 }
 
+const chordPattern = /^(\S) (\S)$/;
+
+/** How long the second key of a chord may take. */
+export const chordTimeoutMs = 1500;
+
 /** Why a key cannot be a Studio shortcut, or null when it can. */
 export function refusal(key: string): string | null {
+  const chord = chordPattern.exec(key);
+  if (chord) {
+    return refusal(chord[1] as string) ?? refusal(chord[2] as string);
+  }
+
   const parts = key.split("+");
   const base = parts[parts.length - 1] ?? "";
   const mods = parts.slice(0, -1).map((m) => m.toLowerCase());
@@ -85,6 +95,9 @@ export interface Listed {
 
 export class ShortcutRegistry {
   private readonly shortcuts = new Map<string, Shortcut>();
+  private pending: { key: string; at: number } | null = null;
+
+  constructor(private readonly now: () => number = () => Date.now()) {}
 
   /** register adds a shortcut and returns the function that removes it. It throws for a refused key. */
   register(shortcut: Shortcut): () => void {
@@ -94,6 +107,13 @@ export class ShortcutRegistry {
     }
     if (this.shortcuts.has(shortcut.key)) {
       throw new Error(`shortcut "${shortcut.key}" is already taken`);
+    }
+    const chord = chordPattern.exec(shortcut.key);
+    if (chord && this.shortcuts.has(chord[1] as string)) {
+      throw new Error(`shortcut "${shortcut.key}" starts with "${chord[1]}", which is a shortcut by itself`);
+    }
+    if (!chord && [...this.shortcuts.keys()].some((k) => k.startsWith(shortcut.key + " "))) {
+      throw new Error(`shortcut "${shortcut.key}" is the first key of a chord`);
     }
     this.shortcuts.set(shortcut.key, shortcut);
     return () => {
@@ -125,13 +145,34 @@ export class ShortcutRegistry {
       event.defaultPrevented ||
       isTypingTarget(event.target)
     ) {
+      this.pending = null;
       return false;
     }
+
+    const now = this.now();
+    const first = this.pending !== null && now - this.pending.at <= chordTimeoutMs ? this.pending.key : null;
+    this.pending = null;
+
+    if (first !== null) {
+      const chord = this.shortcuts.get(`${first} ${event.key}`);
+      if (chord && chord.enabled?.() !== false) {
+        chord.run();
+        return true;
+      }
+    }
+
     const shortcut = this.shortcuts.get(event.key);
-    if (!shortcut || shortcut.enabled?.() === false) {
-      return false;
+    if (shortcut && shortcut.enabled?.() !== false) {
+      shortcut.run();
+      return true;
     }
-    shortcut.run();
-    return true;
+
+    // The first key of a chord is held for the second.
+    const starts = [...this.shortcuts.values()].some((s) => s.key.startsWith(event.key + " ") && s.enabled?.() !== false);
+    if (starts) {
+      this.pending = { key: event.key, at: now };
+      return true;
+    }
+    return false;
   }
 }

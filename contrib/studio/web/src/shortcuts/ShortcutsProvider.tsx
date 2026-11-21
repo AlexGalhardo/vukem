@@ -61,6 +61,44 @@ export const gridKeys: readonly Listed[] = [
   { key: "Shift+F10, Menu key", description: "Open the menu of the row or the column" },
 ];
 
+/** The keys of the SQL editor. It is a typing field, so only these chords apply inside it and none of the page shortcuts. */
+export const editorKeys: readonly Listed[] = [
+  { key: "Ctrl+Enter, Cmd+Enter", description: "Run the selected text, or the statement at the cursor" },
+  { key: "Ctrl+Shift+Enter, Cmd+Shift+Enter", description: "Run all the text (or the selection) as one statement" },
+  { key: "Ctrl+/, Cmd+/", description: "Comment or uncomment the lines" },
+  { key: "Ctrl+S, Cmd+S", description: "Save the query to the library (only while the focus is in the editor)" },
+  { key: "Ctrl+F, Cmd+F", description: "Find in the query (only while the focus is in the editor)" },
+  { key: "Ctrl+Space", description: "Show completions" },
+  { key: "Tab, Shift+Tab", description: "Indent and outdent, or accept a completion" },
+  { key: "Enter, Arrow Up, Arrow Down", description: "Accept or move through the completions" },
+  { key: "Escape", description: "Close the completions or the find bar; then Tab leaves the editor" },
+];
+
+/** The keys of the tab strip, when a tab has the focus. */
+export const tabKeys: readonly Listed[] = [
+  { key: "Arrow Left, Arrow Right", description: "Move to the previous or next tab" },
+  { key: "Home, End", description: "First and last tab" },
+  { key: "Alt+Arrow Left, Alt+Arrow Right", description: "Move the tab" },
+  { key: "Delete", description: "Close the tab (it asks when the query is not saved)" },
+];
+
+function KeyTable({ label, rows }: { label: string; rows: readonly Listed[] }): ReactElement {
+  return (
+    <table className="data-table" aria-label={label}>
+      <tbody>
+        {rows.map((s) => (
+          <tr key={s.key}>
+            <th scope="row">
+              <kbd>{s.key}</kbd>
+            </th>
+            <td>{s.description}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function HelpDialog({ registry, open, onClose }: { registry: ShortcutRegistry; open: boolean; onClose: () => void }): ReactElement {
   const dialog = useRef<HTMLDialogElement>(null);
   const [listed, setListed] = useState<Listed[]>([]);
@@ -95,7 +133,7 @@ function HelpDialog({ registry, open, onClose }: { registry: ShortcutRegistry; o
           {listed.map((s) => (
             <tr key={s.key}>
               <th scope="row">
-                <kbd>{s.key}</kbd>
+                <kbd>{s.key.replace(" ", " then ")}</kbd>
               </th>
               <td>{s.description}</td>
             </tr>
@@ -103,18 +141,11 @@ function HelpDialog({ registry, open, onClose }: { registry: ShortcutRegistry; o
         </tbody>
       </table>
       <h3 className="dialog-subtitle">In the grid</h3>
-      <table className="data-table" aria-label="Grid keys">
-        <tbody>
-          {gridKeys.map((s) => (
-            <tr key={s.key}>
-              <th scope="row">
-                <kbd>{s.key}</kbd>
-              </th>
-              <td>{s.description}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <KeyTable label="Grid keys" rows={gridKeys} />
+      <h3 className="dialog-subtitle">In the SQL editor</h3>
+      <KeyTable label="Editor keys" rows={editorKeys} />
+      <h3 className="dialog-subtitle">In the tab strip</h3>
+      <KeyTable label="Tab keys" rows={tabKeys} />
     </dialog>
   );
 }
