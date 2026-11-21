@@ -67,6 +67,7 @@ func (s *Studio) apiSQLRoutes() {
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/schema", s.apiSchema)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables", s.apiTables)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/create", s.apiCreate)
+	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/export", s.exportRows)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}", s.apiTable)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/rows", s.apiRows)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/count", s.apiCount)
