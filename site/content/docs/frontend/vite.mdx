@@ -91,7 +91,7 @@ Edit `resources/css/app.css` and the browser updates without a reload.
 | --- | --- |
 | `package.json` | `dev` (`vite`) and `build` (`vite build`) scripts; pinned `vite`, `tailwindcss` and `@tailwindcss/vite` |
 | `vite.config.ts` | Loads the Tailwind plugin and the Vukem plugin with the two entries |
-| `resources/vite/vukem.js` | The Vukem Vite plugin (your code: edit it freely) |
+| `resources/vite/vukem.js` | The Vukem Vite plugin (your code: edit it freely). Builds into `resources/public/build` unless `build.outDir` or `vite build --outDir <dir>` is set |
 | `resources/css/app.css` | `@import "tailwindcss"` plus the starter styles |
 | `resources/js/app.ts` | Your scripts (the HTMX starter puts the upload progress code here) |
 
