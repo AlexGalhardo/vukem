@@ -686,3 +686,41 @@ func TestIntegrationDatabaseErrorsAreMasked(t *testing.T) {
 		}
 	})
 }
+
+func TestIntegrationCatalogIndexes(t *testing.T) {
+	eachServer(t, func(t *testing.T, e *itEnv) {
+		t.Helper()
+
+		e.exec(t, `CREATE UNIQUE INDEX uq_`+e.suffix+` ON `+e.items+` (name)`)
+		e.exec(t, `CREATE INDEX cx_`+e.suffix+` ON `+e.items+` (n, name)`)
+
+		tbl, err := e.src.Table(t.Context(), e.items)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(tbl.Indexes) == 0 || !tbl.Indexes[0].Primary || cmp.Diff([]string{"id"}, tbl.Indexes[0].Columns) != "" {
+			t.Fatalf("indexes = %+v, want the primary key first", tbl.Indexes)
+		}
+
+		var unique, composite bool
+
+		for _, ix := range tbl.Indexes[1:] {
+			unique = unique || (ix.Unique && cmp.Diff([]string{"name"}, ix.Columns) == "")
+			composite = composite || (!ix.Unique && cmp.Diff([]string{"n", "name"}, ix.Columns) == "")
+		}
+
+		if !unique || !composite {
+			t.Errorf("indexes = %+v, want a unique one on name and a composite one on n, name", tbl.Indexes)
+		}
+
+		if e.fam == "mysql" {
+			text, ok, err := e.src.CreateStatement(t.Context(), e.items)
+			if err != nil || !ok || !strings.Contains(text, "CREATE TABLE") {
+				t.Errorf("CreateStatement = %q, %v, %v", text, ok, err)
+			}
+		} else if _, ok, _ := e.src.CreateStatement(t.Context(), e.items); ok {
+			t.Error("PostgreSQL reports a CREATE statement; Studio offers none there")
+		}
+	})
+}

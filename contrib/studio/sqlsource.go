@@ -33,6 +33,15 @@ type SQLSource interface {
 	Source
 	Tables(ctx context.Context) ([]Table, error)
 	Table(ctx context.Context, name string) (Table, error)
+	// Schema is every table with its columns, keys, foreign keys and indexes,
+	// from the catalog alone (no row counts, no request text).
+	Schema(ctx context.Context) ([]Table, error)
+	// CreateStatement is the CREATE statement the database reports for a
+	// table through a read-only query. The second result is false where the
+	// database offers none (only SQLite and MySQL do).
+	CreateStatement(ctx context.Context, table string) (string, bool, error)
+	// CanShowCreate says whether CreateStatement can ever answer for this source.
+	CanShowCreate() bool
 	Rows(ctx context.Context, q RowQuery) (RowPage, error)
 	Row(ctx context.Context, table string, key []string) (RowDetail, error)
 	// Query is the console: one statement, read-only unless write is true.

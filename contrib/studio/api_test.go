@@ -524,3 +524,114 @@ func TestAPIWriteAudited(t *testing.T) {
 		t.Errorf("insert of an unknown column = %d, want 422", rec.Code)
 	}
 }
+
+func schemaStudio(t *testing.T) (*Studio, *http.Cookie) {
+	t.Helper()
+
+	h := newSQLHarness(t)
+
+	for _, q := range []string{
+		`CREATE TABLE owners (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`,
+		`CREATE TABLE pets (id INTEGER PRIMARY KEY, owner_id INTEGER REFERENCES owners (id), tag TEXT)`,
+		`CREATE UNIQUE INDEX pets_tag ON pets (tag)`,
+		`CREATE INDEX pets_owner_tag ON pets (owner_id, tag)`,
+	} {
+		if _, err := h.db.ExecContext(t.Context(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	src := NewSQL("db", "sqlite file", h.db, schemaCatalog{h.db})
+
+	s, err := New(Config{Sources: []Source{src}, Version: "t", Log: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return s, session(t, s)
+}
+
+func TestAPISchema(t *testing.T) {
+	t.Parallel()
+
+	s, c := schemaStudio(t)
+
+	rec := apiGet(s, c, "/api/v1/sources/db/schema")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("schema = %d %s", rec.Code, rec.Body)
+	}
+
+	var got struct {
+		CanShowCreate bool `json:"canShowCreate"`
+		Tables        []struct {
+			Name        string `json:"name"`
+			PrimaryKey  []string
+			ForeignKeys []struct {
+				Columns    []string `json:"columns"`
+				RefTable   string   `json:"refTable"`
+				RefColumns []string `json:"refColumns"`
+			} `json:"foreignKeys"`
+			Indexes []struct {
+				Name    string   `json:"name"`
+				Columns []string `json:"columns"`
+				Unique  bool     `json:"unique"`
+				Primary bool     `json:"primary"`
+			} `json:"indexes"`
+		} `json:"tables"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.CanShowCreate {
+		t.Error("a SQLite source reports canShowCreate false")
+	}
+
+	byName := map[string]int{}
+	for i, tb := range got.Tables {
+		byName[tb.Name] = i
+	}
+
+	pets := got.Tables[byName["pets"]]
+	if len(pets.ForeignKeys) != 1 || pets.ForeignKeys[0].RefTable != "owners" || pets.ForeignKeys[0].RefColumns[0] != "id" {
+		t.Errorf("pets foreign keys = %+v", pets.ForeignKeys)
+	}
+
+	if len(pets.Indexes) != 3 || !pets.Indexes[0].Primary || pets.Indexes[0].Columns[0] != "id" {
+		t.Fatalf("pets indexes = %+v, want the primary key first and two more", pets.Indexes)
+	}
+
+	if cmp.Diff([]string{"owner_id", "tag"}, pets.Indexes[1].Columns) != "" || pets.Indexes[1].Unique {
+		t.Errorf("composite index = %+v, want owner_id, tag and not unique", pets.Indexes[1])
+	}
+
+	if !pets.Indexes[2].Unique || pets.Indexes[2].Name != "pets_tag" {
+		t.Errorf("unique index = %+v", pets.Indexes[2])
+	}
+
+	if rec := apiGet(s, c, "/api/v1/sources/nope/schema"); rec.Code != http.StatusNotFound {
+		t.Errorf("schema of an unknown source = %d, want 404", rec.Code)
+	}
+}
+
+func TestAPISchemaCreateStatement(t *testing.T) {
+	t.Parallel()
+
+	s, c := schemaStudio(t)
+
+	rec := apiGet(s, c, "/api/v1/sources/db/tables/pets/create")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "CREATE TABLE") {
+		t.Errorf("create of pets = %d %s, want the statement", rec.Code, rec.Body)
+	}
+
+	for _, target := range []string{
+		"/api/v1/sources/db/tables/nope/create",
+		"/api/v1/sources/db/tables/" + url.PathEscape("pets; DROP TABLE owners") + "/create",
+		"/api/v1/sources/nope/tables/pets/create",
+	} {
+		if rec := apiGet(s, c, target); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", target, rec.Code)
+		}
+	}
+}
