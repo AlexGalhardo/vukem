@@ -17,7 +17,7 @@ cd money
 vukem serve
 ```
 
-Open http://localhost:3000. The CLI generates APP_KEY and the initial seed runs
+Open `http://localhost:3000`. The CLI generates APP_KEY and the initial seed runs
 migrations. Without `--seed`, generation creates no database records; run the
 following when ready:
 
@@ -74,7 +74,7 @@ instances must share their OAuth state cache (database or Redis).
 Every finance app includes `Dockerfile`, `.dockerignore` and `compose.yaml`.
 The image needs the JavaScript lockfile from `{{.PM}} install`. Compose publishes the app on 127.0.0.1:3000,
 keeps storage in the `storage` volume, and starts Mailpit at
-http://localhost:8025. PostgreSQL is defined for an optional switch; the
+`http://localhost:8025`. PostgreSQL is defined for an optional switch; the
 default database is the SQLite file in that storage volume.
 
 Run these commands in the generated project. Keep the generated `.env` and
@@ -87,9 +87,9 @@ cp .env app.env
 chmod 600 app.env
 ```
 
-Edit `app.env` to set APP_ENV=development, APP_URL=http://localhost:3000,
-HOST=0.0.0.0, PORT=3000, MAIL_MAILER=log, ADMIN_EMAILS=admin@example.test,
-DATABASE_URL=file:storage/database.sqlite, and optionally FINANCE_ADMIN_EMAIL and
+Edit `app.env` to set `APP_ENV=development`, `APP_URL=http://localhost:3000`,
+`HOST=0.0.0.0`, `PORT=3000`, `MAIL_MAILER=log`, `ADMIN_EMAILS=admin@example.test`,
+`DATABASE_URL=file:storage/database.sqlite`, and optionally FINANCE_ADMIN_EMAIL and
 FINANCE_ADMIN_PASSWORD. Add `app.env` to `.gitignore` and `.dockerignore` before
 building; secrets are passed only at runtime. The following uses the persistent
 storage volume and the same environment for migration, seeding and serving:
@@ -109,9 +109,9 @@ docker run --rm --entrypoint /bin/sh -v money-storage:/app/storage money-local -
 docker run --rm --name money-local -p 127.0.0.1:3000:3000 --env-file app.env -v money-storage:/app/storage money-local
 ```
 
-Open http://localhost:3000. `docker compose up --build` is also available when
+Open `http://localhost:3000`. `docker compose up --build` is also available when
 compose.yaml was generated: it reads `.env`, migrates automatically and provides
-Mailpit at http://localhost:8025. Seed that stack with
+Mailpit at `http://localhost:8025`. Seed that stack with
 `docker compose exec app /app/app db:seed FinanceAdminSeeder FinanceDemoSeeder`.
 Compose does not seed automatically; read the generated password with
 `docker compose exec app sh -c "cat storage/finance-admin-*.txt"`, then sign in
