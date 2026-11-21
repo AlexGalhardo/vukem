@@ -335,6 +335,24 @@ func TestUnsetAppEnvRefusalSaysSo(t *testing.T) {
 	}
 }
 
+// TestProductionRefusalStillExitsTwo pins the refusal that also guards the API:
+// its routes only exist once the server starts, which it does not in
+// production without --allow-production, with or without --write.
+func TestProductionRefusalStillExitsTwo(t *testing.T) {
+	t.Parallel()
+
+	dir := project(t, "production")
+
+	for _, args := range [][]string{
+		{"--dir", dir, "--no-open"},
+		{"--dir", dir, "--no-open", "--write"},
+	} {
+		if code := run(t.Context(), args, io.Discard, io.Discard, noEnv); code != 2 {
+			t.Errorf("run(%v) = %d, want 2", args, code)
+		}
+	}
+}
+
 func TestVersionComesFromTheBuild(t *testing.T) {
 	t.Parallel()
 
