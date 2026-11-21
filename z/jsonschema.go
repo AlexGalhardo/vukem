@@ -50,6 +50,14 @@ func (o *opts[T]) setKW(k string, v any) {
 func (o *opts[T]) decorate(m map[string]any, typ string) map[string]any {
 	maps.Copy(m, o.kw)
 
+	for k, v := range m {
+		// A keyword that depends on the clock is stored as a function and read
+		// at each export.
+		if f, ok := v.(func() any); ok {
+			m[k] = f()
+		}
+	}
+
 	if typ != "" {
 		m["type"] = typ
 		if o.nullable {

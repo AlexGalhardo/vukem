@@ -198,6 +198,29 @@ func (s StringSchema) ISODate() StringSchema {
 	}, nil)
 }
 
+// Date is the short name of [StringSchema.ISODate]: a real calendar date,
+// "2026-02-28" (YYYY-MM-DD), exported as JSON Schema format "date".
+func (s StringSchema) Date() StringSchema { return s.ISODate() }
+
+// MinDate requires a date (YYYY-MM-DD) on or after the day of now(), read at
+// each validation, so "today or later" is MinDate(time.Now). It compares the
+// calendar day in the zone of the time now returns. A value that is not a
+// date is left to Date, which reports it. The schema export carries the day
+// as the "x-minDate" keyword, read when JSONSchema runs, since JSON Schema
+// has no keyword for it.
+func (s StringSchema) MinDate(now func() time.Time) StringSchema {
+	return s.kw("x-minDate", func() any { return now().Format(time.DateOnly) }).
+		with(nil, func(o *opts[string], c *pctx, path, v string) {
+			if _, err := time.Parse(time.DateOnly, v); err != nil {
+				return
+			}
+
+			if floor := now().Format(time.DateOnly); v < floor {
+				o.issue(c, path, CodeTooSmall, "too_small.date_inclusive", map[string]any{"min": floor})
+			}
+		})
+}
+
 // ISOTime requires a time of day, "15:04:05", with optional fractional
 // seconds, and no zone.
 func (s StringSchema) ISOTime() StringSchema {
