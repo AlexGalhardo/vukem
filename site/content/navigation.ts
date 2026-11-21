@@ -121,6 +121,7 @@ export const navigation: NavCategory[] = [
       "devtools",
       "opentelemetry",
       "telegram-logging",
+      "telegram-bot",
     ],
   },
   {

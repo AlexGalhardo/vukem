@@ -1,0 +1,113 @@
+---
+title: A Telegram bot
+description: Receive Telegram updates by webhook or long polling, route commands, messages and button presses, and keep conversation state with the contrib/telegram module.
+---
+
+A Telegram bot is a small program that Telegram talks to: users send it messages, and it answers. The `contrib/telegram` module is the receiving side of that. It is separate from [Telegram logging](/docs/digging-deeper/telegram-logging), which only sends log lines.
+
+You will learn how to:
+
+- create a bot and receive its updates by webhook or by long polling
+- route commands, messages and button presses
+- keep a conversation going over several messages
+- keep the bot token out of logs and errors
+
+## The idea
+
+The module is its own Go module, so apps that do not need a bot do not download it:
+
+```sh
+go get github.com/AlexGalhardo/vukem/contrib/telegram
+```
+
+An **update** is one thing that happened: a message, an edited message or a press on an inline button. You give the module a `Router`; it hands the router every update, from either a webhook (Telegram calls your server) or long polling (your bot asks Telegram).
+
+## Quick start
+
+```go title="app/bot/bot.go"
+package bot
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/contrib/telegram"
+)
+
+func New(token config.Secret) (*telegram.Bot, *telegram.Router, error) {
+	b, err := telegram.New(telegram.Config{Token: token})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	r := telegram.NewRouter()
+	r.Use(telegram.Conversations(telegram.NewMemoryStore(), nil))
+	r.Command("start", func(ctx context.Context, c *telegram.Context) error {
+		return c.Reply(ctx, "Hello, "+c.User().FirstName)
+	})
+
+	return b, r, nil
+}
+```
+
+For a webhook, mount the handler and register its URL:
+
+```go title="routes/web.go"
+secret := config.NewSecret(os.Getenv("TELEGRAM_WEBHOOK_SECRET"))
+
+h, err := b.WebhookHandler(r, secret, telegram.WebhookOptions{})
+if err != nil {
+	return err
+}
+
+app.Router.Handle("POST /telegram/webhook", h)
+err = b.SetWebhook(ctx, "https://example.com/telegram/webhook", secret)
+```
+
+For long polling, which needs no public URL, run `b.Poll(ctx, r, telegram.PollOptions{})` in a command and call `b.DeleteWebhook(ctx)` first.
+
+## Routing
+
+| Registration | Matches |
+| --- | --- |
+| `r.Command("pay", h)` | `/pay` and `/pay@yourbot`, with the words after it in `c.Args` |
+| `r.Callback("buy:", h)` | a button press whose data starts with `buy:` |
+| `r.Step("amount", h)` | a text message while the conversation is at that step |
+| `r.Message(h)` | any other text message |
+| `r.Fallback(h)` | everything else, including a command for another bot |
+
+Set `r.Username` to the bot username so `/start@otherbot` in a group is left alone. Middleware is `func(Handler) Handler`; the first added runs first. A panic in a handler is returned as an error and never crosses the router.
+
+## Conversations
+
+`telegram.Conversations(store, key)` loads the state of the sender before the handler and saves it after, when the handler called `c.SetState` or `c.ClearState`. The default key is the chat and the user, so two people in one group keep separate conversations.
+
+`MemoryStore` expires entries after 24 hours and forgets everything on restart. Implement `telegram.Store` (`Load`, `Save`, `Delete`) over your database or Redis for state that must survive a restart or be shared by several instances.
+
+## Webhook security
+
+- The secret token is required, 1 to 256 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. `WebhookHandler` returns an error for an empty or invalid one, so a webhook is never open by mistake.
+- It is compared in constant time before the body is read; a missing or wrong one is a 401.
+- The body is limited (1 MiB by default, 413 beyond), and only `application/json` is accepted.
+- A valid update is always answered 200, even when your handler fails, so Telegram does not retry in a loop. The failure is logged, never sent back.
+
+## Errors, limits and the token
+
+A Bot API error is an `*telegram.APIError` with the code and description. On 429 the call waits the `retry_after` Telegram asks for and retries (`Config.Retries`, default 2; a wait longer than `MaxRetryAfter`, 30 seconds, is returned instead). Poll failures back off with jitter up to 30 seconds, and a 401 stops the loop because retrying cannot help.
+
+The token is a `config.Secret`. The Bot API puts it in the URL, so every error and log line from this module has it removed, including transport errors that print the URL. Responses are limited to 4 MiB.
+
+## Testing
+
+Point `Config.BaseURL` at an `httptest.Server` that answers like the Bot API, and set `Config.Sleep` to skip real waits. Never test against the real API.
+
+## Common mistakes
+
+Wrong: setting a webhook and polling at the same time. Telegram refuses `getUpdates` while a webhook is set; call `DeleteWebhook` first.
+
+Wrong: doing slow work in a handler on the webhook path. The handler has 30 seconds (`WebhookOptions.HandlerTimeout`); queue longer jobs.
+
+## Next steps
+
+- [Telegram logging](/docs/digging-deeper/telegram-logging)
+- [Webhooks](/docs/digging-deeper/webhooks)
