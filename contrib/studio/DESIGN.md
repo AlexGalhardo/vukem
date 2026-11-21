@@ -140,3 +140,75 @@ no dependency: there is no editor library.
   `sqlstate_*`, `canceled`, `timeout`), never by the driver's text, which can
   quote the very token that broke the statement. The audit of a write records
   only the size of the statement.
+
+## The schema view
+
+The schema of a SQL source (`web/src/schema/`) is a left list of tables with a
+filter box, a detail pane for the selected table (columns with type, null,
+default and key badges; indexes in order with their unique, primary and
+composite kind; foreign keys; "referenced by"), the relationship diagram and
+the same relationships as a table. It reads `GET /schema`, which comes from the
+database catalog alone.
+
+- **The layout is a pure function** (`layout.ts`): the same schema always draws
+  the same picture. A table sits one layer to the right of the deepest table it
+  references; a foreign key that would close a cycle is drawn from the right
+  side of both tables; inside a layer the order is improved by the barycenter of
+  the neighbours in a fixed number of sweeps, ties breaking on position and
+  name; a layer longer than 16 tables is split in columns. Edges are
+  orthogonal, with plain arrow heads and a lane in the gap for each, so two
+  edges do not share a vertical run. No force simulation, no randomness, no
+  clock. 300 tables lay out in a few milliseconds (a test holds it under 500).
+- **Pan and zoom** (`viewport.ts`) never hijack the page: drag or the arrow keys
+  to pan, `+`, `-` and `0` or the buttons to zoom and fit; the mouse wheel
+  scrolls the page. Every table is a focusable link (Enter opens it in a tab);
+  focusing one highlights its neighbours and dims the rest.
+- **A picture is not accessible**, so the Relationships table lists every
+  foreign key (from table, columns, to table, columns), the diagram has a text
+  description, and it can be hidden. It draws at most 300 tables; a switch keeps
+  only the selected table and its neighbours.
+- **CREATE statement**: offered only where the database reports it through a
+  read-only query (SQLite, MySQL); shown in a read-only block that can be copied.
+
+## MongoDB
+
+A collection (`web/src/mongo/`) is a virtualized list of documents read by
+cursor (`_id`) or, sorted by a field, by page up to the server's cap, which the
+page says in words. The Table view infers its columns from the top-level fields
+of the first 100 documents and shows nested values as compact JSON; the JSON
+view is one summary column. The filter bar takes a field path, an operator from
+the fixed table and a scalar: the server builds the MongoDB filter, and nothing
+typed is ever an operator or an object. A document opens in a drawer as a
+collapsible tree or as raw Extended JSON.
+
+The console statement is one JSON object, `{"collection": ..., "filter": ...}`
+for a find or `{"collection": ..., "pipeline": [...]}` for an aggregate. The
+editor is the same real-textarea editor with a JSON language: highlighting,
+bracket matching, completion of collection names and stage names from lists the
+page has. The text is checked as JSON before it is sent, and `$where`,
+`$function`, `$accumulator`, `$out` and `$merge` are refused early with a
+reason; the server checks again and does not depend on that. With `--write`,
+insert, replace and delete exist; replace and delete ask for the `_id` to be
+typed, and an aggregate that writes asks for the source name.
+
+## Redis
+
+Keys (`web/src/redis/`) are listed with `SCAN`, one step at a time: "Load more"
+takes the next step until the cursor comes back as 0, a repeated key is shown
+once, and a note says in plain words that `SCAN` is incremental and can miss
+keys created while it runs. A key opens by its type through the same grid: a
+string as text or as a hex dump when it is binary, a hash as field and value, a
+list as index and value, a set as members, a sorted set as member and score, a
+stream as id and fields, a page of 200 at a time with a visible count. With
+`--write` a string or a hash field is edited after a confirmation, the expiry
+is set or removed, and a key is deleted only after its name is typed. The
+console takes a fixed list of commands, completes them, refuses the rest with
+the server's own message, and shows a reply as text or as a table.
+
+## One interface
+
+The old server-rendered pages are gone: `/` redirects to `/ui/`, and every path
+of the old interface answers 404 behind the same guards. The consoles of the
+three kinds of source share the tab strip, the runner (a `Protocol` says which
+route a statement goes to and how its answer becomes a result), the result
+view, the history and the confirmation dialogs.

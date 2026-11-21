@@ -96,7 +96,7 @@ test("the root and the old pages lead to the interface or to 404", async ({ page
   await expect(page).toHaveURL(`${studio.origin}/ui/`);
   await expect(page.getByRole("heading", { name: "Sources" })).toBeVisible();
 
-  for (const path of ["/s/db/t/users", "/s/db/console", "/assets/htmx.min.js", "/events"]) {
+  for (const path of ["/s/db/t/users", "/s/db/console", "/assets/app.js", "/events"]) {
     const res = await page.request.get(`${studio.origin}${path}`);
     expect(res.status()).toBe(404);
   }

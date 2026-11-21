@@ -1,6 +1,6 @@
 # Parity ledger
 
-The old htmx pages were removed in favour of the React interface. This ledger
+The old server-rendered pages were removed in favour of the React interface. This ledger
 lists every capability the old pages had, and the tests that cover it now, so
 that deleting the old pages and their tests lost no coverage. `go run
 ./scripts/paritycheck PARITY.md` (from `contrib/studio`) fails when a row names

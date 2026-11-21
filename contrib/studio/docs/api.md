@@ -62,6 +62,9 @@ access) and changes at every start, so history kept under it does not outlive th
 | Route | Returns |
 | --- | --- |
 | `GET /sources/{source}/tables` | `{ tables: [{ name, rowEstimate, primaryKey }] }`; `rowEstimate` is `-1` when unknown |
+| `GET /sources/{source}/schema` | `{ tables: [{ name, columns, primaryKey, foreignKeys, indexes }], canShowCreate }` from the database catalog alone: `indexes` is `[{ name, columns, unique, primary, expression? }]` (the primary key first, columns in index order, `name` empty for the index a database makes for a `UNIQUE` column), `foreignKeys` is `[{ columns, refTable, refColumns }]`; `canShowCreate` is true on SQLite and MySQL |
+| `GET /sources/{source}/tables/{table}/create` | `{ statement }`, the `CREATE` statement the database reports through a read-only query (SQLite `sqlite_master`, MySQL `SHOW CREATE TABLE`); `404` for an unknown table and where the database offers none |
+| `GET /sources/{source}/tables/{table}/export` | the rows of the view as a download: JSON Lines, or CSV with `format=csv` (`format=json` is JSON Lines), for the same `filter`, `sort` and `desc` parameters; at most 100,000 rows, and the trailer `X-Studio-Truncated` says whether it was cut; a CSV cell that starts with `=`, `+`, `-` or `@` gets a leading quote |
 | `GET /sources/{source}/tables/{table}` | `{ name, columns: [{ name, type, nullable, default? }], primaryKey, foreignKeys }` |
 | `GET /sources/{source}/tables/{table}/rows` | `{ columns, rows, next?, hasMore }` |
 | `GET /sources/{source}/tables/{table}/rows/{key}` | `{ columns, cells }`, values in full |
@@ -100,6 +103,7 @@ plan), `ATTACH`, `VACUUM`, and a `PRAGMA` that sets a value are all refused with
 | `GET /sources/{source}/collections` | `{ collections: [{ name, estimate }] }` |
 | `GET /sources/{source}/collections/{collection}/documents` | `{ docs: [{ id, json }], next?, hasMore }` |
 | `GET /sources/{source}/collections/{collection}/documents/{id}` | `{ id, json }` |
+| `GET /sources/{source}/collections/{collection}/export` | the documents of the view as JSON Lines (`format=json`), for the same `filter` and `desc` parameters, with the same cap and trailer as the table export |
 | `POST /sources/{source}/find` | the documents shape, for `{ collection, filter }` (Extended JSON) |
 | `POST /sources/{source}/aggregate` | the documents shape, for `{ collection, pipeline }` |
 
@@ -111,7 +115,7 @@ The documents route takes the same `filter`, `sort`, `desc`, `after`, `page` and
 | Route | Returns |
 | --- | --- |
 | `GET /sources/{source}/keys` | `{ keys: [{ key, type, ttlSeconds }], cursor? }` for `match`, `cursor`, `count` |
-| `GET /sources/{source}/keys/{key...}` | `{ key, type, ttlSeconds, size, fields, more }` for `page` |
+| `GET /sources/{source}/keys/{key...}` | `{ key, type, ttlSeconds, size, fields, more, binary? }` for `page`; `fields` is pairs (field and value, index and value, member and score, id and body) and `binary` is true for a string that is not valid UTF-8, whose value then shows each byte that is not printable ASCII as `\xNN` |
 | `POST /sources/{source}/command` | `{ result }` for `{ line }`, an allowed command |
 
 Keys are listed with `SCAN`, never `KEYS`. `cursor` is a string, absent when the scan is complete.

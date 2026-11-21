@@ -1,5 +1,5 @@
 // Command paritycheck checks PARITY.md, the ledger that maps every capability
-// of the old htmx pages to the tests that cover it now, so that deleting the
+// of the old server-rendered pages to the tests that cover it now, so that deleting the
 // old pages and their tests lost no coverage.
 //
 // Run it from contrib/studio:
