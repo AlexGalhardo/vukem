@@ -18,6 +18,7 @@ import { keyParts, packKey, unpackKey } from "../grid/rowKey";
 import { useGridData } from "../grid/useGridData";
 import type { Density } from "../grid/virtual";
 import { Link, replaceSearch, useSearch } from "../lib/history";
+import { useShortcut } from "../shortcuts/ShortcutsProvider";
 
 const densityKey = "studio.density";
 const densities: readonly Density[] = ["compact", "normal", "comfortable"];
@@ -100,6 +101,20 @@ function TableData({
   const { message, announce } = useAnnouncer();
   const filterValue = useRef<HTMLInputElement>(null);
   const [filterRequest, setFilterRequest] = useState<FilterRequest | null>(null);
+
+  useShortcut({
+    key: "/",
+    description: "Filter: go to the filter bar",
+    run: () => (filterValue.current ?? document.getElementById("filter-column"))?.focus(),
+  });
+  useShortcut({
+    key: "r",
+    description: "Refresh the rows on screen",
+    run: () => {
+      data.refresh();
+      announce("Refreshing the rows on screen.");
+    },
+  });
 
   // The open row lives in the address so it can be linked; changing the view keeps it.
   const setView = (next: ViewState): void => replaceSearch(viewToSearch(next, open));
