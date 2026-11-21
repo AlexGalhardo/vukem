@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "invalid_input",
+    "message": "a filter must look like column:op:value, for example qty:gt:5"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "columns": [
+    {
+      "name": "id",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "nullable": false
+    },
+    {
+      "name": "bio",
+      "type": "text",
+      "nullable": true
+    }
+  ],
+  "hasMore": false,
+  "rows": [
+    [
+      {
+        "t": "1",
+        "l": true
+      },
+      {
+        "t": "ada"
+      },
+      {
+        "t": "",
+        "n": true
+      }
+    ],
+    [
+      {
+        "t": "4",
+        "l": true
+      },
+      {
+        "t": "a!b"
+      },
+      {
+        "t": "\u003cscript\u003ealert(1)\u003c/script\u003e"
+      }
+    ]
+  ]
+}

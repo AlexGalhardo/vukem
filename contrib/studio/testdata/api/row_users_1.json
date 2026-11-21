@@ -1,0 +1,32 @@
+{
+  "cells": [
+    {
+      "t": "1",
+      "l": true
+    },
+    {
+      "t": "ada"
+    },
+    {
+      "t": "",
+      "n": true
+    }
+  ],
+  "columns": [
+    {
+      "name": "id",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "nullable": false
+    },
+    {
+      "name": "bio",
+      "type": "text",
+      "nullable": true
+    }
+  ]
+}

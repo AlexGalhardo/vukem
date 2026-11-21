@@ -1,0 +1,45 @@
+{
+  "tables": [
+    {
+      "name": "users",
+      "rowEstimate": 5,
+      "primaryKey": [
+        "id"
+      ]
+    },
+    {
+      "name": "pairs",
+      "rowEstimate": 3,
+      "primaryKey": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "name": "log",
+      "rowEstimate": 1,
+      "primaryKey": []
+    },
+    {
+      "name": "items",
+      "rowEstimate": 1,
+      "primaryKey": [
+        "id"
+      ]
+    },
+    {
+      "name": "owners",
+      "rowEstimate": 1,
+      "primaryKey": [
+        "id"
+      ]
+    },
+    {
+      "name": "pets",
+      "rowEstimate": 1,
+      "primaryKey": [
+        "id"
+      ]
+    }
+  ]
+}

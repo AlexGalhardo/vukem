@@ -1,0 +1,13 @@
+{
+  "references": [
+    {
+      "table": "pets",
+      "columns": [
+        "owner_id"
+      ],
+      "refColumns": [
+        "id"
+      ]
+    }
+  ]
+}

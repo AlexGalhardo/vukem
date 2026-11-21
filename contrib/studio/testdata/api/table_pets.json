@@ -1,0 +1,29 @@
+{
+  "columns": [
+    {
+      "name": "id",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "owner_id",
+      "type": "integer",
+      "nullable": true
+    }
+  ],
+  "foreignKeys": [
+    {
+      "columns": [
+        "owner_id"
+      ],
+      "refTable": "owners",
+      "refColumns": [
+        "id"
+      ]
+    }
+  ],
+  "name": "pets",
+  "primaryKey": [
+    "id"
+  ]
+}
