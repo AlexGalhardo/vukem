@@ -148,7 +148,7 @@ func listSQLiteTables(ctx context.Context, ex database.Executor) ([]string, erro
 	q := `SELECT name FROM pragma_table_list WHERE schema = 'main' AND type IN ('table', 'virtual')
 		AND name NOT LIKE 'sqlite_%' ORDER BY name`
 
-	names, err := queryNames(ctx, ex, q)
+	names, err := queryNames(ctx, ex, q, "list tables")
 	if err == nil {
 		return names, nil
 	}
@@ -157,13 +157,34 @@ func listSQLiteTables(ctx context.Context, ex database.Executor) ([]string, erro
 		ctx,
 		ex,
 		`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+		"list tables",
 	)
 }
 
-func queryNames(ctx context.Context, ex database.Executor, q string) ([]string, error) {
+// InspectViews lists the names of the views (materialized ones included on
+// PostgreSQL) of the current schema (PostgreSQL), database (MySQL) or file
+// (SQLite), sorted. Inspect never lists them: a view is not a table.
+func InspectViews(ctx context.Context, ex database.Executor) ([]string, error) {
+	var q string
+
+	switch family(ex) {
+	case "postgres":
+		q = `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE n.nspname = current_schema() AND c.relkind IN ('v', 'm') ORDER BY c.relname`
+	case "mysql":
+		q = `SELECT table_name FROM information_schema.tables
+			WHERE table_schema = DATABASE() AND table_type = 'VIEW' ORDER BY table_name`
+	default:
+		q = `SELECT name FROM sqlite_master WHERE type = 'view' AND name NOT LIKE 'sqlite_%' ORDER BY name`
+	}
+
+	return queryNames(ctx, ex, q, "list views")
+}
+
+func queryNames(ctx context.Context, ex database.Executor, q, what string) ([]string, error) {
 	rows, err := ex.QueryContext(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("schema: inspect: list tables: %w", err)
+		return nil, fmt.Errorf("schema: inspect: %s: %w", what, err)
 	}
 	defer rows.Close()
 
@@ -172,7 +193,7 @@ func queryNames(ctx context.Context, ex database.Executor, q string) ([]string, 
 	for rows.Next() {
 		var n string
 		if err := rows.Scan(&n); err != nil {
-			return nil, fmt.Errorf("schema: inspect: list tables: %w", err)
+			return nil, fmt.Errorf("schema: inspect: %s: %w", what, err)
 		}
 
 		names = append(names, n)

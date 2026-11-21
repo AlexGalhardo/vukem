@@ -676,3 +676,50 @@ func TestInspectSQLiteTakesAnIndexedNameThatIsNotAColumnForAnExpression(t *testi
 		}
 	}
 }
+
+func TestInspectViewsQueriesTheCatalog(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		d     database.Dialect
+		match string
+		want  string // a fragment the query must contain
+	}{
+		{"postgres", database.Postgres, "c.relkind", "c.relkind IN ('v', 'm')"},
+		{"mysql", database.MySQL, "SELECT table_name", "table_type = 'VIEW'"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ex, cat := newFakeExec(t, tt.d,
+				fakeAnswer{match: tt.match, cols: []string{"n"}, rows: [][]driver.Value{v("recent"), v("totals")}},
+			)
+
+			got, err := InspectViews(t.Context(), ex)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if want := []string{"recent", "totals"}; !cmp.Equal(got, want) {
+				t.Errorf("InspectViews = %v, want %v", got, want)
+			}
+
+			if len(cat.queries) != 1 || !strings.Contains(cat.queries[0], tt.want) || len(cat.args[0]) != 0 {
+				t.Errorf("queries = %q, args = %v", cat.queries, cat.args)
+			}
+		})
+	}
+}
+
+func TestInspectViewsReportsCatalogErrors(t *testing.T) {
+	t.Parallel()
+
+	ex, _ := newFakeExec(t, database.Postgres, fakeAnswer{match: "c.relkind", err: errors.New("boom")})
+
+	if _, err := InspectViews(t.Context(), ex); err == nil || !strings.Contains(err.Error(), "list views") {
+		t.Errorf("err = %v, want a list views error", err)
+	}
+}
