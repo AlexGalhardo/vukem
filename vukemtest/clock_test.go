@@ -38,3 +38,25 @@ func TestSessionSurvivesPastFakeClock(t *testing.T) {
 		})
 	}
 }
+
+func TestClientWithIPSetsThePeerNotTheProxyHeader(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, func(opts ...vukem.Option) (*vukem.App, error) {
+		return vukem.New(append(opts, vukem.WithRoutes(func(r *router.Router, _ *vukem.App) error {
+			r.Get("/ip", func(c *web.Ctx) error { return c.String(200, "ip="+c.IP()) })
+
+			return nil
+		}))...)
+	}, vukemtest.Options{})
+
+	app.Client(t).WithIP("203.0.113.7").Get("/ip").AssertSee("ip=203.0.113.7")
+	app.Client(t).WithIP("2001:db8::1").Get("/ip").AssertSee("ip=2001:db8::1")
+
+	// The forwarded header stays ignored from an untrusted peer.
+	app.Client(t).
+		WithIP("203.0.113.8").
+		WithHeader("X-Forwarded-For", "198.51.100.9").
+		Get("/ip").
+		AssertSee("ip=203.0.113.8")
+}
