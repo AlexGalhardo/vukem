@@ -61,7 +61,8 @@ type RowDetail struct {
 type ResultSet struct {
 	Columns  []string
 	Rows     [][]Cell
-	Truncate bool // more than 1000 rows came back
+	Truncate bool   // more than 1000 rows came back, or the text of the result passed its size limit
+	Kind     string // the statement's verb in upper case, for display
 	// Affected is the row count of a write that returns no rows; HasAffected
 	// tells it from a result of zero rows.
 	Affected    int64

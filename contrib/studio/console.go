@@ -13,7 +13,10 @@ import (
 
 const (
 	consoleMaxRows = 1000
-	consoleTimeout = 30 * time.Second
+	// consoleMaxBytes bounds the text of one result: 1000 wide rows of cut cells
+	// could still be tens of megabytes of JSON.
+	consoleMaxBytes = 8 << 20
+	consoleTimeout  = 30 * time.Second
 )
 
 // Query implements SQLSource: the console runs the text as typed, after
@@ -48,7 +51,10 @@ func (s *SQLDB) Query(ctx context.Context, text string, write bool) (ResultSet, 
 		return ResultSet{}, inputError("the console of an in-memory SQLite database needs write mode")
 	}
 
-	return s.exec(ctx, text, write)
+	rs, err := s.exec(ctx, text, write)
+	rs.Kind = statementKind(text, fam)
+
+	return rs, err
 }
 
 // family is the SQL grammar of the dialect: "sqlite", "postgres" or "mysql".
@@ -130,9 +136,10 @@ func readResult(rows *sql.Rows) (ResultSet, error) {
 	}
 
 	rs := ResultSet{Columns: cols}
+	size := 0
 
 	for rows.Next() {
-		if len(rs.Rows) == consoleMaxRows {
+		if len(rs.Rows) == consoleMaxRows || size > consoleMaxBytes {
 			rs.Truncate = true
 			break
 		}
@@ -140,6 +147,10 @@ func readResult(rows *sql.Rows) (ResultSet, error) {
 		cells, err := scanRow(rows, len(cols), gridCellRunes)
 		if err != nil {
 			return ResultSet{}, &queryError{err}
+		}
+
+		for _, c := range cells {
+			size += len(c.Text)
 		}
 
 		rs.Rows = append(rs.Rows, cells)
@@ -174,14 +185,79 @@ func readOnlyStatement(text, family string) bool {
 		case quoted:
 		case first == "":
 			first = w
-		case w == "into":
+		case w == "into", (first == "with" || first == "explain") && writeWords[w]:
 			ok = false
 		}
 	}) {
 		return false
 	}
 
-	return ok && (readVerbs[first] || family == "sqlite" && first == "pragma")
+	if first == "pragma" {
+		return ok && family == "sqlite" && readPragma(text)
+	}
+
+	return ok && readVerbs[first]
+}
+
+// writeWords are the verbs a data-modifying CTE or an EXPLAIN ANALYZE of a
+// write carries behind a read verb. A quoted name never counts.
+var writeWords = map[string]bool{ //nolint:gochecknoglobals // read-only
+	"insert": true, "update": true, "delete": true, "merge": true, "replace": true, "create": true,
+	"drop": true, "alter": true, "truncate": true,
+}
+
+// pragmaRe matches "PRAGMA name" or "PRAGMA name(argument)" and nothing else:
+// "PRAGMA name = value" sets and "PRAGMA name(value)" sets too, for most names.
+var pragmaRe = regexp.MustCompile( //nolint:gochecknoglobals // read-only
+	`(?is)^\s*pragma\s+(?:[a-z_]\w*\.)?([a-z_]\w*)\s*(\(\s*(?:'[^']*'|"[^"]*"|\w+)\s*\))?\s*;?\s*$`)
+
+// pragmaTables take an argument and only read.
+var pragmaTables = []string{ //nolint:gochecknoglobals // read-only
+	"table_info", "table_xinfo", "table_list", "index_list", "index_info", "index_xinfo", "foreign_key_list",
+}
+
+// pragmaWriters change state or do work even without an argument.
+var pragmaWriters = []string{ //nolint:gochecknoglobals // read-only
+	"wal_checkpoint", "optimize", "incremental_vacuum", "shrink_memory", "vacuum", "query_only", "writable_schema",
+}
+
+// readPragma reports whether a PRAGMA statement only reads. The read-only
+// connection is the barrier that holds; this keeps the refusal in front.
+func readPragma(text string) bool {
+	m := pragmaRe.FindStringSubmatch(text)
+	if m == nil {
+		return false
+	}
+
+	name := strings.ToLower(m[1])
+	if m[2] != "" {
+		return slices.Contains(pragmaTables, name)
+	}
+
+	return !slices.Contains(pragmaWriters, name)
+}
+
+// statementKind names what a statement does, in upper case: its first word,
+// or, for a WITH, the write verb it carries (a CTE that deletes is a DELETE).
+// It is for display and the confirmation; the barriers do not read it.
+func statementKind(text, family string) string {
+	first, carried := "", ""
+
+	lex(text, family == "mysql", func(w string, _, quoted bool) {
+		switch {
+		case quoted:
+		case first == "":
+			first = w
+		case first == "with" && carried == "" && writeWords[w]:
+			carried = w
+		}
+	})
+
+	if carried != "" {
+		first = carried
+	}
+
+	return strings.ToUpper(first)
 }
 
 // deniedFunctions are functions that have a side effect a READ ONLY

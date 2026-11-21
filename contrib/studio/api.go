@@ -1,6 +1,7 @@
 package studio
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -127,6 +128,9 @@ func (s *Studio) apiWriteFail(w http.ResponseWriter, r *http.Request, err error)
 	s.apiAnswerFailure(w, r, err, errorClass(err))
 }
 
+// statusClientClosed is the status nginx made common for a request the client gave up on.
+const statusClientClosed = 499
+
 func (s *Studio) apiAnswerFailure(w http.ResponseWriter, r *http.Request, err error, cause any) {
 	status, code, msg := http.StatusInternalServerError, "internal", "The request failed."
 
@@ -149,6 +153,10 @@ func (s *Studio) apiAnswerFailure(w http.ResponseWriter, r *http.Request, err er
 	case errors.Is(err, errInput):
 		status, code = http.StatusUnprocessableEntity, "invalid_input"
 		msg = strings.TrimPrefix(strings.TrimPrefix(err.Error(), errInput.Error()), "\n")
+	case isQuery && errors.Is(err, context.DeadlineExceeded):
+		status, code, msg = http.StatusGatewayTimeout, "timeout", "The statement ran too long and was stopped."
+	case isQuery && errors.Is(err, context.Canceled):
+		status, code, msg = statusClientClosed, "canceled", "The statement was cancelled."
 	case isQuery:
 		// Before the prefix check: queryError's own text starts with "studio: ".
 		code, msg = "query_failed", "The database could not run the request. The details are in the Studio log."
