@@ -21,6 +21,7 @@ func (s *Studio) routes() {
 	s.mux.HandleFunc("GET /{$}", s.overview)
 	s.mux.Handle("GET /assets/{file...}", s.assets())
 	s.uiRoutes()
+	s.apiRoutes()
 	s.view("GET /s/{source}", s.sourcePage)
 	s.sqlRoutes()
 	s.view("GET /s/{source}/c/{collection}", s.documentsPage)

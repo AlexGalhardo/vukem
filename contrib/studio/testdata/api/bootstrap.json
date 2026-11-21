@@ -1,0 +1,12 @@
+{
+  "version": "t",
+  "write": false,
+  "refreshSeconds": 2,
+  "sources": [
+    {
+      "name": "db",
+      "kind": "sql",
+      "label": "sqlite file"
+    }
+  ]
+}

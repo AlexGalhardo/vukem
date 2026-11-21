@@ -1,0 +1,32 @@
+{
+  "cells": [
+    {
+      "t": "1",
+      "l": true
+    },
+    {
+      "t": "2",
+      "l": true
+    },
+    {
+      "t": "b"
+    }
+  ],
+  "columns": [
+    {
+      "name": "a",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "b",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "v",
+      "type": "text",
+      "nullable": false
+    }
+  ]
+}

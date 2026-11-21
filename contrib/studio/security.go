@@ -84,6 +84,7 @@ func headers(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 
 		next.ServeHTTP(w, r)
 	})

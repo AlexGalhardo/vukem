@@ -1,0 +1,80 @@
+{
+  "columns": [
+    {
+      "name": "id",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "qty",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "price",
+      "type": "numeric(10,2)",
+      "nullable": true
+    },
+    {
+      "name": "active",
+      "type": "boolean",
+      "nullable": true
+    },
+    {
+      "name": "born",
+      "type": "date",
+      "nullable": true
+    },
+    {
+      "name": "meta",
+      "type": "json",
+      "nullable": true
+    },
+    {
+      "name": "note",
+      "type": "text",
+      "nullable": true
+    },
+    {
+      "name": "raw",
+      "type": "blob",
+      "nullable": true
+    }
+  ],
+  "hasMore": false,
+  "rows": [
+    [
+      {
+        "t": "1",
+        "l": true
+      },
+      {
+        "t": "5",
+        "l": true
+      },
+      {
+        "t": "",
+        "n": true
+      },
+      {
+        "t": "",
+        "n": true
+      },
+      {
+        "t": "",
+        "n": true
+      },
+      {
+        "t": "",
+        "n": true
+      },
+      {
+        "t": "first"
+      },
+      {
+        "t": "\u003cbinary 2 bytes\u003e",
+        "b": true
+      }
+    ]
+  ]
+}

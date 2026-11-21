@@ -1,0 +1,48 @@
+{
+  "columns": [
+    {
+      "name": "id",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "nullable": false
+    },
+    {
+      "name": "bio",
+      "type": "text",
+      "nullable": true
+    }
+  ],
+  "hasMore": true,
+  "next": "2",
+  "rows": [
+    [
+      {
+        "t": "1",
+        "l": true
+      },
+      {
+        "t": "ada"
+      },
+      {
+        "t": "",
+        "n": true
+      }
+    ],
+    [
+      {
+        "t": "2",
+        "l": true
+      },
+      {
+        "t": "linus"
+      },
+      {
+        "t": "50%_off"
+      }
+    ]
+  ]
+}
