@@ -38,7 +38,7 @@ test("the table list filters by name", async ({ page, studio }) => {
   const list = page.getByRole("navigation", { name: "Tables of the schema" });
   await expect(list.getByRole("button", { name: /^posts/ })).toBeVisible();
   await expect(list.getByRole("button", { name: /^users/ })).toHaveCount(0);
-  await expect(list.getByRole("status")).toHaveText("1 of 5 tables");
+  await expect(list.getByRole("status")).toHaveText(/^1 of \d+ tables$/);
 });
 
 test("the diagram pans and zooms with the keyboard and fits to the view", async ({ page, studio }) => {
@@ -69,20 +69,24 @@ test("the diagram pans and zooms with the keyboard and fits to the view", async 
 test("the diagram has one focusable link per table and highlights the neighbors", async ({ page, studio }) => {
   await open(page, studio.origin, studio.startUrl);
 
-  await expect(page.locator("[data-node]")).toHaveCount(5);
+  // Other specs add and drop tables in the shared database, so the count comes from the schema itself.
+  const schema = (await (await page.request.get(`${studio.origin}/api/v1/sources/db/schema`)).json()) as { tables: unknown[] };
+  await expect(page.locator("[data-node]")).toHaveCount(schema.tables.length);
   const posts = page.locator('[data-node="posts"]');
   await posts.focus();
   await expect(posts).toHaveClass(/diagram-node-selected/);
   await expect(page.locator('[data-node="users"]')).toHaveClass(/diagram-node-near/);
   await expect(page.locator('[data-node="items"]')).toHaveClass(/diagram-node-dim/);
-  await expect(page.getByTestId("diagram")).toHaveAccessibleDescription(/Diagram of 5 tables and 1 foreign key/);
+  await expect(page.getByTestId("diagram")).toHaveAccessibleDescription(/Diagram of \d+ tables and \d+ foreign keys?\./);
 });
 
 test("the relationships table lists every foreign key", async ({ page, studio }) => {
   await open(page, studio.origin, studio.startUrl);
 
   const rels = page.getByRole("table", { name: "Relationships" });
-  await expect(rels.getByRole("row")).toHaveCount(2);
+  const schema = (await (await page.request.get(`${studio.origin}/api/v1/sources/db/schema`)).json()) as { tables: { foreignKeys: unknown[] }[] };
+  const keys = schema.tables.reduce((n, t) => n + t.foreignKeys.length, 0);
+  await expect(rels.getByRole("row")).toHaveCount(keys + 1);
   await expect(rels.getByRole("row", { name: /posts user_id users id/ })).toBeVisible();
 });
 
