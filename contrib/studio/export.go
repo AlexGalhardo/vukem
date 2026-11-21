@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // defaultExportMax is the most rows one export streams.
@@ -27,11 +28,12 @@ func exportFilename(target, ext string) string {
 	return name + "." + ext
 }
 
-// csvCell neutralizes spreadsheet formulas: a cell that starts with =, +, -, @,
-// a tab or a carriage return is prefixed with a quote, so a spreadsheet shows
-// it as text. Spreadsheets skip the last two and read the formula behind them.
+// csvCell neutralizes spreadsheet formulas: a cell whose first visible
+// character is =, +, - or @ is prefixed with a quote, so a spreadsheet shows it
+// as text. Leading white space and control characters do not hide a formula.
 func csvCell(s string) string {
-	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+	visible := strings.TrimLeftFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
+	if visible != "" && strings.ContainsRune("=+-@", rune(visible[0])) {
 		return "'" + s
 	}
 

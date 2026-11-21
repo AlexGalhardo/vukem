@@ -30,7 +30,7 @@ func TestSecurityConsoleErrorsNeverLogWhatWasTyped(t *testing.T) {
 func TestCSVCellNeutralizesFormulasBehindControlCharacters(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{"\t=1+1", "\r=1+1"} {
+	for _, in := range []string{"\t=1+1", "\r=1+1", "\n=1+1", " =1+1", "\x00@x", " +1", " \r\n\t-1"} {
 		if got := csvCell(in); got != "'"+in {
 			t.Errorf("csvCell(%q) = %q", in, got)
 		}
