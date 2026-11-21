@@ -36,6 +36,13 @@ type Op struct {
 	// instead of sending data that breaks the documented contract. Out must
 	// be a struct; Register panics otherwise.
 	ValidateResponse bool
+	// MaxBody caps the request body of this route at that many bytes,
+	// replacing the router-wide limit in both directions: a route that
+	// takes a file raises it, one that takes a tiny command lowers it. Zero
+	// keeps the router's limit. An over-limit body answers 413. The OpenAPI
+	// document shows it as x-max-body-bytes. Register panics on a negative
+	// value.
+	MaxBody int64
 }
 
 // Operation is attached to every typed route (router.RouteInfo.Doc) so
@@ -96,7 +103,8 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 //		return ProjectJSON{}, c.JSON(http.StatusOK, preview)
 //	}
 //
-// Op.Status is the only status Register writes.
+// Op.Status is the only status Register writes. Op.MaxBody sets the body
+// limit of the route before the handler runs.
 //
 // Use [RegisterWith] when the input needs a rule `validate` tags cannot
 // express.
@@ -180,6 +188,10 @@ func register[In, Out any](
 		outSchema = z.For[Out]() // panics at boot on bad tags
 	}
 
+	if op.MaxBody < 0 {
+		panic(fmt.Sprintf("api: %s %q: MaxBody must not be negative, got %d", who, pattern, op.MaxBody))
+	}
+
 	// GET, HEAD and DELETE read the query string only.
 	bodyless := method == http.MethodGet || method == http.MethodHead || method == http.MethodDelete
 
@@ -187,6 +199,10 @@ func register[In, Out any](
 
 	h := func(c *web.Ctx) error {
 		var in In
+
+		if op.MaxBody > 0 {
+			c.SetRequest(web.LimitBody(c.Writer(), c.Request(), op.MaxBody))
+		}
 
 		if schema != nil {
 			var err error
