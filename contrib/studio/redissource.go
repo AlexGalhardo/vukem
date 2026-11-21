@@ -177,6 +177,7 @@ func (r *RedisDB) loadString(ctx context.Context, d *KeyDetail) error {
 	}
 
 	d.Size = int64(len(v))
+	d.Binary = !utf8.ValidString(v)
 	d.Fields = [][2]string{{"value", display(v)}}
 
 	return nil

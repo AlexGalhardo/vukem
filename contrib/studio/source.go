@@ -122,4 +122,7 @@ type KeyDetail struct {
 	Size   int64       // elements (bytes for a string)
 	Fields [][2]string // (field, value), (index, value), (member, score) or (id, body)
 	More   bool        // more elements exist beyond this page
+	// Binary is true for a string that is not valid UTF-8: the value in Fields
+	// shows each byte that is not printable ASCII as a backslash-x escape.
+	Binary bool
 }
