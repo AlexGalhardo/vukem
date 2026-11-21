@@ -120,11 +120,6 @@ tasks:
     cmds:
       - go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
-  studio:css:
-    desc: Compile contrib/studio/assets/studio.css with the Tailwind CSS v4 standalone CLI (set TAILWIND_BIN to the executable; see contrib/studio/styles/README.md)
-    cmds:
-      - '{{default "tailwindcss" .TAILWIND_BIN}} -i contrib/studio/styles/studio.input.css -o contrib/studio/assets/studio.css --minify'
-
   studio:ui:
     desc: Build the Studio React interface into contrib/studio/ui (committed, embedded in the binary); needs Bun
     dir: contrib/studio/web
