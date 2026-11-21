@@ -34,8 +34,9 @@ export default function vukem({ input, publicDir = "resources/public", buildDir 
           manifest: true,
           // `vite build --outDir <dir>` reaches this hook as userConfig, and a
           // plugin's return value overrides the command line, so it is kept.
+          // A directory the user chose is emptied only under Vite's own rule.
           outDir: userConfig.build?.outDir ?? path.join(publicDir, buildDir),
-          emptyOutDir: true,
+          emptyOutDir: userConfig.build?.outDir ? userConfig.build.emptyOutDir : true,
           rollupOptions: { input },
         },
         server: {
