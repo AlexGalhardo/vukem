@@ -3,7 +3,9 @@ import type { ReactElement } from "react";
 import { apiPath } from "../api/client";
 import type { ApiCell, TableDetail, TablesResponse, TableSummary } from "../api/types";
 import { useApi } from "../api/useApi";
+import { PlusIcon } from "../components/icons";
 import { ErrorNotice, Loading } from "../components/Notices";
+import type { MenuItem } from "../grid/Menu";
 import { LiveRegion, useAnnouncer } from "../grid/Announcer";
 import { FilterBar } from "../grid/FilterBar";
 import type { FilterRequest } from "../grid/FilterBar";
@@ -13,6 +15,8 @@ import type { ViewState } from "../grid/filters";
 import { foreignKeyLink } from "../grid/links";
 import type { RowLink } from "../grid/links";
 import { RowDrawer } from "../grid/RowDrawer";
+import { DeleteDialog, NewRowDialog } from "../grid/RowForms";
+import { useCellEdit } from "../grid/useCellEdit";
 import type { DrawerTarget } from "../grid/RowDrawer";
 import { keyParts, packKey, unpackKey } from "../grid/rowKey";
 import { useGridData } from "../grid/useGridData";
@@ -77,11 +81,13 @@ function TableData({
   table,
   detail,
   tables,
+  write,
 }: {
   source: string;
   table: string;
   detail: TableDetail;
   tables: readonly TableSummary[];
+  write: boolean;
 }): ReactElement {
   const search = useSearch();
   const { view, rejected } = useMemo(() => searchToView(search), [search]);
@@ -101,11 +107,21 @@ function TableData({
   const { message, announce } = useAnnouncer();
   const filterValue = useRef<HTMLInputElement>(null);
   const [filterRequest, setFilterRequest] = useState<FilterRequest | null>(null);
+  const edit = useCellEdit({ source, table, detail, write, data, announce });
+  const [newOpen, setNewOpen] = useState(false);
+  const [deleteKey, setDeleteKey] = useState<string[] | null>(null);
+  const canWrite = write && detail.primaryKey.length > 0;
 
   useShortcut({
     key: "/",
     description: "Filter: go to the filter bar",
     run: () => (filterValue.current ?? document.getElementById("filter-column"))?.focus(),
+  });
+  useShortcut({
+    key: "n",
+    description: "New row (write mode)",
+    enabled: () => canWrite,
+    run: () => setNewOpen(true),
   });
   useShortcut({
     key: "r",
@@ -142,6 +158,26 @@ function TableData({
     }
   };
 
+  const askDelete = (parts: string[]): void => setDeleteKey(parts);
+
+  const rowActions = canWrite
+    ? (index: number): MenuItem[] => [
+        {
+          label: "Delete row…",
+          danger: true,
+          onSelect: () => {
+            const cells = data.row(index);
+            const parts = cells ? keyParts(detail.columns, detail.primaryKey, cells) : null;
+            if (parts) {
+              askDelete(parts);
+            } else {
+              announce("That row cannot be deleted: its key is not loaded.");
+            }
+          },
+        },
+      ]
+    : undefined;
+
   const linkFor = (column: string, cells: readonly ApiCell[]): RowLink | null => {
     const fk = detail.foreignKeys.find((f) => f.columns.includes(column));
     return fk ? foreignKeyLink(fk, detail.columns, cells, tables) : null;
@@ -165,7 +201,18 @@ function TableData({
             <option value="comfortable">Comfortable</option>
           </select>
         </label>
+        {canWrite ? (
+          <button type="button" className="button button-small button-with-icon" onClick={() => setNewOpen(true)}>
+            <PlusIcon />
+            New row
+          </button>
+        ) : null}
       </div>
+      {write && detail.primaryKey.length === 0 ? (
+        <p className="notice" role="status">
+          This table has no primary key, so Studio cannot point at one row: it is read-only here.
+        </p>
+      ) : null}
       <FilterBar columns={detail.columns} view={view} onChange={setView} valueRef={filterValue} request={filterRequest} />
       {rejected > 0 ? (
         <p className="notice" role="status">
@@ -189,15 +236,53 @@ function TableData({
         onSort={(column) => setView(nextSort(view, column))}
         onSetSort={(column, desc) => setView({ ...view, sort: column, desc: column !== null && desc })}
         onFilterColumn={(column) => setFilterRequest((prev) => ({ column, nonce: (prev?.nonce ?? 0) + 1 }))}
+        edit={write ? edit : undefined}
+        rowActions={rowActions}
       />
-      <RowDrawer source={source} table={table} detail={detail} tables={tables} target={target} onClose={closeRow} />
+      <RowDrawer
+        source={source}
+        table={table}
+        detail={detail}
+        tables={tables}
+        target={target}
+        onClose={closeRow}
+        onDelete={canWrite ? askDelete : undefined}
+      />
+      {canWrite ? (
+        <>
+          <NewRowDialog
+            source={source}
+            table={table}
+            detail={detail}
+            open={newOpen}
+            onClose={() => setNewOpen(false)}
+            onDone={() => {
+              setNewOpen(false);
+              data.reload();
+              announce("Row added.");
+            }}
+          />
+          <DeleteDialog
+            source={source}
+            table={table}
+            keyParts={deleteKey}
+            onClose={() => setDeleteKey(null)}
+            onDone={() => {
+              setDeleteKey(null);
+              closeRow();
+              data.reload();
+              announce("Row deleted.");
+            }}
+          />
+        </>
+      ) : null}
       <LiveRegion message={message} />
     </>
   );
 }
 
 /** TablePage shows one table as a data grid, with its structure folded under the header. */
-export function TablePage({ source, table }: { source: string; table: string }): ReactElement {
+export function TablePage({ source, table, write }: { source: string; table: string; write: boolean }): ReactElement {
   const detail = useApi<TableDetail>(apiPath("sources", source, "tables", table));
   const tables = useApi<TablesResponse>(apiPath("sources", source, "tables"));
 
@@ -215,7 +300,7 @@ export function TablePage({ source, table }: { source: string; table: string }):
       {detail.data && tables.data ? (
         <>
           <Structure detail={detail.data} />
-          <TableData source={source} table={table} detail={detail.data} tables={tables.data.tables} />
+          <TableData source={source} table={table} detail={detail.data} tables={tables.data.tables} write={write} />
         </>
       ) : null}
     </section>

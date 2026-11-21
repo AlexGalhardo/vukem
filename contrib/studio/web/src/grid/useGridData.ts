@@ -43,6 +43,10 @@ export interface GridData {
   jumpToEnd: () => Promise<number | null>;
   /** Leave the tail and read from the start again. */
   leaveTail: () => void;
+  /** Put a saved value into the cached row, so the grid shows it without a new request. */
+  patchCell: (row: number, column: number, cell: ApiCell) => void;
+  /** Drop every page and the count and read again: after a row was added or removed. */
+  reload: () => void;
 }
 
 export interface GridDataOptions {
@@ -71,17 +75,21 @@ export function useGridData(options: GridDataOptions): GridData {
   const [cache, setCache] = useState<PageCache<ApiCell[]> | null>(null);
   const [counted, setCounted] = useState<Counted | null>(null);
   const [tailFor, setTailFor] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
   const versionRef = useRef(0);
 
   const mode: PageMode = view.sort === null && hasPrimaryKey ? "keyset" : "offset";
   const viewKey = `${source}|${table}|${viewToSearch(view)}`;
   const viewKeyRef = useRef(viewKey);
   viewKeyRef.current = viewKey;
+  const countKeyRef = useRef("");
 
-  const count = counted && counted.key === viewKey ? counted : null;
+  const countKey = `${viewKey}|${nonce}`;
+  const count = counted && counted.key === countKey ? counted : null;
   const asked = count?.n ?? null;
+  countKeyRef.current = countKey;
   const tail = mode === "keyset" && tailFor === viewKey && asked !== null;
-  const key = `${viewKey}|${tail ? "tail" : "head"}`;
+  const key = `${viewKey}|${tail ? "tail" : "head"}|${nonce}`;
 
   useEffect(() => {
     const created = new PageCache<ApiCell[]>({
@@ -118,11 +126,11 @@ export function useGridData(options: GridDataOptions): GridData {
   }, [key, mode]);
 
   const askCount = useCallback(() => {
-    const forKey = viewKeyRef.current;
+    const forKey = countKeyRef.current;
     setCounted({ key: forKey, state: "loading", n: null });
     return apiGet<CountResponse>(apiPath("sources", source, "tables", table, "count") + apiQuery(view)).then(
       (res) => {
-        if (viewKeyRef.current !== forKey) {
+        if (countKeyRef.current !== forKey) {
           return null;
         }
         const n = res.count ?? null;
@@ -130,14 +138,22 @@ export function useGridData(options: GridDataOptions): GridData {
         return n;
       },
       () => {
-        if (viewKeyRef.current === forKey) {
+        if (countKeyRef.current === forKey) {
           setCounted({ key: forKey, state: "unavailable", n: null });
         }
         return null;
       },
     );
     // view is part of the key.
-  }, [source, table, viewKey]);
+  }, [source, table, viewKey, nonce]);
+
+  // After a row was added or removed the estimate from the table list is stale: count again.
+  useEffect(() => {
+    if (nonce > 0) {
+      void askCount();
+    }
+    // Only a reload asks.
+  }, [nonce]);
 
   const learned = !tail ? (cache?.exactCount ?? null) : null;
   const exact = asked ?? learned;
@@ -160,6 +176,10 @@ export function useGridData(options: GridDataOptions): GridData {
   exactRef.current = exact;
 
   const leaveTail = useCallback(() => setTailFor(null), []);
+  const reload = useCallback(() => {
+    setTailFor(null);
+    setNonce((n) => n + 1);
+  }, []);
 
   let rowCount: number;
   let approx: boolean;
@@ -199,6 +219,17 @@ export function useGridData(options: GridDataOptions): GridData {
     (index: number) => (tail ? cache?.row(rowCount - 1 - index) : cache?.row(index)),
     [cache, tail, rowCount],
   );
+  const patchCell = useCallback(
+    (index: number, column: number, cell: ApiCell) => {
+      const current = tail ? cache?.row(rowCount - 1 - index) : cache?.row(index);
+      if (!current) {
+        return;
+      }
+      const next = current.map((c, i) => (i === column ? cell : c));
+      cache?.setRow(tail ? rowCount - 1 - index : index, next);
+    },
+    [cache, tail, rowCount],
+  );
   const retry = useCallback(() => cache?.retry(), [cache]);
   const refresh = useCallback(() => cache?.refresh(), [cache]);
 
@@ -220,5 +251,7 @@ export function useGridData(options: GridDataOptions): GridData {
     askCount: () => void askCount(),
     jumpToEnd,
     leaveTail,
+    patchCell,
+    reload,
   };
 }

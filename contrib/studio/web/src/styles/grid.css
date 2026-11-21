@@ -613,3 +613,138 @@ kbd {
   font: var(--text-xs) var(--font-mono);
   white-space: nowrap;
 }
+
+.cell-editor {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: var(--space-2);
+  border: 2px solid var(--focus);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.22);
+  font-size: var(--text-sm);
+}
+
+.cell-editor:popover-open {
+  display: block;
+}
+
+.editor-field {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.editor-text {
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.editor-hint {
+  margin-left: auto;
+  font-size: var(--text-xs);
+}
+
+.editor-error {
+  margin: var(--space-1) 0 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.grid-cell[data-edit="saving"] {
+  opacity: 0.6;
+}
+
+.grid-cell[data-edit="saved"] {
+  box-shadow: inset 0 -3px 0 var(--ok);
+}
+
+.grid-cell[data-edit="error"] {
+  box-shadow: inset 0 -3px 0 var(--danger);
+}
+
+.button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.button-primary:hover {
+  background: var(--accent-hover);
+}
+
+.button-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.button-danger:disabled {
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.dialog-input {
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  margin-top: var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: var(--text-sm) var(--font-mono);
+}
+
+.drawer-section {
+  margin-top: var(--space-4);
+}
+
+.new-field {
+  margin-bottom: var(--space-3);
+}
+
+.new-label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.new-controls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.new-controls select {
+  min-height: 28px;
+}
+
+.new-controls input,
+.new-controls textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: var(--text-sm) var(--font-mono);
+}

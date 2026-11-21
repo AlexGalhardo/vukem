@@ -5,6 +5,8 @@ import { LinkIcon, SortIcon } from "../components/icons";
 import { Link } from "../lib/history";
 import type { RowLink } from "./links";
 import { CellContent, PlaceholderCell } from "./Cell";
+import { CellEditor, ConflictDialog } from "./CellEditor";
+import type { CellEdit } from "./useCellEdit";
 import { copyText } from "./clipboard";
 import { columnKind } from "./filters";
 import type { ColumnKind, ViewState } from "./filters";
@@ -47,6 +49,10 @@ export interface GridProps {
   /** The link a cell draws for a foreign key, if its column has one. */
   linkFor?: (column: string, cells: readonly ApiCell[]) => RowLink | null;
   source: string;
+  /** Present only in write mode: Enter, F2 and a double click edit the cell. Read-only mode passes nothing. */
+  edit?: CellEdit;
+  /** More items for the row menu (delete in write mode). */
+  rowActions?: (index: number) => MenuItem[];
 }
 
 interface Size {
@@ -80,6 +86,8 @@ export function Grid({
   onFilterColumn,
   linkFor,
   source,
+  edit,
+  rowActions,
 }: GridProps): ReactElement {
   const scroller = useRef<HTMLDivElement>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
@@ -315,18 +323,28 @@ export function Grid({
     [selected, announce],
   );
 
-  const activate = useCallback((): void => {
-    if (active.row < 0) {
-      if (active.col >= 1) {
-        const column = columns[active.col - 1];
-        if (column) {
-          onSort(column.name);
+  const activate = useCallback(
+    (editKey: boolean): void => {
+      if (active.row < 0) {
+        if (active.col >= 1) {
+          const column = columns[active.col - 1];
+          if (column) {
+            onSort(column.name);
+          }
         }
+        return;
       }
-      return;
-    }
-    onOpenRow(active.row);
-  }, [active.row, active.col, columns, onSort, onOpenRow]);
+      // Write mode edits a cell with Enter or F2; read-only mode has no editor, and Enter opens the row.
+      if (edit && active.col >= 1) {
+        edit.start(active.row, active.col);
+        return;
+      }
+      if (!editKey) {
+        onOpenRow(active.row);
+      }
+    },
+    [active.row, active.col, columns, onSort, onOpenRow, edit],
+  );
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
     if (inEditable(e.target)) {
@@ -337,7 +355,7 @@ export function Grid({
       return;
     }
     // Escape with nothing to clear is left to the browser (it closes a menu).
-    if (action.type !== "cancel" || selected.size > 0) {
+    if (action.type !== "cancel" || selected.size > 0 || edit?.state.phase === "loading") {
       e.preventDefault();
     }
 
@@ -355,20 +373,22 @@ export function Grid({
         jumpToLastRow(action.to.col);
         break;
       case "activate":
-        activate();
+        activate(action.edit);
         break;
       case "toggleSelect":
         if (active.row >= 0) {
           toggleRow(active.row);
         } else {
-          activate();
+          activate(false);
         }
         break;
       case "copy":
         copyActive();
         break;
       case "cancel":
-        if (selected.size > 0) {
+        if (edit?.state.phase === "loading") {
+          edit.cancel();
+        } else if (selected.size > 0) {
           setSelected(new Set());
           announce("Selection cleared");
         }
@@ -391,6 +411,41 @@ export function Grid({
     setFocus({ row: Number(cell.dataset.r), col: Number(cell.dataset.c) });
   };
 
+  const onDoubleClick = (e: MouseEvent<HTMLDivElement>): void => {
+    const cell = e.target instanceof Element ? e.target.closest<HTMLElement>("[data-r]") : null;
+    if (!cell || !edit) {
+      return;
+    }
+    const row = Number(cell.dataset.r);
+    const col = Number(cell.dataset.c);
+    if (row >= 0 && col >= 1) {
+      edit.start(row, col);
+    }
+  };
+
+  // After a Tab commit the focus moves to the next cell; after the editor closes it returns to the cell.
+  const moveRequest = edit?.moveRequest;
+  useEffect(() => {
+    if (moveRequest) {
+      const to = clampPos({ row: moveRequest.row, col: moveRequest.col }, dims);
+      hasFocus.current = true;
+      move(to, false);
+    }
+    // Only a new request moves the focus.
+  }, [moveRequest?.nonce]);
+
+  const phase = edit?.state.phase ?? "idle";
+  const previousPhase = useRef(phase);
+  useEffect(() => {
+    if (previousPhase.current !== "idle" && phase === "idle") {
+      hasFocus.current = true;
+      scroller.current
+        ?.querySelector<HTMLElement>(`[data-r="${active.row}"][data-c="${active.col}"]`)
+        ?.focus({ preventScroll: true });
+    }
+    previousPhase.current = phase;
+  });
+
   const refocus = useCallback(() => {
     hasFocus.current = true;
   }, []);
@@ -409,7 +464,8 @@ export function Grid({
   const dataCell = (rowIndex: number, index: number, cells: ApiCell[] | undefined, extra: boolean): ReactElement => {
     const kind: ColumnKind = kinds[index] ?? "text";
     const c = columns[index];
-    const cell = cells?.[index];
+    const shown = edit?.display(rowIndex, index + 1);
+    const cell = shown?.cell ?? cells?.[index];
     const isActive = active.row === rowIndex && active.col === index + 1;
     const pinnedCell = index === 0;
     const style = pinnedCell
@@ -426,6 +482,8 @@ export function Grid({
         data-r={rowIndex}
         data-c={index + 1}
         data-active={isActive ? "true" : undefined}
+        data-edit={shown?.status ?? undefined}
+        aria-busy={shown?.status === "saving" ? true : undefined}
         tabIndex={isActive ? 0 : -1}
         className={`grid-cell${pinnedCell ? " grid-pinned" : ""} kind-${kind}`}
         style={style}
@@ -534,6 +592,7 @@ export function Grid({
       { label: targets.length > 1 ? "Copy selected as TSV" : "Copy row as TSV", onSelect: () => copyRows(targets, "tsv") },
       { label: targets.length > 1 ? "Copy selected as JSON" : "Copy row as JSON", onSelect: () => copyRows(targets, "json") },
       { label: targets.length > 1 ? "Copy selected as CSV" : "Copy row as CSV", onSelect: () => copyRows(targets, "csv") },
+      ...(rowActions?.(i) ?? []),
     ];
   }
 
@@ -611,6 +670,7 @@ export function Grid({
         <button type="button" className="button button-small" onClick={copyActive} disabled={!activeCell && selected.size === 0}>
           {selected.size > 0 ? `Copy ${selected.size} selected` : "Copy cell"}
         </button>
+        {edit?.notice ? <span className="muted">{edit.notice}</span> : null}
         {selected.size > 0 ? (
           <button
             type="button"
@@ -655,6 +715,7 @@ export function Grid({
         onScroll={onScroll}
         onKeyDown={onKeyDown}
         onClick={onClick}
+        onDoubleClick={onDoubleClick}
         onFocus={() => {
           hasFocus.current = true;
         }}
@@ -730,6 +791,21 @@ export function Grid({
           </button>
         </div>
       </dialog>
+      {edit ? (
+        <>
+          <CellEditor
+            edit={edit}
+            find={() =>
+              edit.state.phase === "idle" || edit.state.phase === "conflict"
+                ? null
+                : (scroller.current?.querySelector<HTMLElement>(
+                    `[data-r="${edit.state.at.row}"][data-c="${edit.state.at.col}"]`,
+                  ) ?? null)
+            }
+          />
+          <ConflictDialog edit={edit} />
+        </>
+      ) : null}
     </div>
   );
 }

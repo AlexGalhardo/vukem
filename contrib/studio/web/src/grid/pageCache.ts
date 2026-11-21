@@ -121,6 +121,17 @@ export class PageCache<Row> {
     return page?.rows[index % this.size];
   }
 
+  /** setRow replaces one loaded row in place (an edit that was saved); false when its page is not loaded. */
+  setRow(index: number, row: Row): boolean {
+    const page = this.pages.get(Math.floor(index / this.size));
+    if (!page || index < 0 || index % this.size >= page.rows.length) {
+      return false;
+    }
+    page.rows = page.rows.map((r, i) => (i === index % this.size ? row : r));
+    this.onChange();
+    return true;
+  }
+
   get loadedPages(): number {
     return this.pages.size;
   }
