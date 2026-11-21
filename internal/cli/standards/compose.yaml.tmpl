@@ -1,4 +1,4 @@
-# The local stack: the app{{if .Database}}, PostgreSQL{{end}} and a mail catcher.
+# The local stack: the app and a mail catcher{{if .Database}}, with PostgreSQL one profile away{{end}}.
 #
 #   docker compose up --build
 #
@@ -41,17 +41,23 @@ services:
       mailpit:
         condition: service_started
 {{- if .Database}}
-      postgres:
-        condition: service_healthy
 
-  # The app starts on SQLite, so this service is here to be switched to:
-  # uncomment DATABASE_URL in .env, then register the driver in
+  # The app runs on SQLite and does not wait for this service, so a plain
+  # `docker compose up` never starts it. To switch to PostgreSQL, start it
+  # with `docker compose --profile postgres up`, add this to the app service:
+  #
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #
+  # then uncomment DATABASE_URL in .env, register the driver in
   # bootstrap/app.go with vukem.WithDatabaseDrivers(postgres.Driver()),
   # importing github.com/AlexGalhardo/vukem/drivers/postgres, and run
   # go get github.com/AlexGalhardo/vukem/drivers/postgres && go mod tidy
   # (https://vukem.dev/docs/database/overview).
   postgres:
     image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+    profiles: [postgres]
     environment:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
