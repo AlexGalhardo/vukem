@@ -78,6 +78,11 @@ type SecureHeadersConfig struct {
 	// "/worker/a.js" but not "/workerfoo". The policy replaces CSP,
 	// CSPSources and ReportURI for those paths. Prefixes start with "/".
 	CSPPaths map[string]string
+	// CSPPathStrip lists first path segments that routing removes later,
+	// such as i18n locale prefixes: SecureHeaders runs before that, so
+	// CSPPaths would otherwise miss "/pt-br/worker/a.js". vukem's default
+	// stacks fill it from MiddlewareConfig.PathPrefixes.
+	CSPPathStrip []string
 	// ReportURI receives CSP violation reports: an absolute https URL or
 	// a path (plain http is refused at boot). It adds report-uri and report-to directives and a
 	// Reporting-Endpoints header naming the "csp-endpoint" group.
@@ -191,7 +196,7 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 			}
 
 			policy := csp
-			if p, ok := pathPolicy(paths, r.URL.Path); ok {
+			if p, ok := pathPolicy(paths, cfg.CSPPathStrip, r.URL.Path); ok {
 				policy = p
 			}
 
@@ -244,10 +249,18 @@ func (cfg SecureHeadersConfig) pathPolicies() ([]pathCSP, error) {
 }
 
 // pathPolicy returns the policy of the longest prefix that covers p. p is
-// cleaned first, so "/app/../worker/x" cannot borrow the policy of "/app".
-func pathPolicy(paths []pathCSP, p string) (string, bool) {
+// cleaned first, so "/app/../worker/x" cannot borrow the policy of "/app". A
+// first segment in strip is removed before that, on the raw path, exactly as
+// i18n.StripPathPrefix does, so both see the same route.
+func pathPolicy(paths []pathCSP, strip []string, p string) (string, bool) {
 	if len(paths) == 0 {
 		return "", false
+	}
+
+	if rest, ok := strings.CutPrefix(p, "/"); ok {
+		if seg, after, _ := strings.Cut(rest, "/"); slices.Contains(strip, seg) {
+			p = "/" + after
+		}
 	}
 
 	p = path.Clean("/" + p)
