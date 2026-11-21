@@ -49,6 +49,21 @@ func TestNewFinanceProjectEndToEnd(t *testing.T) {
 		requireFile(t, project, rel)
 	}
 
+	// VF-096: verification is on by default, off is refused in production, and
+	// a sign-up is never marked verified without proof.
+	accountsSrc := read(t, project, "app/accounts/accounts.go")
+	if !strings.Contains(
+		accountsSrc,
+		`!strings.EqualFold(app.Source.Get("AUTH_REQUIRE_EMAIL_VERIFICATION"), "false")`,
+	) ||
+		!strings.Contains(accountsSrc, "AUTH_REQUIRE_EMAIL_VERIFICATION=false is refused in production") {
+		t.Error("the finance accounts do not default email verification on and refuse it off in production")
+	}
+
+	if strings.Contains(read(t, project, "app/accounts/users.go"), "return true, a.MarkVerified(ctx, a.DB, &u)") {
+		t.Error("Register marks a self-asserted address verified")
+	}
+
 	for _, gone := range []string{"resources/js/pages/Posts", "app/controllers/post_controller.go"} {
 		if _, err := os.Stat(filepath.Join(project, filepath.FromSlash(gone))); err == nil {
 			t.Errorf("the finance app kept the starter's %s", gone)

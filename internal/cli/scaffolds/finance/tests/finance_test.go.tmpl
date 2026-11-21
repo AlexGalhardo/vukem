@@ -38,8 +38,7 @@ func newApp(t *testing.T, env ...map[string]string) *vukemtest.App {
 	return vukemtest.New(t, bootstrap.New, opts)
 }
 
-// authTestApp exercises the opt-in verification path retained by the finance
-// scaffold. The app itself defaults to no verification email.
+// authTestApp exercises the verification path, which is the default.
 func authTestApp(t *testing.T, opts ...vukemtest.Options) *vukemtest.App {
 	t.Helper()
 	options := vukemtest.Options{}
@@ -76,13 +75,17 @@ func TestSecurity_A07_RegistrationWithoutVerificationMail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !u.EmailVerified() {
-		t.Fatal("new account must be ready to sign in")
+	if u.EmailVerified() {
+		t.Fatal("an address nobody proved must not be marked verified")
 	}
 
 	c.PostJSON("/login", map[string]any{
 		"email": "alexandra@example.com", "password": testPassword,
 	}).AssertRedirect("/dashboard")
+
+	if st := c.Get("/dashboard").Status(); st == 200 {
+		t.Fatal("an unverified account reached the dashboard")
+	}
 }
 
 func newVerifiedUser(t *testing.T, app *vukemtest.App, name, email string) models.User {

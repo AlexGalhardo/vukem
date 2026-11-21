@@ -38,14 +38,16 @@ func financeEdits() []exampleEdit {
 		{
 			"app/accounts/accounts.go",
 			`VerifyTTL: time.Hour,`,
-			"VerifyTTL: time.Hour,\n\t\tRequireEmailVerification: strings.EqualFold(" +
-				"app.Source.Get(\"AUTH_REQUIRE_EMAIL_VERIFICATION\"), \"true\"),",
+			"VerifyTTL: time.Hour,\n\t\tRequireEmailVerification: !strings.EqualFold(" +
+				"app.Source.Get(\"AUTH_REQUIRE_EMAIL_VERIFICATION\"), \"false\"),",
 		},
 		{
 			"app/accounts/users.go",
 			`return true, a.SendVerification(ctx, u)`,
 			"if !a.RequireEmailVerification {\n" +
-				"\t\treturn true, a.MarkVerified(ctx, a.DB, &u)\n" +
+				"\t\t// Nobody proved the address, so it stays unverified: it gets no admin\n" +
+				"\t\t// access and cannot accept an invitation.\n" +
+				"\t\treturn true, nil\n" +
 				"\t}\n\n" +
 				"\treturn true, a.SendVerification(ctx, u)",
 		},
@@ -59,10 +61,20 @@ func financeEdits() []exampleEdit {
 				"// reports whether an account was created.",
 			"// account: the caller gives the same response to new and existing addresses\n" +
 				"// and never logs in. A new address gets an account. Verification mail is\n" +
-				"// sent only when AUTH_REQUIRE_EMAIL_VERIFICATION is true; otherwise the\n" +
-				"// address is marked verified. An existing address gets a notice (\"sign in\n" +
+				"// sent unless AUTH_REQUIRE_EMAIL_VERIFICATION is false (development and test\n" +
+				"// only), and the address is never marked verified without proof. An existing address gets a notice (\"sign in\n" +
 				"// or reset your password\", at most one per hour per address) and nothing\n" +
 				"// is created or changed. It reports whether an account was created.",
+		},
+		{
+			"app/accounts/accounts.go",
+			"web := auth.NewSessionGuard(\"web\", users, hasher, auth.NewRememberStore(db))",
+			"// An address nobody proved must not count as verified: turning the check\n" +
+				"\t// off is a development and test setting only.\n" +
+				"\tif app.Config.IsProduction() && strings.EqualFold(app.Source.Get(\"AUTH_REQUIRE_EMAIL_VERIFICATION\"), \"false\") {\n" +
+				"\t\treturn nil, errors.New(\"AUTH_REQUIRE_EMAIL_VERIFICATION=false is refused in production\")\n" +
+				"\t}\n\n" +
+				"\tweb := auth.NewSessionGuard(\"web\", users, hasher, auth.NewRememberStore(db))",
 		},
 		{
 			"app/controllers/account/account.go",
@@ -193,7 +205,7 @@ const financeEnv = `
 # (Resend dashboard, Webhooks: POST /webhooks/resend, email.bounced and
 # email.complained).
 MAIL_MAILER=log
-AUTH_REQUIRE_EMAIL_VERIFICATION=false
+AUTH_REQUIRE_EMAIL_VERIFICATION=true
 MAIL_FROM="Finance <no-reply@example.com>"
 RESEND_API_KEY=
 RESEND_WEBHOOK_SECRET=
