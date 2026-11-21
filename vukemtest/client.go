@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strconv"
@@ -26,6 +27,7 @@ type Client struct {
 	t       testing.TB
 	headers http.Header
 	cookies map[string]*http.Cookie
+	remote  string
 }
 
 // Client returns a new client with an empty cookie jar.
@@ -33,6 +35,24 @@ func (a *App) Client(tb testing.TB) *Client {
 	tb.Helper()
 
 	return &Client{app: a, t: tb, headers: http.Header{}, cookies: map[string]*http.Cookie{}}
+}
+
+// WithIP makes every following request come from the direct peer ip, as if a
+// client at that address had connected. It sets the connection address, so the
+// proxy rules stay as in production: X-Forwarded-For is still ignored unless
+// the peer is a trusted proxy. It fails the test for a value that is not an
+// IP address.
+func (c *Client) WithIP(ip string) *Client {
+	c.t.Helper()
+
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		c.t.Fatalf("vukemtest: WithIP(%q): %v", ip, err)
+	}
+
+	c.remote = netip.AddrPortFrom(addr, 50000).String()
+
+	return c
 }
 
 // WithHeader sets a header on every following request.
@@ -179,6 +199,10 @@ func (c *Client) Do(method, target string, body io.Reader, contentType string) *
 
 	r := httptest.NewRequestWithContext(c.t.Context(), method, target, body)
 	maps.Copy(r.Header, c.headers.Clone())
+
+	if c.remote != "" {
+		r.RemoteAddr = c.remote
+	}
 
 	if contentType != "" {
 		r.Header.Set("Content-Type", contentType)
