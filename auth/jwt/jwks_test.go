@@ -493,3 +493,40 @@ func TestSecurity_A02_RemoteJWKSRefusesRedirectsToHTTP(t *testing.T) {
 		t.Fatalf("Key() error = %v, want the redirect to http refused", err)
 	}
 }
+
+type doerFunc func(*http.Request) (*http.Response, error)
+
+func (f doerFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestRemoteJWKSClientDoer(t *testing.T) {
+	t.Parallel()
+
+	srv := newJWKSServer(t)
+	key := keys(t)[1]
+	srv.publish(t, key)
+
+	var used atomic.Int32
+
+	gated := doerFunc(func(r *http.Request) (*http.Response, error) {
+		used.Add(1)
+		return http.DefaultClient.Do(r)
+	})
+
+	got, err := (&jwt.RemoteJWKS{URL: srv.URL, Client: gated}).Key(t.Context(), key.ID)
+	if err != nil || got.ID != key.ID {
+		t.Fatalf("Key() = %v, %v, want key %q", got.ID, err, key.ID)
+	}
+
+	if n := used.Load(); n != 1 {
+		t.Errorf("Doer used %d times, want 1", n)
+	}
+
+	// A nil *http.Client (cloudflare passes its optional one through) means
+	// the default client, not a nil pointer call.
+	var none *http.Client
+
+	got, err = (&jwt.RemoteJWKS{URL: srv.URL, Client: none}).Key(t.Context(), key.ID)
+	if err != nil || got.ID != key.ID {
+		t.Errorf("Key() with a typed-nil client = %v, %v, want key %q", got.ID, err, key.ID)
+	}
+}
