@@ -101,6 +101,38 @@ func TestSecurity_A09_SecretPathsNeverLogged(t *testing.T) {
 	}
 }
 
+func TestSecurity_A09_SecretPathsCoverEveryFormOfThePath(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	r := router.New(&web.Services{Log: log})
+	r.SecretPaths("POST /hooks/{secret}")
+	r.UseServer(middleware.Logger(log), func(http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	})
+
+	h, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ method, target string }{
+		{http.MethodGet, "/hooks/s3cr3t-H00K"},
+		{http.MethodPut, "/hooks/s3cr3t-H00K"},
+		{http.MethodPost, "/hooks//s3cr3t-H00K"},
+		{http.MethodPost, "/hooks/s3cr3t-H00K/"},
+		{http.MethodPost, "/hooks/./s3cr3t-H00K"},
+	} {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(tc.method, tc.target, nil))
+	}
+
+	if out := buf.String(); strings.Contains(out, "s3cr3t") {
+		t.Errorf("a form of the secret path reached the log:\n%s", out)
+	}
+}
+
 func TestSecretPathsRejectsInvalidPattern(t *testing.T) {
 	t.Parallel()
 
