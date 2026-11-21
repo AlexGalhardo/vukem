@@ -4,6 +4,7 @@ import { apiPath } from "../api/client";
 import type { TableDetail, TablesResponse } from "../api/types";
 import { useApi } from "../api/useApi";
 import { ErrorNotice, Loading } from "../components/Notices";
+import { LiveRegion, useAnnouncer } from "../grid/Announcer";
 import { Grid } from "../grid/Grid";
 import { nextSort, searchToView, viewToSearch } from "../grid/filters";
 import { useGridData } from "../grid/useGridData";
@@ -83,8 +84,8 @@ function TableData({
     view,
     hasPrimaryKey: detail.primaryKey.length > 0,
     estimate,
-    tail: false,
   });
+  const { message, announce } = useAnnouncer();
 
   return (
     <>
@@ -119,8 +120,13 @@ function TableData({
         data={data}
         view={view}
         density={density}
+        announce={announce}
+        resetKey={search}
+        onOpenRow={() => announce("Row details are not available yet.")}
         onSort={(column) => replaceSearch(viewToSearch(nextSort(view, column)))}
+        onSetSort={(column, desc) => replaceSearch(viewToSearch({ ...view, sort: column, desc: column !== null && desc }))}
       />
+      <LiveRegion message={message} />
     </>
   );
 }

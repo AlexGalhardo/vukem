@@ -20,6 +20,8 @@ export interface GridData {
   capped: boolean;
   /** Offset paging gives random access; keyset paging loads in order. */
   mode: PageMode;
+  /** The view is read from its end (keyset order reversed, shown ascending). */
+  tail: boolean;
   row: (index: number) => ApiCell[] | undefined;
   /** Changes every time rows arrive, so a view that reads them draws again. */
   version: number;
@@ -33,6 +35,14 @@ export interface GridData {
   /** The exact count, when known (asked for, or learned by reaching the last page). */
   exact: number | null;
   askCount: () => void;
+  /**
+   * Prepare to show the last row and say how many rows there are. An offset
+   * view has random access, so nothing changes; a keyset view counts the rows
+   * and reads from the end. Null when the count is not available.
+   */
+  jumpToEnd: () => Promise<number | null>;
+  /** Leave the tail and read from the start again. */
+  leaveTail: () => void;
 }
 
 export interface GridDataOptions {
@@ -42,28 +52,36 @@ export interface GridDataOptions {
   hasPrimaryKey: boolean;
   /** The estimate from the table list; negative when unknown. */
   estimate: number;
-  /** Read the table from its end: keyset order reversed. Only with the default sort. */
-  tail: boolean;
 }
 
 function asApiError(err: unknown): ApiError {
   return err instanceof ApiError ? err : new ApiError(0, "network", "Studio could not be reached.");
 }
 
+interface Counted {
+  key: string;
+  state: CountState;
+  n: number | null;
+}
+
 /** useGridData owns the page cache of one table view and the row count shown for it. */
 export function useGridData(options: GridDataOptions): GridData {
-  const { source, table, view, hasPrimaryKey, estimate, tail } = options;
+  const { source, table, view, hasPrimaryKey, estimate } = options;
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const [cache, setCache] = useState<PageCache<ApiCell[]> | null>(null);
-  const [counted, setCounted] = useState<{ key: string; n: number } | null>(null);
-  const [countState, setCountState] = useState<CountState>("idle");
+  const [counted, setCounted] = useState<Counted | null>(null);
+  const [tailFor, setTailFor] = useState<string | null>(null);
   const versionRef = useRef(0);
 
   const mode: PageMode = view.sort === null && hasPrimaryKey ? "keyset" : "offset";
-  const search = viewToSearch(view);
-  const key = `${source}|${table}|${search}|${tail ? "tail" : "head"}`;
-  const keyRef = useRef(key);
-  keyRef.current = key;
+  const viewKey = `${source}|${table}|${viewToSearch(view)}`;
+  const viewKeyRef = useRef(viewKey);
+  viewKeyRef.current = viewKey;
+
+  const count = counted && counted.key === viewKey ? counted : null;
+  const asked = count?.n ?? null;
+  const tail = mode === "keyset" && tailFor === viewKey && asked !== null;
+  const key = `${viewKey}|${tail ? "tail" : "head"}`;
 
   useEffect(() => {
     const created = new PageCache<ApiCell[]>({
@@ -91,8 +109,6 @@ export function useGridData(options: GridDataOptions): GridData {
       },
     });
     setCache(created);
-    setCounted(null);
-    setCountState("idle");
 
     return () => {
       created.dispose();
@@ -101,39 +117,49 @@ export function useGridData(options: GridDataOptions): GridData {
     // The key stands for source, table, view and tail.
   }, [key, mode]);
 
-  const want = useCallback((start: number, end: number) => cache?.want(start, end), [cache]);
-  const retry = useCallback(() => cache?.retry(), [cache]);
-  const refresh = useCallback(() => cache?.refresh(), [cache]);
-  const row = useCallback((index: number) => cache?.row(index), [cache]);
-
   const askCount = useCallback(() => {
-    const asked = keyRef.current;
-    setCountState("loading");
-    apiGet<CountResponse>(apiPath("sources", source, "tables", table, "count") + apiQuery(view)).then(
+    const forKey = viewKeyRef.current;
+    setCounted({ key: forKey, state: "loading", n: null });
+    return apiGet<CountResponse>(apiPath("sources", source, "tables", table, "count") + apiQuery(view)).then(
       (res) => {
-        if (keyRef.current !== asked) {
-          return;
+        if (viewKeyRef.current !== forKey) {
+          return null;
         }
-        if (res.count === undefined) {
-          setCountState("unavailable");
-          return;
-        }
-        setCounted({ key: asked, n: res.count });
-        setCountState("idle");
+        const n = res.count ?? null;
+        setCounted({ key: forKey, state: n === null ? "unavailable" : "idle", n });
+        return n;
       },
       () => {
-        if (keyRef.current === asked) {
-          setCountState("unavailable");
+        if (viewKeyRef.current === forKey) {
+          setCounted({ key: forKey, state: "unavailable", n: null });
         }
+        return null;
       },
     );
     // view is part of the key.
-  }, [source, table, key]);
+  }, [source, table, viewKey]);
 
-  const learned = cache?.exactCount ?? null;
-  const asked = counted && counted.key === key ? counted.n : null;
+  const learned = !tail ? (cache?.exactCount ?? null) : null;
   const exact = asked ?? learned;
   const known = cache?.knownRows ?? 0;
+
+  const jumpToEnd = useCallback(async (): Promise<number | null> => {
+    if (mode === "offset") {
+      return Math.min(exactRef.current ?? rowCountRef.current, maxOffsetRows);
+    }
+    const forKey = viewKeyRef.current;
+    const n = asked ?? (await askCount());
+    if (n !== null && viewKeyRef.current === forKey) {
+      setTailFor(forKey);
+    }
+    return n;
+  }, [mode, asked, askCount]);
+
+  const exactRef = useRef<number | null>(null);
+  const rowCountRef = useRef(0);
+  exactRef.current = exact;
+
+  const leaveTail = useCallback(() => setTailFor(null), []);
 
   let rowCount: number;
   let approx: boolean;
@@ -156,20 +182,43 @@ export function useGridData(options: GridDataOptions): GridData {
     capped = true;
   }
 
+  rowCountRef.current = rowCount;
+
+  // Displayed row i is the cache row rowCount - 1 - i while reading from the end.
+  const want = useCallback(
+    (start: number, end: number) => {
+      if (tail) {
+        cache?.want(Math.max(rowCount - end, 0), Math.max(rowCount - start, 1));
+      } else {
+        cache?.want(start, end);
+      }
+    },
+    [cache, tail, rowCount],
+  );
+  const row = useCallback(
+    (index: number) => (tail ? cache?.row(rowCount - 1 - index) : cache?.row(index)),
+    [cache, tail, rowCount],
+  );
+  const retry = useCallback(() => cache?.retry(), [cache]);
+  const refresh = useCallback(() => cache?.refresh(), [cache]);
+
   return {
     rowCount,
     approx,
     capped,
     mode,
+    tail,
     row,
     version: versionRef.current,
     want,
-    loading: cache === null || (known === 0 && exact === null && cache.loadedPages === 0 && cache.error === null),
+    loading: cache === null || (known === 0 && cache.loadedPages === 0 && cache.error === null),
     error: cache?.error ? asApiError(cache.error) : null,
     retry,
     refresh,
-    countState,
+    countState: count?.state ?? "idle",
     exact,
-    askCount,
+    askCount: () => void askCount(),
+    jumpToEnd,
+    leaveTail,
   };
 }
