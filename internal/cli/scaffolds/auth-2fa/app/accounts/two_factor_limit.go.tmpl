@@ -60,5 +60,8 @@ func (a *Accounts) RecordTwoFactorFailure(ctx context.Context, l ratelimit.Limit
 		return false, nil
 	}
 
-	return true, a.Mailer.SendLater(ctx, mail.TwoFactorLocked{User: u, Subject: a.T(ctx, "auth.two_factor.locked_subject")})
+	return true, a.Mailer.SendLater(
+		ctx,
+		mail.TwoFactorLocked{User: u, Subject: a.T(ctx, "auth.two_factor.locked_subject")},
+	)
 }
