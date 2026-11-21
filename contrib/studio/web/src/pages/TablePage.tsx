@@ -1,12 +1,15 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { apiPath } from "../api/client";
 import type { TableDetail, TablesResponse } from "../api/types";
 import { useApi } from "../api/useApi";
 import { ErrorNotice, Loading } from "../components/Notices";
 import { LiveRegion, useAnnouncer } from "../grid/Announcer";
+import { FilterBar } from "../grid/FilterBar";
+import type { FilterRequest } from "../grid/FilterBar";
 import { Grid } from "../grid/Grid";
 import { nextSort, searchToView, viewToSearch } from "../grid/filters";
+import type { ViewState } from "../grid/filters";
 import { useGridData } from "../grid/useGridData";
 import type { Density } from "../grid/virtual";
 import { Link, replaceSearch, useSearch } from "../lib/history";
@@ -86,6 +89,9 @@ function TableData({
     estimate,
   });
   const { message, announce } = useAnnouncer();
+  const filterValue = useRef<HTMLInputElement>(null);
+  const [filterRequest, setFilterRequest] = useState<FilterRequest | null>(null);
+  const setView = (next: ViewState): void => replaceSearch(viewToSearch(next));
 
   return (
     <>
@@ -106,6 +112,7 @@ function TableData({
           </select>
         </label>
       </div>
+      <FilterBar columns={detail.columns} view={view} onChange={setView} valueRef={filterValue} request={filterRequest} />
       {rejected > 0 ? (
         <p className="notice" role="status">
           {rejected} filter{rejected === 1 ? " in the address was" : "s in the address were"} not understood and not
@@ -123,8 +130,9 @@ function TableData({
         announce={announce}
         resetKey={search}
         onOpenRow={() => announce("Row details are not available yet.")}
-        onSort={(column) => replaceSearch(viewToSearch(nextSort(view, column)))}
-        onSetSort={(column, desc) => replaceSearch(viewToSearch({ ...view, sort: column, desc: column !== null && desc }))}
+        onSort={(column) => setView(nextSort(view, column))}
+        onSetSort={(column, desc) => setView({ ...view, sort: column, desc: column !== null && desc })}
+        onFilterColumn={(column) => setFilterRequest((prev) => ({ column, nonce: (prev?.nonce ?? 0) + 1 }))}
       />
       <LiveRegion message={message} />
     </>
