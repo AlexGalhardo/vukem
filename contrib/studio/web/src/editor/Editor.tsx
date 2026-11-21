@@ -90,6 +90,7 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
   const [find, setFind] = useState<FindState>({ open: false, query: "", current: 0 });
   const [pop, setPop] = useState<{ result: Completion; active: number } | null>(null);
   const [hasFocus, setHasFocus] = useState(false);
+  const [findFocus, setFindFocus] = useState(0);
 
   const lines = useMemo(() => cache.current.update(value), [value]);
   const rawLines = useMemo(() => value.split("\n"), [value]);
@@ -210,6 +211,14 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
     }
   }, [charW]);
 
+  // Focus the find field as soon as it is drawn. A frame later would select what was already typed into it.
+  useLayoutEffect(() => {
+    if (findFocus > 0) {
+      findRef.current?.focus();
+      findRef.current?.select();
+    }
+  }, [findFocus]);
+
   const goToMatch = useCallback(
     (index: number, list: Match[]): void => {
       const m = list[index];
@@ -253,10 +262,7 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
     const selected = ta && ta.selectionStart !== ta.selectionEnd ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
     setFind((f) => ({ open: true, query: selected !== "" && !selected.includes("\n") ? selected : f.query, current: 0 }));
     setPop(null);
-    requestAnimationFrame(() => {
-      findRef.current?.focus();
-      findRef.current?.select();
-    });
+    setFindFocus((n) => n + 1);
   };
 
   const closeFind = (): void => {
