@@ -14,6 +14,7 @@ import type { NameRequest } from "../history/NameDialog";
 import { entryFrom, openHistory } from "../history/store";
 import type { SavedQuery } from "../history/store";
 import { replaceSearch } from "../lib/history";
+import { useShortcut } from "../shortcuts/ShortcutsProvider";
 import { TablePage } from "../pages/TablePage";
 import { loadTabs, saveTabs } from "./persist";
 import { panelDomId, tabDomId, TabStrip } from "./TabStrip";
@@ -116,6 +117,17 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
     }
     closeNow(tab.id);
   };
+
+  const stepTab = (delta: 1 | -1): void => {
+    dispatch({ type: "step", delta });
+    // The strip owns the focus ring of the selected tab: move it there so the next key works from it.
+    requestAnimationFrame(() => strip.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus());
+  };
+
+  useShortcut({ key: "q n", description: "New query tab", run: () => openQuery() });
+  useShortcut({ key: "w c", description: "Close the active tab", run: () => activeTab && requestClose(activeTab), enabled: () => activeTab !== null });
+  useShortcut({ key: "]", description: "Next tab", run: () => stepTab(1), enabled: () => state.tabs.length > 1 });
+  useShortcut({ key: "[", description: "Previous tab", run: () => stepTab(-1), enabled: () => state.tabs.length > 1 });
 
   const openTable = (table: string): void => {
     if (table === "") {
@@ -274,6 +286,12 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
             ))}
           </select>
         </label>
+        <button type="button" className="button" onClick={() => stepTab(-1)} disabled={state.tabs.length < 2}>
+          Previous tab
+        </button>
+        <button type="button" className="button" onClick={() => stepTab(1)} disabled={state.tabs.length < 2}>
+          Next tab
+        </button>
         {activeTab ? (
           <>
             <button
