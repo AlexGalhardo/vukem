@@ -47,14 +47,16 @@ func (c *Client) checkSecret(secret string) bool {
 	return subtle.ConstantTimeCompare(got[:], c.SecretHash) == 1
 }
 
-func (c *Client) hasRedirect(uri string) bool {
+// registeredRedirect returns the client's own copy of uri, so what the server
+// redirects to comes from the registration and never from the request.
+func (c *Client) registeredRedirect(uri string) (string, bool) {
 	for _, r := range c.RedirectURIs {
 		if subtle.ConstantTimeCompare([]byte(r), []byte(uri)) == 1 {
-			return true
+			return r, true
 		}
 	}
 
-	return false
+	return "", false
 }
 
 // ErrUnknownClient is returned by a ClientResolver for a client it does not
@@ -145,7 +147,7 @@ type MetadataDocuments struct {
 func (m *MetadataDocuments) Client(ctx context.Context, id string) (*Client, error) {
 	u, err := url.Parse(id)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" ||
-		u.Path == "" || u.Path == "/" || strings.ContainsAny(id, "\r\n") {
+		u.Path == "" || u.Path == "/" || strings.ContainsAny(id, "\r\n") || hasDotSegment(u.Path) {
 		return nil, ErrUnknownClient
 	}
 
@@ -219,6 +221,12 @@ func (m *MetadataDocuments) Client(ctx context.Context, id string) (*Client, err
 	}
 
 	return &Client{ID: id, Name: doc.ClientName, RedirectURIs: slices.Clone(doc.RedirectURIs)}, nil
+}
+
+// hasDotSegment finds "." and ".." in a decoded path: the draft forbids them in
+// a client_id, because two spellings would name one document.
+func hasDotSegment(path string) bool {
+	return slices.ContainsFunc(strings.Split(path, "/"), func(s string) bool { return s == "." || s == ".." })
 }
 
 // publicIP rejects the literal addresses httpclient.Safe would refuse, so a

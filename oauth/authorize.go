@@ -115,11 +115,20 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, v url.Values,
 	p := parseParams(v)
 
 	client, err := s.cfg.Clients.Client(r.Context(), p.clientID)
-	if err != nil || client == nil || !client.hasRedirect(p.redirectURI) {
+	if err != nil || client == nil {
 		bad()
 
 		return
 	}
+
+	registered, ok := client.registeredRedirect(p.redirectURI)
+	if !ok {
+		bad()
+
+		return
+	}
+
+	p.redirectURI = registered
 
 	deny := func(code string) { s.redirect(w, r, p, url.Values{"error": {code}}) }
 
