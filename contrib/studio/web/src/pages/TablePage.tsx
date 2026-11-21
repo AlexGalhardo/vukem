@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { apiPath } from "../api/client";
 import type { ApiCell, TableDetail, TablesResponse, TableSummary } from "../api/types";
@@ -10,7 +10,7 @@ import { LiveRegion, useAnnouncer } from "../grid/Announcer";
 import { FilterBar } from "../grid/FilterBar";
 import type { FilterRequest } from "../grid/FilterBar";
 import { Grid } from "../grid/Grid";
-import { nextSort, openFromSearch, searchToView, viewToSearch } from "../grid/filters";
+import { exportHref, nextSort, openFromSearch, searchToView, viewToSearch } from "../grid/filters";
 import type { ViewState } from "../grid/filters";
 import { foreignKeyLink } from "../grid/links";
 import type { RowLink } from "../grid/links";
@@ -82,12 +82,14 @@ function TableData({
   detail,
   tables,
   write,
+  refreshSeconds,
 }: {
   source: string;
   table: string;
   detail: TableDetail;
   tables: readonly TableSummary[];
   write: boolean;
+  refreshSeconds: number;
 }): ReactElement {
   const search = useSearch();
   const { view, rejected } = useMemo(() => searchToView(search), [search]);
@@ -111,6 +113,26 @@ function TableData({
   const [newOpen, setNewOpen] = useState(false);
   const [deleteKey, setDeleteKey] = useState<string[] | null>(null);
   const canWrite = write && detail.primaryKey.length > 0;
+  const [live, setLive] = useState(false);
+  const refreshRef = useRef(data.refresh);
+  refreshRef.current = data.refresh;
+  const editing = edit.state.phase !== "idle";
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+
+  // Live refresh refetches the pages on screen. It leaves the scroll and the focus alone (rows are kept
+  // until the new ones land), waits while a cell is being edited and while the tab is hidden.
+  useEffect(() => {
+    if (!live || refreshSeconds <= 0) {
+      return;
+    }
+    const id = window.setInterval(() => {
+      if (!document.hidden && !editingRef.current) {
+        refreshRef.current();
+      }
+    }, Math.max(refreshSeconds, 0.5) * 1000);
+    return () => window.clearInterval(id);
+  }, [live, refreshSeconds]);
 
   useShortcut({
     key: "/",
@@ -201,6 +223,18 @@ function TableData({
             <option value="comfortable">Comfortable</option>
           </select>
         </label>
+        {refreshSeconds > 0 ? (
+          <label className="field-inline">
+            <input type="checkbox" role="switch" checked={live} onChange={(e) => setLive(e.target.checked)} />
+            <span>Live</span>
+          </label>
+        ) : null}
+        <a className="button button-small" href={exportHref(source, table, view, "csv")} download>
+          Export CSV
+        </a>
+        <a className="button button-small" href={exportHref(source, table, view, "jsonl")} download>
+          Export JSON Lines
+        </a>
         {canWrite ? (
           <button type="button" className="button button-small button-with-icon" onClick={() => setNewOpen(true)}>
             <PlusIcon />
@@ -282,7 +316,17 @@ function TableData({
 }
 
 /** TablePage shows one table as a data grid, with its structure folded under the header. */
-export function TablePage({ source, table, write }: { source: string; table: string; write: boolean }): ReactElement {
+export function TablePage({
+  source,
+  table,
+  write,
+  refreshSeconds,
+}: {
+  source: string;
+  table: string;
+  write: boolean;
+  refreshSeconds: number;
+}): ReactElement {
   const detail = useApi<TableDetail>(apiPath("sources", source, "tables", table));
   const tables = useApi<TablesResponse>(apiPath("sources", source, "tables"));
 
@@ -308,7 +352,7 @@ export function TablePage({ source, table, write }: { source: string; table: str
       {detail.data && tables.data ? (
         <>
           <Structure detail={detail.data} />
-          <TableData source={source} table={table} detail={detail.data} tables={tables.data.tables} write={write} />
+          <TableData source={source} table={table} detail={detail.data} tables={tables.data.tables} write={write} refreshSeconds={refreshSeconds} />
         </>
       ) : null}
     </section>

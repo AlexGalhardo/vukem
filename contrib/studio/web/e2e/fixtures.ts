@@ -59,7 +59,7 @@ function start(built: Built, args: string[]): Promise<{ studio: Studio; child: C
 
 // The binary is built once per worker. The start token is single-use, so every
 // test starts its own server on a free port and stops it afterwards.
-export const test = base.extend<{ studio: Studio; writeStudio: Studio }, { built: Built }>({
+export const test = base.extend<{ studio: Studio; writeStudio: Studio; liveStudio: Studio }, { built: Built }>({
   built: [
     // Playwright requires an object pattern here.
     // eslint-disable-next-line no-empty-pattern
@@ -78,6 +78,13 @@ export const test = base.extend<{ studio: Studio; writeStudio: Studio }, { built
   },
   writeStudio: async ({ built }, use) => {
     const { studio, child } = await start(built, ["--write"]);
+    await use(studio);
+    child.removeAllListeners("exit");
+    child.kill();
+  },
+  // Writes are on so a spec can change the data behind the grid, and the live interval is short.
+  liveStudio: async ({ built }, use) => {
+    const { studio, child } = await start(built, ["--write", "--refresh", "500ms"]);
     await use(studio);
     child.removeAllListeners("exit");
     child.kill();
