@@ -330,6 +330,8 @@ func APIMiddlewareWith(app *App, r *router.Router, opts APIMiddlewareOptions) er
 		opts.SecureHeaders(&secure)
 	}
 
+	secure.CSPPathStrip = append(secure.CSPPathStrip, localePrefixes(app, opts.I18n)...)
+
 	if err := secure.Validate(); err != nil {
 		return fmt.Errorf("vukem: secure headers: %w", err)
 	}
@@ -353,6 +355,20 @@ func useLocalePrefixes(app *App, r *router.Router, cfg *i18n.MiddlewareConfig) {
 	if app.I18n != nil && cfg != nil && len(cfg.PathPrefixes) > 0 {
 		r.UseServer(i18n.StripPathPrefix(cfg.PathPrefixes))
 	}
+}
+
+// localePrefixes lists the first path segments useLocalePrefixes will strip.
+func localePrefixes(app *App, cfg *i18n.MiddlewareConfig) []string {
+	if app.I18n == nil || cfg == nil {
+		return nil
+	}
+
+	out := make([]string, 0, len(cfg.PathPrefixes))
+	for p := range cfg.PathPrefixes {
+		out = append(out, p)
+	}
+
+	return out
 }
 
 // localeMiddleware builds the i18n resolver from cfg (def when nil); it is
@@ -635,6 +651,8 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 	if opts.SecureHeaders != nil {
 		opts.SecureHeaders(&secure)
 	}
+
+	secure.CSPPathStrip = append(secure.CSPPathStrip, localePrefixes(app, opts.I18n)...)
 
 	if err := secure.Validate(); err != nil {
 		return fmt.Errorf("vukem: secure headers: %w", err)

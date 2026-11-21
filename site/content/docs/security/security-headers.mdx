@@ -187,7 +187,7 @@ cfg.CSPPaths = map[string]string{
 }
 ```
 
-The longest matching prefix wins. A prefix matches whole path segments (`/assets/preview-worker` covers `/assets/preview-worker/a.js`, not `/assets/preview-worker-x`) and the request path is cleaned first. The policy replaces `CSP`, `CSPSources` and `ReportURI` for those paths. An invalid entry (no leading `/`, an empty policy, control or non-ASCII characters) is dropped and `Validate` reports it. When the page itself must compile WebAssembly, `cfg.AddCSPSources("script-src", "'wasm-unsafe-eval'")` is accepted too, in `script-src`, `script-src-elem` and `worker-src`; it is never in the default policy.
+The longest matching prefix wins. A prefix matches whole path segments (`/assets/preview-worker` covers `/assets/preview-worker/a.js`, not `/assets/preview-worker-x`) and the request path is cleaned first. A locale prefix from `MiddlewareConfig.PathPrefixes` is ignored when matching, so `/pt-br/assets/preview-worker/a.js` gets the same policy; a stack you assemble yourself lists those segments in `CSPPathStrip`. The policy replaces `CSP`, `CSPSources` and `ReportURI` for those paths. An invalid entry (no leading `/`, an empty policy, control or non-ASCII characters) is dropped and `Validate` reports it. When the page itself must compile WebAssembly, `cfg.AddCSPSources("script-src", "'wasm-unsafe-eval'")` is accepted too, in `script-src`, `script-src-elem` and `worker-src`; it is never in the default policy.
 
 For an integration your app wires itself, such as [Turnstile](/docs/security/bot-challenge), check it with `cfg.MissingCSPSources(ts.CSPSources())`: it returns the sources the final policy would block, by directive (a missing `-src` directive is checked against its fallback), or nil.
 

@@ -343,6 +343,40 @@ func TestSecurity_A02_WasmUnsafeEvalIsOptIn(t *testing.T) {
 	}
 }
 
+func TestSecurity_A02_CSPPathsSeeThroughLocalePrefixes(t *testing.T) {
+	t.Parallel()
+
+	const strict = "default-src 'none'"
+
+	h := SecureHeaders(SecureHeadersConfig{
+		CSPPaths:     map[string]string{"/worker/strict": strict},
+		CSPPathStrip: []string{"pt-br"},
+	})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/worker/strict/a.js", true},
+		{"/pt-br/worker/strict/a.js", true},
+		{"/pt-br/worker/../worker/strict", true},
+		{"/pt-br", false},
+		{"/PT-BR/worker/strict/a.js", false},
+		{"/es/worker/strict/a.js", false},
+		{"/pt-br/pt-br/worker/strict/a.js", false},
+	}
+
+	for _, tt := range tests {
+		req := get(t, "/")
+		req.URL.Path = tt.path
+
+		got := do(t, h, req).Header().Get("Content-Security-Policy")
+		if (got == strict) != tt.want {
+			t.Errorf("%s: CSP = %q, want the strict policy: %v", tt.path, got, tt.want)
+		}
+	}
+}
+
 func TestSecurity_A02_CSPPaths(t *testing.T) {
 	t.Parallel()
 
