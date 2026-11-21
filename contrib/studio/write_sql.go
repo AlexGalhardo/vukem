@@ -201,8 +201,94 @@ func (s *SQLDB) Insert(ctx context.Context, table string, fields map[string]Fiel
 	return s.exactlyOne(ctx, q, vals)
 }
 
+// ConflictError says a guarded update found the row changed since it was read.
+// Current holds the values of the guarded columns now; the error text carries
+// none of them, so it is safe to log.
+type ConflictError struct {
+	Current map[string]Cell
+}
+
+func (*ConflictError) Error() string { return "studio: the row changed since it was read" }
+
+// guard locks the row where the dialect can and compares the expected values
+// with what is stored, as the grid would show them. Comparing the displayed
+// text in Go keeps NULL handling and type formats identical in every dialect;
+// the lock (SQLite's BEGIN IMMEDIATE already serialises writers) keeps the
+// check and the UPDATE atomic.
+func (s *SQLDB) guard(ctx context.Context, tx *database.Tx, t Table, key []string, expect map[string]Field) error {
+	known := columnsOf(t)
+
+	for name := range expect {
+		if _, ok := known[name]; !ok {
+			return inputError("unknown column")
+		}
+	}
+
+	d := s.db.Dialect()
+
+	var cols []string
+
+	for _, c := range t.Columns {
+		if _, ok := expect[c.Name]; ok {
+			cols = append(cols, c.Name)
+		}
+	}
+
+	quoted := make([]string, len(cols))
+	for i, c := range cols {
+		quoted[i] = d.Quote(c)
+	}
+
+	where, args := s.keyWhere(t, key, 0)
+	q := "SELECT " + strings.Join(quoted, ", ") + " FROM " + d.Quote(t.Name) + " WHERE " + where
+
+	if database.MustCapabilities(d).RowLocks {
+		q += " FOR UPDATE"
+	}
+
+	rows, err := tx.QueryContext(ctx, q, args...)
+	if err != nil {
+		return &queryError{err}
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return &queryError{err}
+		}
+
+		return errRowCount
+	}
+
+	cells, err := scanRow(rows, len(cols), detailCellMax)
+	if err != nil {
+		return &queryError{err}
+	}
+
+	current, stale := make(map[string]Cell, len(cols)), false
+
+	for i, c := range cols {
+		current[c] = cells[i]
+
+		if cells[i].Binary || cells[i].Truncated {
+			return inputError(c + ": a binary or oversized value cannot be guarded")
+		}
+
+		want := expect[c]
+		if want.Null != cells[i].Null || (!want.Null && want.Text != cells[i].Text) {
+			stale = true
+		}
+	}
+
+	if stale {
+		return &ConflictError{Current: current}
+	}
+
+	return nil
+}
+
 // Update implements SQLSource: the columns in fields, for the row with key.
-func (s *SQLDB) Update(ctx context.Context, table string, key []string, fields map[string]Field) error {
+func (s *SQLDB) Update(ctx context.Context, table string, key []string, fields, expect map[string]Field) error {
 	t, err := s.writable(ctx, table)
 	if err != nil {
 		return err
@@ -230,10 +316,16 @@ func (s *SQLDB) Update(ctx context.Context, table string, key []string, fields m
 
 	where, args := s.keyWhere(t, key, len(cols))
 
-	return s.exactlyOne(
+	var pre func(context.Context, *database.Tx) error
+	if len(expect) > 0 {
+		pre = func(ctx context.Context, tx *database.Tx) error { return s.guard(ctx, tx, t, key, expect) }
+	}
+
+	return s.exactlyOneAfter(
 		ctx,
 		"UPDATE "+d.Quote(t.Name)+" SET "+strings.Join(sets, ", ")+" WHERE "+where,
 		append(vals, args...),
+		pre,
 	)
 }
 
@@ -283,10 +375,24 @@ func (s *SQLDB) keyWhere(t Table, key []string, skip int) (string, []any) {
 
 // exactlyOne runs q in a transaction and rolls back unless it changed one row.
 func (s *SQLDB) exactlyOne(ctx context.Context, q string, args []any) error {
+	return s.exactlyOneAfter(ctx, q, args, nil)
+}
+
+// exactlyOneAfter is exactlyOne preceded by pre, run in the same transaction;
+// an error of pre rolls everything back.
+func (s *SQLDB) exactlyOneAfter(
+	ctx context.Context, q string, args []any, pre func(context.Context, *database.Tx) error,
+) error {
 	ctx, cancel := context.WithTimeout(ctx, gridTimeout)
 	defer cancel()
 
 	err := s.db.Tx(ctx, func(tx *database.Tx) error {
+		if pre != nil {
+			if err := pre(ctx, tx); err != nil {
+				return err
+			}
+		}
+
 		res, err := tx.ExecContext(ctx, q, args...)
 		if err != nil {
 			return &queryError{err}
@@ -438,7 +544,7 @@ func (s *Studio) changeRow(w http.ResponseWriter, r *http.Request) {
 	case "update":
 		var fields map[string]Field
 		if fields, err = formFields(r, t, false); err == nil {
-			err = src.Update(r.Context(), table, key, fields)
+			err = src.Update(r.Context(), table, key, fields, nil)
 			s.audit(r.Context(), src, "update", table, err, "key", confirmKey(key), "columns", fieldNames(fields))
 		}
 

@@ -30,6 +30,7 @@ func everyAPIRoute() []apiCall {
 		{"GET", "/api/v1/sources/db/tables/users/rows", ""},
 		{"GET", "/api/v1/sources/db/tables/users/rows/1", ""},
 		{"GET", "/api/v1/sources/db/tables/users/references", ""},
+		{"GET", "/api/v1/sources/db/tables/users/count", ""},
 		{"POST", "/api/v1/sources/db/query", `{"sql":"SELECT 1"}`},
 		{"POST", "/api/v1/sources/db/explain", `{"sql":"SELECT 1"}`},
 		{"GET", "/api/v1/sources/mongo/collections", ""},

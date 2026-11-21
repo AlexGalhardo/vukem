@@ -134,27 +134,36 @@ func filterClause(d database.Dialect, t Table, f Filter, bind func(any) string) 
 	return col + " " + op + " " + bind(f.Value), nil
 }
 
+// filterClauses is the AND-ed conditions of filters.
+func filterClauses(d database.Dialect, t Table, filters []Filter, bind func(any) string) ([]string, error) {
+	var where []string
+
+	for _, f := range filters {
+		clause, err := filterClause(d, t, f, bind)
+		if err != nil {
+			return nil, err
+		}
+
+		where = append(where, clause)
+	}
+
+	return where, nil
+}
+
 // buildRows returns the SELECT of q. Every filter and sort column is checked
 // against t (read from the catalog) and quoted by the dialect, every value is
 // a bound parameter, and a refusal happens before any SQL exists.
 func buildRows(d database.Dialect, t Table, q RowQuery) (string, []any, error) {
-	var (
-		args  []any
-		where []string
-	)
+	var args []any
 
 	bind := func(v any) string {
 		args = append(args, v)
 		return d.Placeholder(len(args))
 	}
 
-	for _, f := range q.Filters {
-		clause, err := filterClause(d, t, f, bind)
-		if err != nil {
-			return "", nil, err
-		}
-
-		where = append(where, clause)
+	where, err := filterClauses(d, t, q.Filters, bind)
+	if err != nil {
+		return "", nil, err
 	}
 
 	keyset := q.Sort == "" && len(t.PrimaryKey) > 0
@@ -488,3 +497,55 @@ func (s *SQLDB) References(ctx context.Context, table string) ([]Reference, erro
 
 // errNoCatalog is what a SQLDB without a schema catalog answers.
 var errNoCatalog = errors.New("studio: the schema catalog is not available")
+
+// countTimeout bounds an exact count: COUNT(*) scans the table on some
+// engines, so a huge table answers "unavailable" instead of tying up Studio.
+const countTimeout = 10 * time.Second
+
+// ErrCountTimeout is returned by Count when the bounded COUNT(*) ran out of time.
+var ErrCountTimeout = errors.New("studio: the count took too long")
+
+// Count implements SQLSource: the exact number of rows matching filters,
+// within countTimeout.
+func (s *SQLDB) Count(ctx context.Context, table string, filters []Filter) (int64, error) {
+	t, err := s.Table(ctx, table)
+	if err != nil {
+		return 0, err
+	}
+
+	d := s.db.Dialect()
+
+	var args []any
+
+	where, err := filterClauses(d, t, filters, func(v any) string {
+		args = append(args, v)
+		return d.Placeholder(len(args))
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	query := "SELECT COUNT(*) FROM " + d.Quote(t.Name)
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+
+	limit := countTimeout
+	if s.countLimit > 0 {
+		limit = s.countLimit
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+
+	var n int64
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return 0, ErrCountTimeout
+		}
+
+		return 0, &queryError{err}
+	}
+
+	return n, nil
+}

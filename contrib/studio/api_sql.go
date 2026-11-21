@@ -1,6 +1,7 @@
 package studio
 
 import (
+	"errors"
 	"net/http"
 )
 
@@ -66,6 +67,7 @@ func (s *Studio) apiSQLRoutes() {
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables", s.apiTables)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}", s.apiTable)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/rows", s.apiRows)
+	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/count", s.apiCount)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/rows/{key}", s.apiRow)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/references", s.apiReferences)
 	s.mux.HandleFunc("POST /api/v1/sources/{source}/query", s.apiQuery)
@@ -163,6 +165,34 @@ func (s *Studio) apiRows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, body)
+}
+
+// apiCount answers the exact number of rows matching the filters, or
+// timedOut when the bounded COUNT(*) did not finish.
+func (s *Studio) apiCount(w http.ResponseWriter, r *http.Request) {
+	src := s.apiSQL(w, r)
+	if src == nil {
+		return
+	}
+
+	filters, err := filtersFrom(r.URL.Query(), apiParams.filter)
+	if err != nil {
+		s.apiFail(w, r, err)
+		return
+	}
+
+	n, err := src.Count(r.Context(), r.PathValue("table"), filters)
+	if errors.Is(err, ErrCountTimeout) {
+		writeJSON(w, http.StatusOK, map[string]any{"timedOut": true})
+		return
+	}
+
+	if err != nil {
+		s.apiFail(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"count": n})
 }
 
 func (s *Studio) apiRow(w http.ResponseWriter, r *http.Request) {

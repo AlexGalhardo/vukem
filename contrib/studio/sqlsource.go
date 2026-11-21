@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/drivers/mysql"
@@ -23,6 +24,8 @@ type SQLDB struct {
 	// memory is a SQLite ":memory:" database, where the reader and the writer
 	// are one connection and a read-only console cannot be guaranteed.
 	memory bool
+	// countLimit overrides countTimeout when positive (tests).
+	countLimit time.Duration
 }
 
 // SQLSource is a relational source: the table browser and the console.
@@ -42,7 +45,12 @@ type SQLSource interface {
 	// primary key refuses them (ErrNotFound); a write changes exactly one row
 	// or rolls back.
 	Insert(ctx context.Context, table string, fields map[string]Field) error
-	Update(ctx context.Context, table string, key []string, fields map[string]Field) error
+	// Update changes the fields of one row. A non-empty expect lists values
+	// the row must still hold (the text of a cell as Row returned it); a row
+	// that differs yields a *ConflictError and nothing changes.
+	Update(ctx context.Context, table string, key []string, fields, expect map[string]Field) error
+	// Count is the exact number of rows matching filters, bounded in time.
+	Count(ctx context.Context, table string, filters []Filter) (int64, error)
 	Delete(ctx context.Context, table string, key []string) error
 }
 

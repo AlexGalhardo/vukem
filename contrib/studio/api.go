@@ -27,6 +27,8 @@ type apiError struct {
 type apiErrorBody struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Current is set on a 409: the values the guarded columns hold now.
+	Current map[string]apiCell `json:"current,omitempty"`
 }
 
 type apiSource struct {
@@ -130,7 +132,18 @@ func (s *Studio) apiAnswerFailure(w http.ResponseWriter, r *http.Request, err er
 
 	_, isQuery := errors.AsType[*queryError](err)
 
+	var current map[string]apiCell
+
+	if c, ok := errors.AsType[*ConflictError](err); ok {
+		current = make(map[string]apiCell, len(c.Current))
+		for name, cell := range c.Current {
+			current[name] = apiCell{T: cell.Text, N: cell.Null, X: cell.Truncated, B: cell.Binary, L: cell.Literal}
+		}
+	}
+
 	switch {
+	case current != nil:
+		status, code, msg = http.StatusConflict, "conflict", "The row changed since it was read."
 	case errors.Is(err, ErrNotFound):
 		status, code, msg = http.StatusNotFound, "not_found", "Not found."
 	case errors.Is(err, errInput):
@@ -148,7 +161,7 @@ func (s *Studio) apiAnswerFailure(w http.ResponseWriter, r *http.Request, err er
 	s.cfg.Log.WarnContext(r.Context(), "studio api request failed",
 		"path", r.URL.Path, "status", status, "cause", cause)
 
-	writeAPIError(w, status, code, msg)
+	writeJSON(w, status, apiError{Error: apiErrorBody{Code: code, Message: msg, Current: current}})
 }
 
 // decodeBody reads a JSON body into v: at most 1 MiB, no unknown field, one
