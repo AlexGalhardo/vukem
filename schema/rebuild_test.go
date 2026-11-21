@@ -83,7 +83,7 @@ func TestRebuildDropsAnIndexedColumn(t *testing.T) {
 		t.ID()
 		t.String("name")
 		t.String("email").Unique()
-	}); err != nil {
+	}, DropColumns("legacy_code")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,7 +139,7 @@ func TestRebuildKeepsChildrenOfACascade(t *testing.T) {
 	if err := s.Rebuild("parents", func(t *Table) {
 		t.ID()
 		t.String("name")
-	}); err != nil {
+	}, DropColumns("legacy")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,6 +184,91 @@ func TestRebuildRenamedFromCopiesValues(t *testing.T) {
 	var got string
 	if err := db.QueryRowContext(t.Context(), `SELECT handle FROM users`).Scan(&got); err != nil || got != "ada" {
 		t.Errorf("handle = %q, %v; want ada", got, err)
+	}
+}
+
+func TestRebuildRefusesToLoseAColumn(t *testing.T) {
+	t.Parallel()
+
+	keepID := func(t *Table) {
+		t.ID()
+		t.String("name")
+	}
+
+	tests := []struct {
+		name    string
+		fn      func(t *Table)
+		opts    []RebuildOption
+		wantErr string
+	}{
+		{name: "an undeclared column", fn: keepID, wantErr: "would lose column(s) approval_id"},
+		{name: "accepted by name", fn: keepID, opts: []RebuildOption{DropColumns("approval_id")}},
+		{
+			name:    "a name the table does not have",
+			fn:      keepID,
+			opts:    []RebuildOption{DropColumns("approval_id", "ghost")},
+			wantErr: "which the table does not have",
+		},
+		{
+			name: "a name the definition keeps",
+			fn: func(t *Table) {
+				t.ID()
+				t.String("name")
+				t.String("approval_id")
+			},
+			opts:    []RebuildOption{DropColumns("approval_id")},
+			wantErr: "which the new definition keeps",
+		},
+		{
+			name: "a rename onto an existing column loses the target",
+			fn: func(t *Table) {
+				t.ID()
+				t.String("approval_id")
+			},
+			opts:    []RebuildOption{RenamedFrom("name", "approval_id")},
+			wantErr: "would lose column(s) approval_id",
+		},
+		{
+			name:    "an invalid name",
+			fn:      keepID,
+			opts:    []RebuildOption{DropColumns("a b")},
+			wantErr: "invalid column name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := rebuildDB(t)
+			execAll(
+				t,
+				db,
+				`CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, name VARCHAR(255) NOT NULL, approval_id TEXT)`,
+				`INSERT INTO jobs (name, approval_id) VALUES ('a', 'x')`,
+			)
+
+			err := New(t.Context(), db).Rebuild("jobs", tt.fn, tt.opts...)
+
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Rebuild = %v, want nil", err)
+				}
+
+				return
+			}
+
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Rebuild = %v, want an error containing %q", err, tt.wantErr)
+			}
+
+			var got string
+			if err := db.QueryRowContext(t.Context(), `SELECT approval_id FROM jobs`).
+				Scan(&got); err != nil ||
+				got != "x" {
+				t.Errorf("approval_id after the refusal = %q, %v; want x", got, err)
+			}
+		})
 	}
 }
 
@@ -254,7 +339,7 @@ func TestRebuildRollsBackOnAForeignKeyViolation(t *testing.T) {
 	err := s.Rebuild("parents", func(t *Table) {
 		t.ID()
 		t.Integer("code")
-	}, RenamedFrom("code", "id"))
+	}, RenamedFrom("code", "id"), DropColumns("id"))
 	if err == nil || !strings.Contains(err.Error(), "foreign key violation") {
 		t.Fatalf("Rebuild = %v, want a foreign key violation error", err)
 	}

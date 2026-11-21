@@ -212,7 +212,7 @@ func TestRebuildRefusesBadInput(t *testing.T) {
 	if err := s.Rebuild("notes", func(t *Table) {
 		t.ID()
 		t.String("slug")
-	}); err != nil {
+	}, DropColumns("body")); err != nil {
 		t.Fatalf("Rebuild adding a NOT NULL column to an empty table = %v", err)
 	}
 
