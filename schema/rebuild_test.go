@@ -83,7 +83,7 @@ func TestRebuildDropsAnIndexedColumn(t *testing.T) {
 		t.ID()
 		t.String("name")
 		t.String("email").Unique()
-	}, DropColumns("legacy_code")); err != nil {
+	}, DropColumns("legacy_code"), DropIndexes("users_legacy_code_unique")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -523,4 +523,166 @@ func TestRebuildRefusesATableWithTriggersUnlessAsked(t *testing.T) {
 		n != 0 {
 		t.Errorf("triggers left = %d, %v; DropTriggers must drop them", n, err)
 	}
+}
+
+func TestRebuildIndexes(t *testing.T) {
+	t.Parallel()
+
+	const (
+		kindState = `CREATE INDEX jobs_kind_state_index ON jobs (kind, state)`
+		partial   = `CREATE UNIQUE INDEX jobs_active ON jobs (kind) WHERE state = 'active'`
+	)
+
+	body := func(t *Table) {
+		t.ID()
+		t.String("kind")
+		t.String("state")
+	}
+
+	tests := []struct {
+		name    string
+		fn      func(t *Table)
+		opts    []RebuildOption
+		wantErr string
+		wantSQL []string // sqlite_master text of the explicit indexes afterwards
+	}{
+		{name: "a lost index is refused", fn: body, wantErr: "would lose index(es) jobs_active, jobs_kind_state_index"},
+		{
+			name:    "KeepIndexes keeps the original text",
+			fn:      body,
+			opts:    []RebuildOption{KeepIndexes()},
+			wantSQL: []string{partial, kindState},
+		},
+		{
+			name:    "DropIndexes accepts the loss",
+			fn:      body,
+			opts:    []RebuildOption{DropIndexes("jobs_active", "jobs_kind_state_index")},
+			wantSQL: nil,
+		},
+		{
+			name:    "KeepIndexes skips a dropped one",
+			fn:      body,
+			opts:    []RebuildOption{KeepIndexes(), DropIndexes("jobs_active")},
+			wantSQL: []string{kindState},
+		},
+		{
+			name: "a declared index is not kept",
+			fn: func(t *Table) {
+				body(t)
+				t.Index("kind", "state")
+			},
+			opts:    []RebuildOption{KeepIndexes()},
+			wantSQL: []string{partial, `CREATE INDEX "jobs_kind_state_index" ON "jobs" ("kind", "state")`},
+		},
+		{
+			name:    "DropIndexes names a missing index",
+			fn:      body,
+			opts:    []RebuildOption{KeepIndexes(), DropIndexes("ghost")},
+			wantErr: "which the table does not have",
+		},
+		{
+			name: "DropIndexes names a declared index",
+			fn: func(t *Table) {
+				body(t)
+				t.Index("kind", "state")
+			},
+			opts:    []RebuildOption{DropIndexes("jobs_kind_state_index", "jobs_active")},
+			wantErr: "which the new definition declares",
+		},
+		{
+			name: "KeepIndexes on an index whose column is gone",
+			fn: func(t *Table) {
+				t.ID()
+				t.String("kind")
+			},
+			opts:    []RebuildOption{KeepIndexes(), DropColumns("state")},
+			wantErr: "index jobs_kind_state_index uses column state",
+		},
+		{
+			name: "a dropped column with its index dropped too",
+			fn: func(t *Table) {
+				t.ID()
+				t.String("kind")
+			},
+			opts: []RebuildOption{
+				KeepIndexes(),
+				DropColumns("state"),
+				DropIndexes("jobs_kind_state_index", "jobs_active"),
+			},
+			wantErr: "",
+			wantSQL: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := rebuildDB(t)
+			execAll(
+				t,
+				db,
+				`CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, state TEXT)`,
+				kindState,
+				partial,
+				`INSERT INTO jobs (kind, state) VALUES ('a', 'idle')`,
+			)
+
+			err := New(t.Context(), db).Rebuild("jobs", tt.fn, tt.opts...)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Rebuild = %v, want an error containing %q", err, tt.wantErr)
+				}
+
+				var n int
+				if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL`).
+					Scan(&n); err != nil ||
+					n != 2 {
+					t.Errorf("indexes after the refusal = %d, %v; want 2", n, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Rebuild = %v, want nil", err)
+			}
+
+			got := indexSQL(t, db)
+
+			if diff := cmp.Diff(tt.wantSQL, got); diff != "" {
+				t.Errorf("indexes (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func indexSQL(t *testing.T, db *database.DB) []string {
+	t.Helper()
+
+	rows, err := db.QueryContext(
+		t.Context(),
+		`SELECT sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL ORDER BY name`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	var out []string
+
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+
+		out = append(out, s)
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	return out
 }
