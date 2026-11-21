@@ -27,10 +27,11 @@ func exportFilename(target, ext string) string {
 	return name + "." + ext
 }
 
-// csvCell neutralizes spreadsheet formulas: a cell that starts with =, +, - or
-// @ is prefixed with a quote, so a spreadsheet shows it as text.
+// csvCell neutralizes spreadsheet formulas: a cell that starts with =, +, -, @,
+// a tab or a carriage return is prefixed with a quote, so a spreadsheet shows
+// it as text. Spreadsheets skip the last two and read the formula behind them.
 func csvCell(s string) string {
-	if s != "" && strings.ContainsRune("=+-@", rune(s[0])) {
+	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
 		return "'" + s
 	}
 

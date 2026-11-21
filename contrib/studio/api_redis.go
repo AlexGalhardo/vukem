@@ -120,7 +120,8 @@ func (s *Studio) apiCommand(w http.ResponseWriter, r *http.Request) {
 	s.auditRedisCommand(r.Context(), src, body.Line, err)
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		// The class only: a server error can quote the keys and values of the command.
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
