@@ -58,15 +58,10 @@ func (s *Studio) rowsPage(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 
-	filters, err := filtersFrom(q)
+	query, err := rowQueryFrom(r.PathValue("table"), q, htmlParams)
 	if err != nil {
 		s.fail(w, r, err)
 		return
-	}
-
-	query := RowQuery{
-		Table: r.PathValue("table"), Filters: filters, Sort: q.Get("sort"), Desc: q.Get("desc") == "1",
-		After: q["after"], Page: intParam(q, "page"), PerPage: intParam(q, "per"),
 	}
 
 	t, err := src.Table(r.Context(), query.Table)
