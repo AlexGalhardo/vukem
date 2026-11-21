@@ -9,6 +9,7 @@
       "code_required": "Introduce el código de tu aplicación de autenticación o un código de recuperación.",
       "invalid_recovery_code": "El código de recuperación no es válido.",
       "wrong_password": "La contraseña es incorrecta.",
+      "locked_subject": "Demasiados codigos de acceso incorrectos",
       "login_expired": "Tu inicio de sesión caducó. Vuelve a iniciar sesión."
     }
   }

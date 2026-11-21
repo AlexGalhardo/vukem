@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -260,4 +261,70 @@ func TestTwoFactorRecoveryCodesNeedPassword(t *testing.T) {
 	if fresh := recoveryCodes(t, c); len(fresh) != 8 || fresh[0] == codes[0] {
 		t.Fatalf("regenerated codes = %v", fresh)
 	}
+}
+
+// ip gives each request its own address, so the per-IP limit never applies.
+func ip(c *vukemtest.Client, n int) *vukemtest.Client {
+	return c.WithHeader("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", n))
+}
+
+func proxiedApp(t *testing.T) *vukemtest.App {
+	t.Helper()
+
+	return vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"TRUSTED_PROXIES": "0.0.0.0/0"}})
+}
+
+func TestSecurity_A07_TwoFactorAccountLimit(t *testing.T) {
+	t.Parallel()
+
+	app := proxiedApp(t)
+	secret, _ := enableTwoFactor(t, app, app.Client(t).Inertia(""), "lock2fa@example.com")
+
+	before := len(app.Mails().SentTo("lock2fa@example.com"))
+
+	attacker := app.Client(t).Inertia("")
+	passwordStep(attacker, "lock2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+
+	for i := range 9 {
+		ip(attacker, i+1).PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).AssertStatus(303)
+	}
+
+	if n := len(app.Mails().SentTo("lock2fa@example.com")); n != before {
+		t.Fatalf("mails before the limit = %d, want %d", n, before)
+	}
+
+	// The tenth failure, from yet another address, ends the challenge and warns the user.
+	ip(attacker, 10).PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).AssertRedirect("/login")
+
+	if sent := app.Mails().SentTo("lock2fa@example.com"); len(sent) != before+1 || !strings.Contains(sent[before].Subject, "wrong") {
+		t.Fatalf("lock mails = %+v, want one", sent)
+	}
+
+	// A fresh challenge from a new address is refused even with the right code.
+	again := app.Client(t).Inertia("")
+	passwordStep(ip(again, 50), "lock2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+	ip(again, 51).PostJSON("/two-factor-challenge", map[string]any{"code": totpCode(t, secret, 1)}).AssertRedirect("/login")
+	ip(again, 52).Get("/dashboard").AssertRedirect("/login")
+}
+
+func TestTwoFactorAccountLimitCountsOnlyFailuresWithAPendingChallenge(t *testing.T) {
+	t.Parallel()
+
+	app := proxiedApp(t)
+	secret, _ := enableTwoFactor(t, app, app.Client(t).Inertia(""), "count2fa@example.com")
+
+	// Requests with no pending challenge touch no account budget.
+	for i := range 30 {
+		ip(app.Client(t).Inertia(""), i+1).PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)})
+	}
+
+	user := app.Client(t).Inertia("")
+	passwordStep(user, "count2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+
+	for i := range 9 {
+		ip(user, 100+i).PostJSON("/two-factor-challenge", map[string]any{"code": wrongCode(t, secret)}).AssertStatus(303)
+	}
+
+	// Nine failures and one right code: successes are not counted.
+	ip(user, 120).PostJSON("/two-factor-challenge", map[string]any{"code": totpCode(t, secret, 1)}).AssertRedirect("/dashboard")
 }

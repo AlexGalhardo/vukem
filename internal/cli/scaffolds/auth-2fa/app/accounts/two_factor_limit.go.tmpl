@@ -1,0 +1,64 @@
+package accounts
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/ratelimit"
+
+	"{{.Module}}/app/mail"
+	"{{.Module}}/app/models"
+)
+
+// The per-account limit on failed login codes: whatever IPs they come from,
+// a user whose password someone knows gets TwoFactorAccountFailures wrong
+// codes per TwoFactorAccountWindow in total. The per-IP limit of the route
+// stays as the first line.
+const (
+	TwoFactorAccountFailures = 10
+	TwoFactorAccountWindow   = 15 * time.Minute
+)
+
+func twoFactorAccountKey(u models.User) string { return "2fa-account:" + u.AuthID() }
+
+// TwoFactorAccountLimiter returns the limiter of the per-account budget;
+// build it with the app limiter factory so RATE_LIMIT_STORE=cache shares it
+// between servers.
+func TwoFactorAccountLimiter(limiters ratelimit.Factory) ratelimit.Limiter {
+	return limiters("two-factor.account", TwoFactorAccountFailures, TwoFactorAccountWindow)
+}
+
+// TwoFactorLocked reports whether u has used up the failed-code budget. It
+// spends nothing, so a request that fails earlier (no pending challenge)
+// costs nothing, and it is checked before the code is tried: otherwise the
+// next guess would still be free. A limiter that cannot answer locks.
+func TwoFactorLocked(ctx context.Context, l ratelimit.Limiter, u models.User) bool {
+	p, ok := l.(ratelimit.Peeker)
+	if !ok {
+		return false
+	}
+
+	res, err := p.Peek(ctx, twoFactorAccountKey(u))
+
+	return err != nil || !res.Allowed
+}
+
+// RecordTwoFactorFailure counts one failed code and reports whether the
+// budget is now used up. The failure that uses it up emails the user once.
+func (a *Accounts) RecordTwoFactorFailure(ctx context.Context, l ratelimit.Limiter, u models.User) (bool, error) {
+	res, err := l.Allow(ctx, twoFactorAccountKey(u))
+	if err != nil {
+		return true, fmt.Errorf("accounts: two-factor account limit: %w", err)
+	}
+
+	if !res.Allowed {
+		return true, nil
+	}
+
+	if res.Remaining > 0 {
+		return false, nil
+	}
+
+	return true, a.Mailer.SendLater(ctx, mail.TwoFactorLocked{User: u, Subject: a.T(ctx, "auth.two_factor.locked_subject")})
+}
