@@ -178,17 +178,22 @@ var readVerbs = map[string]bool{
 func readOnlyStatement(text, family string) bool {
 	first, ok := "", true
 	analyze, writes := false, false // under EXPLAIN: ANALYZE runs what it explains; a write verb or INTO would then write
+	// PostgreSQL takes quoted option names, also as U&"\0061nalyze", so a quoted
+	// word before the write verb may be ANALYZE and is not trusted.
+	quotedOption := false
 
 	if !lex(text, family == "mysql", func(w string, call, quoted bool) {
 		switch {
 		case call && deniedFunction(w, family):
 			ok = false
+		case quoted && first == "explain" && !writes:
+			quotedOption = true
 		case quoted:
 		case first == "":
 			first = w
 		case first == "explain" && (w == "analyze" || w == "analyse"):
 			analyze = true
-		case first == "explain" && (w == "into" || isWriteWord(w, call)):
+		case first == "explain" && (w == "into" || w == "execute" || isWriteWord(w, call)):
 			writes = true
 		case w == "into", first == "with" && isWriteWord(w, call):
 			ok = false
@@ -198,7 +203,7 @@ func readOnlyStatement(text, family string) bool {
 	}
 
 	// A plain EXPLAIN of a write only shows its plan; EXPLAIN ANALYZE runs it.
-	if analyze && writes {
+	if writes && (analyze || quotedOption) {
 		return false
 	}
 
