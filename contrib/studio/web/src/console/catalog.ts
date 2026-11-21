@@ -27,7 +27,14 @@ export function mentionedTables(text: string, known: readonly string[]): string[
  * source, and the columns of the tables the text mentions. Both come from the
  * Studio API on this machine, the same calls the table view makes.
  */
-export function useCatalog(source: string, text: string): CompletionSource {
+export function useCatalog(source: string, typed: string): CompletionSource {
+  // Reading the text for table names costs a pass over it: wait for a pause in typing.
+  const [text, setText] = useState(typed);
+  useEffect(() => {
+    const timer = setTimeout(() => setText(typed), 400);
+    return () => clearTimeout(timer);
+  }, [typed]);
+
   const { data } = useApi<TablesResponse>(apiPath("sources", source, "tables"));
   const [columns, setColumns] = useState<ReadonlyMap<string, readonly string[]>>(new Map());
   const asked = useRef(new Set<string>());

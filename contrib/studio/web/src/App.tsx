@@ -43,7 +43,7 @@ function Page({ bootstrap, route }: { bootstrap: Bootstrap; route: Route }): Rea
       );
     case "console": {
       const source = bootstrap.sources.find((s) => s.name === route.source && s.kind === "sql");
-      return source ? <ConsolePage source={source} write={bootstrap.write} /> : <NotFound />;
+      return source ? <ConsolePage source={source} write={bootstrap.write} refreshSeconds={bootstrap.refreshSeconds} /> : <NotFound />;
     }
     case "notfound":
       return <NotFound />;

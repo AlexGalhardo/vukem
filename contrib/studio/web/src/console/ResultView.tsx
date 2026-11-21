@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import type { ApiCell, QueryResponse } from "../api/types";
 import { CloseIcon } from "../components/icons";
@@ -155,7 +155,7 @@ function Running({ state, onCancel }: { state: Extract<RunState, { status: "runn
 }
 
 /** ResultView shows what a run came to: the rows in the grid, a plan, an error or a cancel. */
-export function ResultView({ state, onCancel }: { state: RunState; onCancel: () => void }): ReactElement | null {
+export const ResultView = memo(function ResultView({ state, onCancel }: { state: RunState; onCancel: () => void }): ReactElement | null {
   switch (state.status) {
     case "idle":
       return null;
@@ -195,4 +195,4 @@ export function ResultView({ state, onCancel }: { state: RunState; onCancel: () 
       );
     }
   }
-}
+});
