@@ -48,6 +48,8 @@ type SQLiteInfo struct {
 	// HasCheck is true when the CREATE TABLE text mentions "check" anywhere,
 	// a column named checked included; Checks is the exact list.
 	HasCheck bool
+	// Virtual is true for a virtual table (FTS5, for one).
+	Virtual bool
 	// Checks is the expression of each CHECK constraint, column and table
 	// level, without the CHECK keyword and the outer parentheses, in the
 	// order they appear.
@@ -138,6 +140,47 @@ func InspectTable(ctx context.Context, ex database.Executor, table string) (Tabl
 
 func family(ex database.Executor) string { return database.MustCapabilities(ex.Dialect()).Family }
 
+// listSQLiteTables lists the ordinary and virtual tables, leaving out the
+// shadow tables a virtual table keeps its data in (asset_search_data, ...),
+// which are implementation details. Engines without pragma_table_list
+// (SQLite before 3.37) list every table.
+func listSQLiteTables(ctx context.Context, ex database.Executor) ([]string, error) {
+	q := `SELECT name FROM pragma_table_list WHERE schema = 'main' AND type IN ('table', 'virtual')
+		AND name NOT LIKE 'sqlite_%' ORDER BY name`
+
+	names, err := queryNames(ctx, ex, q)
+	if err == nil {
+		return names, nil
+	}
+
+	return queryNames(
+		ctx,
+		ex,
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+	)
+}
+
+func queryNames(ctx context.Context, ex database.Executor, q string) ([]string, error) {
+	rows, err := ex.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("schema: inspect: list tables: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, fmt.Errorf("schema: inspect: list tables: %w", err)
+		}
+
+		names = append(names, n)
+	}
+
+	return names, rows.Err()
+}
+
 func listTables(ctx context.Context, ex database.Executor) ([]string, error) {
 	var q string
 
@@ -149,7 +192,7 @@ func listTables(ctx context.Context, ex database.Executor) ([]string, error) {
 		q = `SELECT table_name FROM information_schema.tables
 			WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' ORDER BY table_name`
 	default:
-		q = `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`
+		return listSQLiteTables(ctx, ex)
 	}
 
 	rows, err := ex.QueryContext(ctx, q)
@@ -285,6 +328,7 @@ func inspectSQLite(ctx context.Context, ex database.Executor, t *TableInfo) erro
 	}
 
 	t.SQLite.Checks = sqliteChecks(createSQL.String)
+	t.SQLite.Virtual = strings.HasPrefix(strings.ToUpper(strings.TrimSpace(createSQL.String)), "CREATE VIRTUAL TABLE")
 
 	err = collect(
 		ctx,
