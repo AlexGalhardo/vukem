@@ -4,14 +4,18 @@
 # Print the section for the next release and paste it under the header of
 # CHANGELOG.md, replacing "[Unreleased]":
 #
-#   git cliff --config .config/cliff.toml --unreleased --tag vX.Y.Z --strip header
+#   git cliff --offline --config .config/cliff.toml --unreleased --tag vX.Y.Z --strip header
 #
 # CHANGELOG.md stays hand-editable that way, which Keep a Changelog expects:
 # entries that no commit message explains still belong in it. `--output
 # CHANGELOG.md` rewrites the whole file instead, and loses them.
 #
-# Add a [remote.github] section with your owner and repo to turn the commit
-# hashes into links: https://git-cliff.org/docs/configuration/remote
+# --offline keeps git-cliff on the local git history. Without it, a
+# [remote.github] section makes every run call the GitHub API, and git-cliff
+# panics ("Could not get github metadata") in an empty repository, without a
+# network or past the rate limit. To link commits, keep --offline and build
+# the link in the template from your owner and repo, for example
+# https://github.com/OWNER/REPO/commit/{{ commit.id }}.
 
 [changelog]
 header = """
