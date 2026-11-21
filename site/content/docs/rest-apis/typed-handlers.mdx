@@ -330,6 +330,7 @@ Under the hood:
 | `Deprecated` | `bool` | marks the operation deprecated in the document and in generated clients |
 | `Security` | `[]string` | security schemes the document declares (`"bearer"` is predefined; others must be in `openapi.Info.SecuritySchemes`) |
 | `ValidateResponse` | `bool` | check the output before writing it |
+| `StrictBody` | `bool` | refuse a JSON body key `In` does not declare, nested ones included, with a `422` whose `path` names it; query and path parameters stay free; default off, so unknown keys are still dropped |
 | `MaxBody` | `int64` | the route's body limit in bytes, replacing the router-wide one in both directions (raise it for an upload, lower it for a tiny command); over the limit answers `413`; the document shows it as `x-max-body-bytes` |
 
 The group's name prefix applies to the **route** name as usual: inside `.Name("api.v1.")` you reverse the route with `c.URL("api.v1.tasks.store")`. The OpenAPI `operationId` is `Op.Name` as you wrote it (`tasks.store`), so generated clients get `tasksStore`, not `apiV1TasksStore`. Plain routes follow the same rule: their `operationId` is their own name, without the group prefix.

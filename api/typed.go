@@ -43,6 +43,14 @@ type Op struct {
 	// document shows it as x-max-body-bytes. Register panics on a negative
 	// value.
 	MaxBody int64
+	// StrictBody refuses a JSON body key that In does not declare, at any
+	// depth (nested structs, lists of structs), with the usual 422 whose
+	// issue path names the key ("items.1.nmae"). Query parameters and path
+	// parameters stay free, and form bodies are not checked. Without it an
+	// unknown key is silently dropped. It has no effect on GET, HEAD and
+	// DELETE, which have no body. Keys are matched against In's field names
+	// and json, form and query tags, also under RegisterWith.
+	StrictBody bool
 }
 
 // Operation is attached to every typed route (router.RouteInfo.Doc) so
@@ -206,7 +214,7 @@ func register[In, Out any](
 
 		if schema != nil {
 			var err error
-			if in, err = bindInput(c, schema, bodyless, params); err != nil {
+			if in, err = bindInput(c, schema, inType, bodyless, op.StrictBody, params); err != nil {
 				return err
 			}
 		}
@@ -247,18 +255,33 @@ func responseStatus(op Op, method string, noOutput bool) int {
 }
 
 // bindInput merges the query string, the body (unless bodyless) and the path
-// parameters, then validates the result against schema.
-func bindInput[In any](c *web.Ctx, schema z.Schema[In], bodyless bool, params []string) (In, error) {
+// parameters, then validates the result against schema. With strict, a JSON
+// body key that in does not declare is refused before the merge hides which
+// map it came from.
+func bindInput[In any](
+	c *web.Ctx,
+	schema z.Schema[In],
+	inType reflect.Type,
+	bodyless, strict bool,
+	params []string,
+) (In, error) {
 	var in In
 
 	input := c.QueryInput()
-	if bodyless {
-		input = maps.Clone(input)
-	} else {
-		var err error
-		if input, err = c.Input(); err != nil {
+
+	if !bodyless {
+		body, isJSON, err := c.BodyInput()
+		if err != nil {
 			return in, err
 		}
+
+		if strict && isJSON {
+			if err := web.IssuesError(c, z.Unrecognized(inType, body), "body"); err != nil {
+				return in, err
+			}
+		}
+
+		maps.Copy(input, body)
 	}
 
 	for _, p := range params {
