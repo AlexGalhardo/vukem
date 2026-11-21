@@ -4,6 +4,21 @@ import (
 	"reflect"
 	"strconv"
 	"time"
+	"unicode/utf8"
+)
+
+// Bounds on the walk: the input is attacker-controlled, and a map with one
+// huge key holding many unknown keys would otherwise make every issue retain
+// that key twice (Path and Message).
+const (
+	// maxUnrecognized stops the walk after this many issues.
+	maxUnrecognized = 100
+	// maxKeyLen clips each key, in bytes, before it joins a path.
+	maxKeyLen = 256
+	// maxPathLen bounds the accumulated path, in bytes; each join copies at
+	// most this much whatever the body size.
+	maxPathLen = 1024
+	clipMark   = "..."
 )
 
 // Unrecognized lists the keys of in, a decoded JSON object, that the tag
@@ -14,17 +29,30 @@ import (
 // struct. Free-form values (any, map[string]any) and time.Time have no
 // declared keys and are not walked.
 //
+// The walk is bounded because the input is untrusted: it stops after 100
+// issues, a key longer than 256 bytes is clipped (on a UTF-8 boundary) and
+// ends in "...", and a path longer than 1024 bytes is clipped the same way.
+//
 // [StructSchema.Strict] refuses unknown keys too, but only at its own level
 // and over the whole input; this checks a body apart from the query string.
 func Unrecognized(t reflect.Type, in any) Issues {
-	var out Issues
+	w := &unrecognizedWalk{}
+	w.walk(t, in, "")
 
-	unrecognized(&out, t, in, "")
-
-	return out
+	return w.out
 }
 
-func unrecognized(out *Issues, t reflect.Type, in any, path string) {
+type unrecognizedWalk struct {
+	out Issues
+}
+
+func (w *unrecognizedWalk) full() bool { return len(w.out) >= maxUnrecognized }
+
+func (w *unrecognizedWalk) walk(t reflect.Type, in any, path string) {
+	if w.full() {
+		return
+	}
+
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -35,12 +63,9 @@ func unrecognized(out *Issues, t reflect.Type, in any, path string) {
 			return
 		}
 
-		m, ok := in.(map[string]any)
-		if !ok {
-			return
+		if m, ok := in.(map[string]any); ok {
+			w.walkStruct(t, m, path)
 		}
-
-		unrecognizedStruct(out, t, m, path)
 	case reflect.Slice:
 		list, ok := in.([]any)
 		if !ok {
@@ -48,7 +73,11 @@ func unrecognized(out *Issues, t reflect.Type, in any, path string) {
 		}
 
 		for i, v := range list {
-			unrecognized(out, t.Elem(), v, joinPath(path, strconv.Itoa(i)))
+			if w.full() {
+				return
+			}
+
+			w.walk(t.Elem(), v, joinClipped(path, strconv.Itoa(i)))
 		}
 	case reflect.Map:
 		m, ok := in.(map[string]any)
@@ -57,13 +86,17 @@ func unrecognized(out *Issues, t reflect.Type, in any, path string) {
 		}
 
 		for _, k := range sortedKeys(m) {
-			unrecognized(out, t.Elem(), m[k], joinPath(path, k))
+			if w.full() {
+				return
+			}
+
+			w.walk(t.Elem(), m[k], joinClipped(path, k))
 		}
 	default:
 	}
 }
 
-func unrecognizedStruct(out *Issues, t reflect.Type, m map[string]any, path string) {
+func (w *unrecognizedWalk) walkStruct(t reflect.Type, m map[string]any, path string) {
 	byKey := map[string]reflect.Type{}
 
 	for _, f := range reflect.VisibleFields(t) {
@@ -79,11 +112,15 @@ func unrecognizedStruct(out *Issues, t reflect.Type, m map[string]any, path stri
 	}
 
 	for _, k := range sortedKeys(m) {
-		p := joinPath(path, k)
+		if w.full() {
+			return
+		}
+
+		p := joinClipped(path, k)
 
 		ft, known := byKey[k]
 		if !known {
-			*out = append(*out, Issue{
+			w.out = append(w.out, Issue{
 				Path:    p,
 				Code:    CodeUnrecognizedKeys,
 				Key:     CodeUnrecognizedKeys,
@@ -93,6 +130,25 @@ func unrecognizedStruct(out *Issues, t reflect.Type, m map[string]any, path stri
 			continue
 		}
 
-		unrecognized(out, ft, m[k], p)
+		w.walk(ft, m[k], p)
 	}
+}
+
+// joinClipped is joinPath with key clipped to maxKeyLen and the result to
+// maxPathLen, so it copies a bounded amount whatever the input holds.
+func joinClipped(base, key string) string {
+	return clip(joinPath(base, clip(key, maxKeyLen)), maxPathLen)
+}
+
+// clip cuts s to at most n bytes plus clipMark, never inside a UTF-8 rune.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+
+	return s[:n] + clipMark
 }
