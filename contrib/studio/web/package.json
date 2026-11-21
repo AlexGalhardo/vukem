@@ -8,7 +8,8 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
-    "test": "bun test src"
+    "test": "bun test src",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "react": "19.3.1",
