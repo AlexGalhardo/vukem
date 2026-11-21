@@ -76,17 +76,24 @@ test("Enter keeps the indentation of the line", async ({ page, studio }) => {
 
 test("Ctrl+Enter runs the statement at the cursor, Ctrl+Shift+Enter all the text", async ({ page, studio }) => {
   await openConsole(page, studio.origin, studio.startUrl);
-  await page.keyboard.type("select 1;\nselect 2;\nselect 3");
+  await page.keyboard.type("select 1 as a;\nselect 2 as b;\nselect 3 as c");
+  await page.keyboard.press("Escape");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Control+Enter");
-  await expect(page.getByTestId("run-request")).toHaveText("select 2");
+  await expect(page.getByRole("columnheader", { name: "b" })).toBeVisible();
+  await expect(page.getByRole("gridcell", { name: "2", exact: true })).toBeVisible();
 
+  // All the text goes as one statement, which the console refuses.
   await page.keyboard.press("Control+Shift+Enter");
-  await expect(page.getByTestId("run-request")).toHaveText("select 1;\nselect 2;\nselect 3");
+  await expect(page.getByRole("alert")).toContainText("one statement at a time");
 
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Control+Enter");
-  await expect(page.getByTestId("run-request")).toHaveText("select 1;\nselect 2;\nselect 3");
+  await expect(page.getByRole("alert")).toContainText("one statement at a time");
+
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Control+Enter");
+  await expect(page.getByRole("columnheader", { name: "a" })).toBeVisible();
 });
 
 test("Ctrl+/ toggles a comment on the line", async ({ page, studio }) => {
