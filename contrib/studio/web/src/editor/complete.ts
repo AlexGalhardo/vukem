@@ -104,7 +104,7 @@ export function tablesIn(text: string, cursor: number, known: readonly string[])
 
 function rank(label: string, prefix: string): number {
   const l = label.toLowerCase();
-  return l.startsWith(prefix) ? 0 : l.includes(prefix) ? 1 : -1;
+  return l === prefix ? 0 : l.startsWith(prefix) ? 1 : l.includes(prefix) ? 2 : -1;
 }
 
 function pick(items: Suggestion[], prefix: string): Suggestion[] {
@@ -124,7 +124,12 @@ function pick(items: Suggestion[], prefix: string): Suggestion[] {
   }
   // Stable sort: prefix matches first, then in the order given (tables and columns before keywords).
   scored.sort((a, b) => a.score - b.score);
-  return scored.slice(0, maxSuggestions).map((s) => s.item);
+  const out = scored.slice(0, maxSuggestions).map((s) => s.item);
+  // A word typed in full, with nothing else it could become, needs no list.
+  if (p !== "" && out.length === 1 && (out[0] as Suggestion).label.toLowerCase() === p) {
+    return [];
+  }
+  return out;
 }
 
 function insideLiteral(text: string, cursor: number): boolean {

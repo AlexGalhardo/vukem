@@ -108,6 +108,11 @@ export function SourcePage({ source }: { source: Source }): ReactElement {
     <section aria-labelledby="source-title">
       <h1 id="source-title">{source.name}</h1>
       <p className="muted mono">{source.label}</p>
+      {source.kind === "sql" ? (
+        <p>
+          <Link route={{ name: "console", source: source.name }}>Open the SQL console</Link>
+        </p>
+      ) : null}
       {source.kind === "sql" ? <TableList source={source} /> : null}
       {source.kind === "mongo" ? <CollectionList source={source} /> : null}
       {source.kind === "redis" ? <KeyList source={source} /> : null}

@@ -1,0 +1,249 @@
+/*
+ * The SQL editor: a textarea over a highlight layer. The font, line height,
+ * padding and tab size of the two layers are the same on purpose; the layers
+ * line up only while they stay equal. Wrapping is off in this version.
+ */
+
+.sqled {
+  --sqled-font: var(--text-sm) / var(--sqled-lh) var(--font-mono);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sqled-frame {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  height: 260px;
+  min-height: 120px;
+  resize: vertical;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.sqled-focused {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.sqled-gutter {
+  position: relative;
+  width: calc(var(--sqled-digits) * 1ch + 2 * var(--space-2));
+  min-width: 40px;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font: var(--sqled-font);
+  user-select: none;
+}
+
+.sqled-gutter-inner {
+  position: absolute;
+  inset: 0 0 auto 0;
+}
+
+.sqled-num {
+  position: absolute;
+  right: var(--space-2);
+  height: var(--sqled-lh);
+}
+
+.sqled-num-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sqled-body {
+  position: relative;
+  min-width: 0;
+}
+
+.sqled-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sqled-layer {
+  position: absolute;
+  inset: 0 auto auto 0;
+  min-width: 100%;
+  font: var(--sqled-font);
+  tab-size: 4;
+  white-space: pre;
+}
+
+.sqled-line {
+  position: absolute;
+  left: var(--sqled-pad);
+  height: var(--sqled-lh);
+}
+
+.sqled-current-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--sqled-lh);
+  background: var(--surface-sunken);
+}
+
+.sqled-box {
+  position: absolute;
+  height: var(--sqled-lh);
+  border-radius: 2px;
+}
+
+.sqled-box-bracket {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  outline: 1px solid var(--accent);
+}
+
+.sqled-box-match {
+  background: color-mix(in srgb, var(--warn) 25%, transparent);
+}
+
+.sqled-box-current {
+  background: color-mix(in srgb, var(--warn) 55%, transparent);
+  outline: 1px solid var(--warn);
+}
+
+.sqled-probe {
+  position: absolute;
+  visibility: hidden;
+  font: var(--sqled-font);
+  white-space: pre;
+}
+
+.sqled-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: var(--sqled-pad);
+  border: 0;
+  outline: 0;
+  resize: none;
+  overflow: auto;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  font: var(--sqled-font);
+  tab-size: 4;
+  white-space: pre;
+}
+
+.sqled-input::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.tok-keyword {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tok-string {
+  color: var(--ok);
+}
+
+.tok-number {
+  color: var(--warn);
+}
+
+.tok-comment {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.tok-identifier {
+  color: var(--text);
+}
+
+.tok-operator {
+  color: var(--text-muted);
+}
+
+@media (forced-colors: active) {
+  /* The system colors replace ours: draw the textarea's own text and drop the layer that would double it. */
+  .sqled-layer {
+    display: none;
+  }
+
+  .sqled-input {
+    color: CanvasText;
+  }
+}
+
+.sqled-pop {
+  position: absolute;
+  z-index: 5;
+  width: 240px;
+  max-height: 220px;
+  margin: 0;
+  padding: var(--space-1);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.18);
+  list-style: none;
+  font: var(--text-sm) var(--font-mono);
+}
+
+.sqled-option {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.sqled-option-active {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.sqled-option-kind {
+  font: var(--text-xs) var(--font-ui);
+  opacity: 0.8;
+}
+
+.sqled-find {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sqled-find-input {
+  width: 240px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: var(--text-sm) var(--font-mono);
+}
+
+.sqled-find-count {
+  min-width: 72px;
+  font-size: var(--text-xs);
+}
+
+.sqled-status {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.sqled-hint,
+.sqled-pos {
+  margin: 0;
+}

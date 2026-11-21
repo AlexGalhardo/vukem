@@ -9,7 +9,7 @@ import { ModeBadge } from "./ModeBadge";
 import { ThemeToggle } from "./ThemeToggle";
 
 function currentSource(route: Route): string {
-  return route.name === "source" || route.name === "table" ? route.source : "";
+  return route.name === "source" || route.name === "table" || route.name === "console" ? route.source : "";
 }
 
 /** TopBar: the product name, the source switcher, the mode badge and the toggles. */
