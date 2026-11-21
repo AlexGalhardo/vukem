@@ -64,9 +64,9 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
   return (await res.json()) as T;
 }
 
-/** apiSend sends a JSON body with a write method (POST, PATCH, DELETE) and reads the JSON answer. */
+/** apiSend sends a JSON body with a write method (POST, PATCH, PUT, DELETE) and reads the JSON answer. */
 export async function apiSend<T>(
-  method: "POST" | "PATCH" | "DELETE",
+  method: "POST" | "PATCH" | "PUT" | "DELETE",
   path: string,
   body: unknown,
   signal?: AbortSignal,

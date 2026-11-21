@@ -27,7 +27,7 @@ export function mentionedTables(text: string, known: readonly string[]): string[
  * source, and the columns of the tables the text mentions. Both come from the
  * Studio API on this machine, the same calls the table view makes.
  */
-export function useCatalog(source: string, typed: string): CompletionSource {
+export function useCatalog(source: string | null, typed: string): CompletionSource {
   // Reading the text for table names costs a pass over it: wait for a pause in typing.
   const [text, setText] = useState(typed);
   useEffect(() => {
@@ -35,7 +35,7 @@ export function useCatalog(source: string, typed: string): CompletionSource {
     return () => clearTimeout(timer);
   }, [typed]);
 
-  const { data } = useApi<TablesResponse>(apiPath("sources", source, "tables"));
+  const { data } = useApi<TablesResponse>(source === null ? null : apiPath("sources", source, "tables"));
   const [columns, setColumns] = useState<ReadonlyMap<string, readonly string[]>>(new Map());
   const asked = useRef(new Set<string>());
   const tables = useMemo(() => data?.tables.map((t) => t.name) ?? [], [data]);
@@ -46,6 +46,9 @@ export function useCatalog(source: string, typed: string): CompletionSource {
   }, [source]);
 
   useEffect(() => {
+    if (source === null) {
+      return;
+    }
     const wanted = mentionedTables(text, tables).filter((t) => !asked.current.has(t));
     for (const table of wanted.slice(0, Math.max(maxTablesLoaded - asked.current.size, 0))) {
       asked.current.add(table);

@@ -111,6 +111,8 @@ export interface QueryResponse {
   /** The verb of the statement in upper case. */
   kind: string;
   affected?: number;
+  /** The answer as text, for a console that has one (Redis). */
+  text?: string;
 }
 
 export interface SchemaIndex {

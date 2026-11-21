@@ -226,8 +226,8 @@ export interface Position {
   col: number;
 }
 
-const pairs: Record<string, string> = { "(": ")", "[": "]" };
-const closers: Record<string, string> = { ")": "(", "]": "[" };
+const pairs: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
+const closers: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
 
 /**
  * bracketMatch finds the bracket that pairs with the one next to the caret

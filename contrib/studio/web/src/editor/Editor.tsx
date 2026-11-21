@@ -23,12 +23,32 @@ export interface EditorHandle {
   insert: (text: string) => void;
 }
 
+/** Anything that turns a text into the tokens of its lines, redoing only what changed. */
+export interface Highlighter {
+  update: (text: string) => readonly (readonly Token[])[];
+}
+
+/**
+ * A language other than SQL: how its lines are colored, what completes, what
+ * a run sends when nothing is selected, and whether it has comments. The
+ * MongoDB console (JSON) and the Redis console (one command per line) use it.
+ */
+export interface EditorLanguage {
+  newCache: () => Highlighter;
+  complete: (text: string, caret: number, explicit: boolean) => Completion;
+  /** The text a run sends when nothing is selected. */
+  statementAt: (text: string, caret: number, scope: RunScope) => string;
+  comments: boolean;
+}
+
 export interface EditorProps {
   value: string;
   onChange: (value: string) => void;
   /** The accessible name of the text area. */
   label: string;
-  completion: CompletionSource;
+  /** SQL completion. Ignored when a language is given. */
+  completion?: CompletionSource;
+  language?: EditorLanguage;
   onRun: (scope: RunScope) => void;
   onSave: () => void;
   ref?: Ref<EditorHandle>;
@@ -74,11 +94,20 @@ interface FindState {
  * behind it. The layer and the line numbers draw only the lines in view, from a
  * line cache, so typing in a long text costs about one line.
  */
-export function Editor({ value, onChange, label, completion, onRun, onSave, ref }: EditorProps): ReactElement {
+const noCompletion: CompletionSource = { tables: [], columns: () => undefined };
+
+export function Editor({ value, onChange, label, completion = noCompletion, language, onRun, onSave, ref }: EditorProps): ReactElement {
+  const lang = useRef(language);
+  lang.current = language;
+  const runComplete = (text: string, caret: number, explicit: boolean): Completion =>
+    lang.current ? lang.current.complete(text, caret, explicit) : complete(text, caret, completion, explicit);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
   const probe = useRef<HTMLSpanElement>(null);
-  const cache = useRef(new LineCache());
+  const cache = useRef<Highlighter | null>(null);
+  if (cache.current === null) {
+    cache.current = language ? language.newCache() : new LineCache();
+  }
   const escaped = useRef(false);
   const blurSel = useRef<{ start: number; end: number } | null>(null);
   const id = useId();
@@ -92,7 +121,7 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
   const [hasFocus, setHasFocus] = useState(false);
   const [findFocus, setFindFocus] = useState(0);
 
-  const lines = useMemo(() => cache.current.update(value), [value]);
+  const lines = useMemo(() => (cache.current as Highlighter).update(value), [value]);
   const rawLines = useMemo(() => value.split("\n"), [value]);
   const lineCount = lines.length;
   const digits = String(lineCount).length;
@@ -119,6 +148,9 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
         const e = ta?.selectionEnd ?? 0;
         if (s !== e) {
           return text.slice(s, e).trim();
+        }
+        if (lang.current) {
+          return lang.current.statementAt(text, s, scope);
         }
         if (scope === "all") {
           return text.trim();
@@ -239,7 +271,7 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
       setPop(null);
       return;
     }
-    const result = complete(ta.value, ta.selectionStart, completion, explicit);
+    const result = runComplete(ta.value, ta.selectionStart, explicit);
     setPop(result.items.length > 0 ? { result, active: 0 } : null);
   };
 
@@ -252,7 +284,7 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
     const to = ta.selectionStart;
     const at = pop.result.from + item.label.length;
     // A keyword completes in the case the person was typing in.
-    const label = item.kind === "keyword" && ta.value.slice(pop.result.from, to) === ta.value.slice(pop.result.from, to).toLowerCase() ? item.label.toLowerCase() : item.label;
+    const label = !lang.current && item.kind === "keyword" && ta.value.slice(pop.result.from, to) === ta.value.slice(pop.result.from, to).toLowerCase() ? item.label.toLowerCase() : item.label;
     applyEdit(ta, { from: pop.result.from, to, insert: label, selStart: at, selEnd: at });
     setPop(null);
   };
@@ -325,7 +357,7 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
       onRun(e.shiftKey ? "all" : "cursor");
       return;
     }
-    if (mod && key === "/") {
+    if (mod && key === "/" && lang.current?.comments !== false) {
       e.preventDefault();
       applyEdit(ta, commentEdit(text, ta.selectionStart, ta.selectionEnd));
       return;
@@ -401,7 +433,7 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
   useEffect(() => {
     // Columns that arrive after "table." was typed complete it then.
     const ta = taRef.current;
-    if (ta && document.activeElement === ta && ta.selectionStart === ta.selectionEnd && ta.value[ta.selectionStart - 1] === ".") {
+    if (!lang.current && ta && document.activeElement === ta && ta.selectionStart === ta.selectionEnd && ta.value[ta.selectionStart - 1] === ".") {
       const result = complete(ta.value, ta.selectionStart, completion, false);
       setPop(result.items.length > 0 ? { result, active: 0 } : null);
     }

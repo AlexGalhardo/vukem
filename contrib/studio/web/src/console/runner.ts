@@ -57,9 +57,34 @@ export function describeError(err: unknown): RunError {
 }
 
 /** Sends one statement to the API; injected so the store can be tested without a server. */
-export type Sender = (path: string, body: unknown, signal: AbortSignal) => Promise<QueryResponse>;
+export type Sender = (path: string, body: unknown, signal: AbortSignal) => Promise<unknown>;
 
-const defaultSend: Sender = (path, body, signal) => apiSend<QueryResponse>("POST", path, body, signal);
+const defaultSend: Sender = (path, body, signal) => apiSend<unknown>("POST", path, body, signal);
+
+/**
+ * What differs between consoles: the route and body a statement goes to, and how
+ * the answer becomes the QueryResponse that the result view and the history
+ * know. SQL posts to query or explain; the MongoDB and Redis consoles have
+ * their own (see mongo/protocol.ts and redis/protocol.ts). A request that
+ * throws shows its message as an input error and nothing is sent.
+ */
+export interface Protocol {
+  request: (kind: RunKind, statement: string, write: boolean) => { path: string; body: unknown };
+  result: (raw: unknown, elapsedMs: number) => QueryResponse;
+}
+
+/** inputError is what a Protocol throws for a statement it refuses before sending. */
+export class StatementError extends Error {}
+
+export function sqlProtocol(source: string): Protocol {
+  return {
+    request: (kind, statement, write) => ({
+      path: apiPath("sources", source, kind === "run" ? "query" : "explain"),
+      body: kind === "run" ? { sql: statement, write } : { sql: statement },
+    }),
+    result: (raw) => raw as QueryResponse,
+  };
+}
 
 /**
  * RunnerStore keeps the run state of each tab of one source. A run belongs to
@@ -73,9 +98,10 @@ export class RunnerStore {
   private seq = 0;
 
   constructor(
-    private readonly source: string,
+    source: string,
     private readonly send: Sender = defaultSend,
     private readonly now: () => number = () => performance.now(),
+    private readonly protocol: Protocol = sqlProtocol(source),
   ) {}
 
   subscribe = (listener: () => void): (() => void) => {
@@ -101,15 +127,20 @@ export class RunnerStore {
     const id = ++this.seq;
     this.set(tab, { status: "running", kind, statement, startedAt });
 
-    const path = apiPath("sources", this.source, kind === "run" ? "query" : "explain");
-    const body = kind === "run" ? { sql: statement, write } : { sql: statement };
-
     try {
-      const result = await this.send(path, body, controller.signal);
+      const { path, body } = this.protocol.request(kind, statement, write);
+      const raw = await this.send(path, body, controller.signal);
       if (this.controllers.get(tab) === controller) {
-        this.set(tab, { status: "done", id, kind, statement, result, roundTripMs: Math.round(this.now() - startedAt) });
+        const roundTripMs = Math.round(this.now() - startedAt);
+        this.set(tab, { status: "done", id, kind, statement, result: this.protocol.result(raw, roundTripMs), roundTripMs });
       }
     } catch (err) {
+      if (err instanceof StatementError) {
+        if (this.controllers.get(tab) === controller) {
+          this.set(tab, { status: "error", kind, statement, error: { kind: "input", label: labels.input, message: err.message } });
+        }
+        return;
+      }
       if (this.controllers.get(tab) !== controller) {
         return;
       }
