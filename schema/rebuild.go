@@ -18,6 +18,15 @@ type RebuildOption func(*rebuildOptions)
 type rebuildOptions struct {
 	renames      map[string]string // new column -> old column
 	dropTriggers bool
+	dropColumns  []string
+}
+
+// DropColumns accepts losing the named columns of the old table. Without it
+// Rebuild refuses a table holding a column the new definition neither
+// declares nor renames, because the rows of that column would be gone. Naming
+// a column the table does not have, or one the definition keeps, is an error.
+func DropColumns(names ...string) RebuildOption {
+	return func(o *rebuildOptions) { o.dropColumns = append(o.dropColumns, names...) }
 }
 
 // DropTriggers lets Rebuild proceed on a table that has triggers: dropping
@@ -48,7 +57,8 @@ const rebuildPrefix = "_vk_rebuild_"
 //
 // fn describes the whole new table, as Create does: only what it declares
 // survives, so indexes the old table had must be declared again. Views and
-// triggers that mention the table are not recreated.
+// triggers that mention the table are not recreated. A stored column left out
+// of fn makes Rebuild fail unless DropColumns names it.
 //
 // SQLite only (on PostgreSQL and MySQL use Table and Column.Change). It
 // follows the procedure of https://www.sqlite.org/lang_altertable.html: with
@@ -93,6 +103,12 @@ func (s *Schema) Rebuild(table string, fn func(t *Table), opts ...RebuildOption)
 		}
 	}
 
+	for _, n := range o.dropColumns {
+		if err := checkIdent("column", n); err != nil {
+			return err
+		}
+	}
+
 	if s.model != nil {
 		s.model.rebuild(table, t)
 		return nil
@@ -134,6 +150,10 @@ func (s *Schema) Rebuild(table string, fn func(t *Table), opts ...RebuildOption)
 	}
 
 	cols := rebuildCopy(t, o.renames, have)
+
+	if err := checkLostColumns(table, cols, o.dropColumns, old); err != nil {
+		return err
+	}
 
 	if err := s.checkNewColumns(db, t, o.renames, have, table); err != nil {
 		return err
@@ -227,6 +247,45 @@ func rebuildCopy(t *Table, renames map[string]string, have map[string]bool) []co
 	}
 
 	return out
+}
+
+// checkLostColumns refuses a rebuild that would lose a stored column of the
+// old table without DropColumns naming it. It compares against the columns
+// actually copied, so a column replaced by a rename or by a generated column
+// of the same name counts as lost. A generated column holds no data of its own.
+func checkLostColumns(table string, cols []copyCol, dropped []string, old TableInfo) error {
+	kept := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		kept[c.from] = true
+	}
+
+	for _, d := range dropped {
+		if kept[d] {
+			return fmt.Errorf("schema: rebuild %s: DropColumns names %s, which the new definition keeps", table, d)
+		}
+
+		if !slices.ContainsFunc(old.Columns, func(c ColumnInfo) bool { return c.Name == d }) {
+			return fmt.Errorf("schema: rebuild %s: DropColumns names %s, which the table does not have", table, d)
+		}
+	}
+
+	var lost []string
+
+	for _, c := range old.Columns {
+		if !c.Generated && !kept[c.Name] && !slices.Contains(dropped, c.Name) {
+			lost = append(lost, c.Name)
+		}
+	}
+
+	if len(lost) > 0 {
+		return fmt.Errorf(
+			"schema: rebuild %s would lose column(s) %s; declare them or pass DropColumns to accept",
+			table,
+			strings.Join(lost, ", "),
+		)
+	}
+
+	return nil
 }
 
 // checkNewColumns refuses a new NOT NULL column without a default when the

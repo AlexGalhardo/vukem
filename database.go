@@ -2418,12 +2418,13 @@ func genRebuild(
 
 	plan := rebuildPlan{dropped: map[string]bool{}, added: map[string]bool{}, renamed: map[string]string{}}
 
-	var opts []string
+	var opts, drops []string
 
 	for _, c := range cs {
 		switch c.Kind {
 		case dropColumn:
 			plan.dropped[c.Column] = true
+			drops = append(drops, strconv.Quote(c.Column))
 		case addColumn:
 			plan.added[c.Column] = true
 		case renameColumn:
@@ -2431,6 +2432,10 @@ func genRebuild(
 			opts = append(opts, "schema.RenamedFrom("+strconv.Quote(c.Column)+", "+strconv.Quote(c.To)+")")
 		case createTable, dropTable, warn:
 		}
+	}
+
+	if len(drops) > 0 {
+		opts = append(opts, "schema.DropColumns("+strings.Join(drops, ", ")+")")
 	}
 
 	tbl, _ := snap.Table(table)
