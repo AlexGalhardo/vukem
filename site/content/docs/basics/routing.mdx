@@ -233,6 +233,14 @@ r.Get("/reset-password/{token}", h.ShowReset).
 
 The `install:auth` scaffold does this for its reset route. The value still reaches `c.Param("token")` unchanged.
 
+A path that no registered route serves, such as a webhook handled by a `UseServer` middleware before the session and CSRF middleware, has no route to mark. Declare its pattern on the router and the wildcard shows as `{secret}` in every log line:
+
+```go title="routes/web.go" nocompile
+r.SecretPaths("POST /abacatepay/webhook/{secret}")
+```
+
+The pattern uses the `ServeMux` syntax and applies wherever you call it relative to `UseServer`.
+
 ## Named routes and URL generation
 
 Typing `"/posts/" + id` everywhere breaks the day you rename the path. Give the route a name instead and ask the router for its URL:
