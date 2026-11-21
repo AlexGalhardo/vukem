@@ -19,6 +19,7 @@ package schema
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -457,6 +458,39 @@ func hasTable(ctx context.Context, ex database.Executor, table string) (bool, er
 	}
 
 	return n > 0, nil
+}
+
+// Inspect reads the definition of table as the database has it now: columns,
+// primary key, indexes, foreign keys and, on SQLite, the triggers and the
+// text of each CHECK. The bool is false when the table does not exist, and
+// always while recording (queries are not run then, as in HasTable). On the
+// model FindConflicts builds it knows only the column names of the tables the
+// earlier migrations left.
+func (s *Schema) Inspect(table string) (TableInfo, bool, error) {
+	if err := checkIdent("table", table); err != nil {
+		return TableInfo{}, false, err
+	}
+
+	if s.model != nil {
+		mt, ok := s.model.tables[table]
+		if !ok {
+			return TableInfo{}, false, nil
+		}
+
+		info := TableInfo{Name: table}
+
+		for _, c := range slices.Sorted(maps.Keys(mt.cols)) {
+			info.Columns = append(info.Columns, ColumnInfo{Name: c})
+		}
+
+		return info, true, nil
+	}
+
+	if s.record != nil {
+		return TableInfo{}, false, nil
+	}
+
+	return InspectTable(s.ctx, s.ex, table)
 }
 
 // HasColumn reports whether table has column (false while recording, and

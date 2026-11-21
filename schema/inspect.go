@@ -45,7 +45,13 @@ type TableInfo struct {
 // mentions CHECK.
 type SQLiteInfo struct {
 	Triggers []string
+	// HasCheck is true when the CREATE TABLE text mentions "check" anywhere,
+	// a column named checked included; Checks is the exact list.
 	HasCheck bool
+	// Checks is the expression of each CHECK constraint, column and table
+	// level, without the CHECK keyword and the outer parentheses, in the
+	// order they appear.
+	Checks []string
 }
 
 // ColumnInfo describes one column.
@@ -277,6 +283,8 @@ func inspectSQLite(ctx context.Context, ex database.Executor, t *TableInfo) erro
 	).Scan(&autoinc, &t.SQLite.HasCheck, &createSQL); err != nil {
 		return err
 	}
+
+	t.SQLite.Checks = sqliteChecks(createSQL.String)
 
 	err = collect(
 		ctx,
@@ -924,4 +932,112 @@ func pick(first bool, a, b string) string {
 	}
 
 	return b
+}
+
+// sqliteChecks extracts the expression of every CHECK constraint from a
+// CREATE TABLE statement. It scans instead of matching a pattern because the
+// expression nests parentheses and may hold quotes, a ")" inside a string, or
+// the word "check" inside a string, an identifier or a comment.
+func sqliteChecks(createSQL string) []string {
+	var out []string
+
+	for i := 0; i < len(createSQL); {
+		c := createSQL[i]
+
+		switch {
+		case c == '\'' || c == '"' || c == '`' || c == '[':
+			i = skipQuoted(createSQL, i)
+		case c == '-' && strings.HasPrefix(createSQL[i:], "--"):
+			i = skipTo(createSQL, i, "\n")
+		case c == '/' && strings.HasPrefix(createSQL[i:], "/*"):
+			i = skipTo(createSQL, i+2, "*/")
+		case isWordByte(c):
+			start := i
+			for i < len(createSQL) && isWordByte(createSQL[i]) {
+				i++
+			}
+
+			if !strings.EqualFold(createSQL[start:i], "check") {
+				continue
+			}
+
+			j := i
+			for j < len(createSQL) && strings.IndexByte(" \t\n\r", createSQL[j]) >= 0 {
+				j++
+			}
+
+			if j < len(createSQL) && createSQL[j] == '(' {
+				end := matchParen(createSQL, j)
+				out = append(out, strings.TrimSpace(createSQL[j+1:end]))
+				i = end
+			}
+		default:
+			i++
+		}
+	}
+
+	return out
+}
+
+func isWordByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80
+}
+
+// skipQuoted returns the index after the quoted token that starts at i. A
+// doubled quote character is an escaped one ("a""b").
+func skipQuoted(s string, i int) int {
+	closer := s[i]
+	if closer == '[' {
+		closer = ']'
+	}
+
+	for i++; i < len(s); i++ {
+		if s[i] != closer {
+			continue
+		}
+
+		if closer != ']' && i+1 < len(s) && s[i+1] == closer {
+			i++
+			continue
+		}
+
+		return i + 1
+	}
+
+	return len(s)
+}
+
+// skipTo returns the index after the first end at or after i, or len(s).
+func skipTo(s string, i int, end string) int {
+	n := strings.Index(s[i:], end)
+	if n < 0 {
+		return len(s)
+	}
+
+	return i + n + len(end)
+}
+
+// matchParen returns the index of the ")" that closes the "(" at open, or
+// len(s) when the statement ends first.
+func matchParen(s string, open int) int {
+	depth := 0
+
+	for i := open; i < len(s); {
+		switch s[i] {
+		case '\'', '"', '`', '[':
+			i = skipQuoted(s, i)
+			continue
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+
+		i++
+	}
+
+	return len(s)
 }
