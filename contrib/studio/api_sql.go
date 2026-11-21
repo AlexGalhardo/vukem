@@ -313,7 +313,7 @@ func (s *Studio) apiExplain(w http.ResponseWriter, r *http.Request) {
 // run, which is that text or the statement that explains it.
 func (s *Studio) apiRunSQL(w http.ResponseWriter, r *http.Request, src SQLSource, text, run string, write bool) {
 	if len(text) > maxSQLBytes {
-		s.apiFail(w, r, inputError("the statement is over 64 KiB"))
+		s.apiWriteFail(w, r, inputError("the statement is over 64 KiB"))
 		return
 	}
 
@@ -324,7 +324,8 @@ func (s *Studio) apiRunSQL(w http.ResponseWriter, r *http.Request, src SQLSource
 	}
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		// The class only: a driver's text can quote the values of the statement.
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
@@ -335,7 +336,7 @@ func (s *Studio) apiRunSQL(w http.ResponseWriter, r *http.Request, src SQLSource
 
 	out := map[string]any{
 		"columns": orEmpty(rs.Columns), "rows": rows, "truncated": rs.Truncate,
-		"elapsedMs": rs.Elapsed.Milliseconds(),
+		"elapsedMs": rs.Elapsed.Milliseconds(), "kind": rs.Kind,
 	}
 	if rs.HasAffected {
 		out["affected"] = rs.Affected
