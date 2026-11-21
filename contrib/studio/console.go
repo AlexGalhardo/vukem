@@ -177,6 +177,7 @@ var readVerbs = map[string]bool{
 // name when a "(" follows it ("pg_sleep"(1)).
 func readOnlyStatement(text, family string) bool {
 	first, ok := "", true
+	analyze, writes := false, false
 
 	if !lex(text, family == "mysql", func(w string, call, quoted bool) {
 		switch {
@@ -185,10 +186,19 @@ func readOnlyStatement(text, family string) bool {
 		case quoted:
 		case first == "":
 			first = w
-		case w == "into", (first == "with" || first == "explain") && writeWords[w]:
+		case w == "into", first == "with" && writeWords[w]:
 			ok = false
+		case first == "explain" && (w == "analyze" || w == "analyse"):
+			analyze = true
+		case first == "explain" && writeWords[w]:
+			writes = true
 		}
 	}) {
+		return false
+	}
+
+	// A plain EXPLAIN of a write only shows its plan; EXPLAIN ANALYZE runs it.
+	if analyze && writes {
 		return false
 	}
 
