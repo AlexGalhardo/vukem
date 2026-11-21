@@ -17,12 +17,15 @@ export interface PendingWrite {
 export function ConfirmWriteDialog({
   pending,
   source,
+  note,
   onConfirm,
   onCancel,
   onAfterClose,
 }: {
   pending: PendingWrite | null;
   source: string;
+  /** What to say when no name has to be typed; SQL says it runs in a transaction. */
+  note?: string;
   onConfirm: () => void;
   onCancel: () => void;
   /** Runs right after the dialog closed, to put focus back: the browser's own restore can leave the caret reset. */
@@ -104,7 +107,7 @@ export function ConfirmWriteDialog({
             />
           </>
         ) : (
-          <p className="muted">It runs in a transaction that is committed only if the statement succeeds.</p>
+          <p className="muted">{note ?? "It runs in a transaction that is committed only if the statement succeeds."}</p>
         )}
         <div className="dialog-actions">
           <button type="button" className="button" data-first-focus={need ? undefined : ""} onClick={onCancel}>

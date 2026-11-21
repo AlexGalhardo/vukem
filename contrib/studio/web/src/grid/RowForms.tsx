@@ -1,37 +1,13 @@
-import { useEffect, useId, useRef, useState } from "react";
-import type { FormEvent, ReactElement, RefObject } from "react";
+import { useEffect, useId, useState } from "react";
+import type { FormEvent, ReactElement } from "react";
 import { ApiError, apiPath, apiSend } from "../api/client";
 import type { TableDetail } from "../api/types";
 import { CloseIcon } from "../components/icons";
+import { useModal } from "../components/useModal";
 import { buildInsert } from "./editState";
 import type { NewField } from "./editState";
 import { columnKind } from "./filters";
 import { confirmText, packKey } from "./rowKey";
-
-/** useModal opens a native dialog while open is true and reports a close made by the browser (Escape). */
-function useModal(open: boolean, onClose: () => void): RefObject<HTMLDialogElement | null> {
-  const ref = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const d = ref.current;
-    if (!d) {
-      return;
-    }
-    if (open && !d.open) {
-      d.showModal();
-    } else if (!open && d.open) {
-      d.close();
-    }
-  }, [open]);
-
-  useEffect(() => {
-    const d = ref.current;
-    d?.addEventListener("close", onClose);
-    return () => d?.removeEventListener("close", onClose);
-  }, [onClose]);
-
-  return ref;
-}
 
 function messageOf(err: unknown): string {
   return err instanceof ApiError ? err.message : "Studio could not be reached.";

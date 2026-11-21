@@ -7,7 +7,7 @@ import type { Token } from "./tokenizer";
  * statement mentions. Nothing is sent anywhere.
  */
 
-export type SuggestionKind = "keyword" | "table" | "column";
+export type SuggestionKind = "keyword" | "table" | "column" | "stage";
 
 export interface Suggestion {
   label: string;

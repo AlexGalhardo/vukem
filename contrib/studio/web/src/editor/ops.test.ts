@@ -143,6 +143,13 @@ describe("bracketMatch", () => {
     ]);
   });
 
+  test("pairs braces, for JSON", () => {
+    expect(bracketMatch(lines("{a: {b}}"), { line: 0, col: 1 })).toEqual([
+      { line: 0, col: 0 },
+      { line: 0, col: 7 },
+    ]);
+  });
+
   test("ignores brackets in strings and comments", () => {
     expect(bracketMatch(lines("f(')' /* ) */ )"), { line: 0, col: 1 })).toEqual([
       { line: 0, col: 1 },
