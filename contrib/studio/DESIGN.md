@@ -78,6 +78,65 @@ virtualization library).
   write routes do not exist (404). An edit reads the full value first, sends it
   back as `expect`, and the server refuses (409) when the row changed
   meanwhile. A table without a primary key is read-only.
-- **Shortcuts** live in `web/src/shortcuts/`: single plain keys only (`/`, `r`,
-  `n`, `?`), never a combination the browser owns, and never while the focus is
-  in an input, textarea, select or editable element.
+- **Shortcuts** live in `web/src/shortcuts/`: single plain keys (`/`, `r`,
+  `n`, `?`, `]`, `[`) and two-key chords (`q` then `n`, `w` then `c`), never a
+  combination the browser owns (`mod+T`, `mod+W` and `mod+N` are never used), and
+  never while the focus is in an input, textarea, select or editable element.
+  The SQL editor is a typing field, so inside it only its own documented chords
+  apply (see below); they are listed in the help dialog.
+
+## The SQL console
+
+The console is a workspace of tabs (`web/src/tabs/`), each a query or a table,
+with an editor (`web/src/editor/`), a runner and a result view
+(`web/src/console/`), and a history and library (`web/src/history/`). It adds
+no dependency: there is no editor library.
+
+- **The editor** is a real `textarea` (selection, IME, undo, mobile and
+  assistive technology work as they do everywhere) over a highlight layer drawn
+  from a small SQL tokenizer. Font, line height, padding and tab size are the
+  same in both layers, which is the only thing that keeps them aligned. Both the
+  layer and the line numbers draw only the lines in view, from a per-line cache
+  (`LineCache`) that redoes a line, and the lines below it only when what is
+  open (a quote, a comment) moved, so typing in a 5,000-line script costs about
+  a line (median 7 ms in the browser, against 3 ms for a bare textarea).
+  Completion reads 100 lines around the cursor, not the whole script. The layer
+  is `aria-hidden`; in forced-colors mode it steps aside and the textarea draws
+  its own text. Wrapping is off.
+- **Keys of the editor:** `Ctrl` or `Cmd` + `Enter` runs the selection or the
+  statement at the cursor, with `Shift` all of it as one statement; `/` toggles
+  a comment; `S` saves the query; `F` finds (the last two only while the focus
+  is inside the editor, so the browser keeps them elsewhere); `Ctrl+Space`
+  completes. `Tab` indents unless `Escape` came first, so the editor is not a
+  keyboard trap.
+- **Read-only first.** The server refuses a write that was not asked for
+  (a second statement, a comment hiding one, a `WITH` that writes, `SELECT ...
+  INTO`, `EXPLAIN ANALYZE` of a write, `ATTACH`, a setting `PRAGMA`), whatever
+  the interface says. The interface classifies a statement itself only to warn
+  before sending and to decide when to ask. With `--write`, a tab has a Write
+  mode switch (off whenever the tab opens); running a non-read statement then
+  opens a confirmation with the statement and the source and a button named for
+  the statement (`Run UPDATE`); `DROP`, `TRUNCATE` and an `UPDATE` or `DELETE`
+  with no `WHERE` also need the source's name typed.
+- **Runs** can be cancelled (the request is aborted and the server stops the
+  statement), have a 30 second timeout, and return at most 1000 rows and about
+  8 MiB of cell text. Rows show in the same virtualized grid as the table view,
+  sortable, with copy and export of what was loaded.
+- **Tabs** are an ARIA tablist with roving tabindex (Arrow, Home, End, `Delete`
+  to close, `Alt`+Arrow to reorder, drag with the mouse, middle click closes),
+  at most 20 per source. Open tabs and the text of each query are kept in
+  `sessionStorage` per source, so a reload restores them and closing the browser
+  tab clears them. A tab holds a table name or the text of a query, never a
+  result.
+- **History and the library are private to this browser.** Every run is kept
+  in `localStorage` under a key that includes the Studio run (`sessionKey`), and
+  the keys of earlier runs are deleted at startup: the statement, source, time,
+  duration, rows or error kind, and verb (never the rows), 200 at most. The
+  history can be cleared, searched, and switched off (which also clears it), and
+  its panel says it holds values until cleared. "Open in new tab" never runs the
+  statement. Saved queries (100 at most) live under one stable key. Nothing is
+  sent anywhere and a query is never put in a URL.
+- **Logs.** A console failure is logged by its class (`query_failed`,
+  `sqlstate_*`, `canceled`, `timeout`), never by the driver's text, which can
+  quote the very token that broke the statement. The audit of a write records
+  only the size of the statement.

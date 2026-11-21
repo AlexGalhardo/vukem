@@ -35,7 +35,9 @@ one-time start token is traded for. Without the cookie every route answers
   | 415 | `unsupported_media_type` | Not `application/json` |
   | 409 | `conflict` | A guarded update found the row changed; `current` has its values |
 | 422 | `invalid_input` | The request is refused; the message says why |
-  | 500 | `query_failed`, `internal` | The database or Studio failed; the cause is in Studio's log |
+  | 500 | `query_failed`, `internal` | The database or Studio failed; Studio's log has its class, never the database's text |
+  | 504 | `timeout` | A console statement ran past its 30 seconds and was stopped |
+  | 499 | `canceled` | The client closed the connection while the statement ran |
 
 ## Bootstrap
 
@@ -46,11 +48,14 @@ one-time start token is traded for. Without the cookie every route answers
   "version": "v0.1.1",
   "write": false,
   "refreshSeconds": 2,
+  "sessionKey": "9f2c41d07a3b6e58",
   "sources": [{ "name": "db", "kind": "sql", "label": "sqlite  storage/app.db" }]
 }
 ```
 
-`kind` is `sql`, `mongo` or `redis`. `refreshSeconds` is `0` when live refresh is off.
+`kind` is `sql`, `mongo` or `redis`. `refreshSeconds` is `0` when live refresh is off. `sessionKey` names this
+Studio run for the interface's browser storage: it is a one-way hash of the session id (it cannot be traded for
+access) and changes at every start, so history kept under it does not outlive the run.
 
 ## SQL sources
 
@@ -62,7 +67,7 @@ one-time start token is traded for. Without the cookie every route answers
 | `GET /sources/{source}/tables/{table}/rows/{key}` | `{ columns, cells }`, values in full |
 | `GET /sources/{source}/tables/{table}/count` | `{ count }` for the same `filter` parameters, or `{ timedOut: true }` when the bounded `COUNT(*)` (10 seconds) did not finish |
 | `GET /sources/{source}/tables/{table}/references` | `{ references: [{ table, columns, refColumns }] }` |
-| `POST /sources/{source}/query` | `{ columns, rows, truncated, elapsedMs, affected? }` for `{ sql, write? }` |
+| `POST /sources/{source}/query` | `{ columns, rows, truncated, elapsedMs, kind, affected? }` for `{ sql, write? }` |
 | `POST /sources/{source}/explain` | the same shape, for `{ sql }` |
 
 Rows query parameters: `filter=<column>:<op>:<value>` (repeatable; operators `eq`, `ne`, `lt`, `lte`,
@@ -75,9 +80,18 @@ cut for display, `b` is binary and `l` says the text is a JSON number or boolean
 `{key}` is the primary key. A composite key joins its parts with a comma, each part escaped as a
 query value (`1,2`). `next` uses the same packing.
 
-The console runs one statement of at most 64 KiB. It is read-only (`SELECT`, `WITH`, `SHOW`,
+The console runs one statement of at most 64 KiB. `kind` is its verb in upper case (`SELECT`, `UPDATE`; for a
+`WITH` that carries a write, that write's verb). A result holds at most 1000 rows and about 8 MiB of cell text;
+`truncated` says it was cut at either limit. A statement runs for at most 30 seconds (`504`, code `timeout`). It
+stops when the client closes the connection (the request's context is cancelled, the statement is stopped in the
+database, and the answer, which nobody reads, is `499`, code `canceled`). Studio's log holds the size of a
+statement and the class of a failure, never the text or a value. It is read-only (`SELECT`, `WITH`, `SHOW`,
 `EXPLAIN`, `DESCRIBE`, `TABLE`, `VALUES`) unless Studio runs with `--write` and the body has
 `"write": true`.
+
+Read-only is enforced here, whatever the text looks like: a second statement, a comment that hides one, a `WITH`
+that carries an `INSERT`, `UPDATE` or `DELETE`, `SELECT ... INTO`, `EXPLAIN ANALYZE` of a write (a plain `EXPLAIN` only shows the
+plan), `ATTACH`, `VACUUM`, and a `PRAGMA` that sets a value are all refused with `422` before they reach the database.
 
 ## MongoDB sources
 
