@@ -3,6 +3,7 @@ import type { Bootstrap } from "../api/types";
 import { Link, navigate } from "../lib/history";
 import { hrefFor } from "../lib/router";
 import type { Route } from "../lib/router";
+import { useShortcutHelp } from "../shortcuts/ShortcutsProvider";
 import { KeyboardIcon } from "./icons";
 import { ModeBadge } from "./ModeBadge";
 import { ThemeToggle } from "./ThemeToggle";
@@ -13,6 +14,7 @@ function currentSource(route: Route): string {
 
 /** TopBar: the product name, the source switcher, the mode badge and the toggles. */
 export function TopBar({ bootstrap, route }: { bootstrap: Bootstrap; route: Route }): ReactElement {
+  const openHelp = useShortcutHelp();
   const onSource = (e: ChangeEvent<HTMLSelectElement>): void => {
     const source = e.target.value;
     navigate(hrefFor(source === "" ? { name: "overview" } : { name: "source", source }));
@@ -41,9 +43,9 @@ export function TopBar({ bootstrap, route }: { bootstrap: Bootstrap; route: Rout
         <button
           type="button"
           className="icon-button"
-          aria-disabled="true"
-          title="Keyboard shortcuts arrive with the grid"
-          aria-label="Keyboard help (not available yet)"
+          title="Keyboard shortcuts (?)"
+          aria-label="Keyboard shortcuts"
+          onClick={openHelp}
         >
           <KeyboardIcon />
         </button>

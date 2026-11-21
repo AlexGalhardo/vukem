@@ -71,9 +71,9 @@ export function FilterBar({ columns, view, onChange, valueRef, request }: Filter
   return (
     <div className="filter-bar">
       <form className="filter-form" onSubmit={submit} aria-label="Add a filter">
-        <label className="field-inline" htmlFor={ids.column}>
+        <label className="field-inline" htmlFor="filter-column">
           <span>Column</span>
-          <select id={ids.column} value={column} onChange={(e) => setColumn(e.target.value)}>
+          <select id="filter-column" value={column} onChange={(e) => setColumn(e.target.value)}>
             {usable.map((c) => (
               <option key={c.name} value={c.name}>
                 {c.name}
