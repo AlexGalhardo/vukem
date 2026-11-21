@@ -68,5 +68,5 @@ func serveUIFile(w http.ResponseWriter, r *http.Request, files fs.FS, name strin
 	}
 
 	w.Header().Set("Content-Type", ct)
-	_, _ = w.Write(data)
+	_, _ = w.Write(data) //nolint:gosec // G705: bytes of the embedded build, not request data
 }

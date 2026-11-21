@@ -84,7 +84,11 @@ func TestCSPScannerCatchesViolations(t *testing.T) {
 	t.Parallel()
 
 	clean := fstest.MapFS{
-		"index.html":   {Data: []byte(`<script type="module" src="/ui/assets/a.js"></script><link rel="stylesheet" href="/ui/assets/a.css">`)},
+		"index.html": {
+			Data: []byte(
+				`<script type="module" src="/ui/assets/a.js"></script><link rel="stylesheet" href="/ui/assets/a.css">`,
+			),
+		},
 		"assets/a.js":  {Data: []byte(`console.log(1)`)},
 		"assets/a.css": {Data: []byte(`body{margin:0}`)},
 	}
