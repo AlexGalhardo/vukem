@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent, ReactElement } from "react";
 import type { ApiCell, Column } from "../api/types";
-import { SortIcon } from "../components/icons";
+import { LinkIcon, SortIcon } from "../components/icons";
+import { Link } from "../lib/history";
+import type { RowLink } from "./links";
 import { CellContent, PlaceholderCell } from "./Cell";
 import { copyText } from "./clipboard";
 import { columnKind } from "./filters";
@@ -42,6 +44,9 @@ export interface GridProps {
   resetKey: string;
   onOpenRow: (index: number) => void;
   onFilterColumn?: (column: string) => void;
+  /** The link a cell draws for a foreign key, if its column has one. */
+  linkFor?: (column: string, cells: readonly ApiCell[]) => RowLink | null;
+  source: string;
 }
 
 interface Size {
@@ -73,6 +78,8 @@ export function Grid({
   resetKey,
   onOpenRow,
   onFilterColumn,
+  linkFor,
+  source,
 }: GridProps): ReactElement {
   const scroller = useRef<HTMLDivElement>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
@@ -423,9 +430,33 @@ export function Grid({
         className={`grid-cell${pinnedCell ? " grid-pinned" : ""} kind-${kind}`}
         style={style}
       >
-        {cell ? <CellContent cell={cell} kind={kind} /> : <PlaceholderCell />}
+        {cell ? (
+          <CellContent
+            cell={cell}
+            kind={kind}
+            onExpand={() => onOpenRow(rowIndex)}
+            link={fkLink(c?.name, cells)}
+          />
+        ) : (
+          <PlaceholderCell />
+        )}
       </div>
     );
+  };
+
+  const fkLink = (column: string | undefined, cells: ApiCell[] | undefined): ReactElement | null => {
+    const link = column && cells ? linkFor?.(column, cells) : null;
+    return link ? (
+      <Link
+        route={{ name: "table", source, table: link.table }}
+        search={link.search}
+        className="cell-link"
+        tabIndex={-1}
+        ariaLabel={link.label}
+      >
+        <LinkIcon />
+      </Link>
+    ) : null;
   };
 
   const rowIndexes: number[] = [];
