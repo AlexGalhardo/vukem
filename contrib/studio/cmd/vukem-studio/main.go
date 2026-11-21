@@ -44,7 +44,7 @@ func resolveVersion(linked string, info *debug.BuildInfo) string {
 	return "v0.0.0-dev"
 }
 
-// DefaultPort is Studio's port; Drizzle Studio uses 4983, so this avoids a clash.
+// defaultPort is Studio's port: an unprivileged one that few tools use.
 const defaultPort = 4984
 
 // Exit codes: 0 stopped by Ctrl+C, 1 an error, 2 bad usage or a security refusal.
