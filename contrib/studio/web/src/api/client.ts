@@ -65,9 +65,15 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
 }
 
 /** apiSend sends a JSON body with a write method (POST, PATCH, DELETE) and reads the JSON answer. */
-export async function apiSend<T>(method: "POST" | "PATCH" | "DELETE", path: string, body: unknown): Promise<T> {
+export async function apiSend<T>(
+  method: "POST" | "PATCH" | "DELETE",
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const res = await fetch(base + path, {
     method,
+    signal,
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify(body),
     credentials: "same-origin",

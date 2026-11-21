@@ -98,3 +98,15 @@ export interface Reference {
 export interface ReferencesResponse {
   references: Reference[];
 }
+
+/** The answer of a console statement: one result set, or Affected for a write. */
+export interface QueryResponse {
+  columns: string[];
+  rows: ApiCell[][];
+  /** True when the rows were cut at the console row or size limit. */
+  truncated: boolean;
+  elapsedMs: number;
+  /** The verb of the statement in upper case. */
+  kind: string;
+  affected?: number;
+}
