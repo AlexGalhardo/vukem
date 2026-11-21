@@ -204,7 +204,10 @@ var ErrInvalidToken = errors.New("oauth: invalid access token")
 
 // VerifyAccessToken checks a token issued by this server for resource: the
 // signature (with an algorithm from the allow list, never "none" and never a
-// symmetric one), issuer, expiry and that the audience is exactly resource.
+// symmetric one), issuer, expiry, that the audience is exactly resource, and
+// that its grant still exists and is not revoked, so a revocation takes effect
+// on the next call instead of when the token expires. A store failure is
+// returned as is and never accepts the token.
 func (s *Server) VerifyAccessToken(ctx context.Context, token, resource string) (*AccessToken, error) {
 	claims, err := s.verifier.Verify(ctx, token)
 	if err != nil || !slices.Contains(claims.Audience, resource) || len(claims.Audience) != 1 {
@@ -213,6 +216,24 @@ func (s *Server) VerifyAccessToken(ctx context.Context, token, resource string) 
 
 	scope, _ := claims.Extra["scope"].(string)
 	clientID, _ := claims.Extra["client_id"].(string)
+	grantID, _ := claims.Extra["gid"].(string)
+
+	if grantID == "" {
+		return nil, ErrInvalidToken
+	}
+
+	grant, err := s.cfg.Store.Grant(ctx, grantID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, ErrInvalidToken
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load grant of access token: %w", err)
+	}
+
+	if grant.Revoked || grant.Subject != claims.Subject || grant.ClientID != clientID {
+		return nil, ErrInvalidToken
+	}
 
 	return &AccessToken{
 		Subject: claims.Subject, ClientID: clientID, Scopes: strings.Fields(scope),
@@ -229,7 +250,7 @@ func (s *Server) issueAccessToken(
 	claims := jwt.Claims{
 		Issuer: s.cfg.Issuer, Subject: g.Subject, Audience: []string{g.Resource},
 		IssuedAt: now, NotBefore: now, ExpiresAt: now.Add(s.cfg.AccessTokenTTL), ID: rand.Text(),
-		Extra: map[string]any{"scope": strings.Join(scopes, " "), "client_id": clientID},
+		Extra: map[string]any{"scope": strings.Join(scopes, " "), "client_id": clientID, "gid": g.ID},
 	}
 
 	token, err = jwt.Sign(s.cfg.Keys[0], claims)

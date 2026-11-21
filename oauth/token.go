@@ -286,8 +286,9 @@ func (s *Server) issue(
 }
 
 // RevokeHandler serves the revocation endpoint (RFC 7009). It revokes the
-// whole grant behind a refresh token. Access tokens are short-lived JWTs and
-// are not revoked individually. Unknown tokens answer 200, as the RFC asks.
+// whole grant behind a refresh token, which also ends its access tokens,
+// because VerifyAccessToken checks the grant. Unknown tokens answer 200, as
+// the RFC asks.
 func (s *Server) RevokeHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

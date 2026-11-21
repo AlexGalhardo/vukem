@@ -91,6 +91,8 @@ func (s *Server) AuthorizeHandler() http.Handler {
 		case http.MethodGet:
 			s.authorize(w, r, r.URL.Query(), false)
 		case http.MethodPost:
+			r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+
 			if err := r.ParseForm(); err != nil {
 				http.Error(w, "invalid authorization request", http.StatusBadRequest)
 

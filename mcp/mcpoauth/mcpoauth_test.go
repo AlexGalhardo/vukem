@@ -32,8 +32,16 @@ func TestVerifierAdaptsTheAuthorizationServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	store := oauth.NewMemoryStore()
+	if err := store.CreateGrant(t.Context(), oauth.Grant{
+		ID: "g1", ClientID: "app", Subject: "u1", Scopes: []string{"read", "write"}, Resource: resource,
+		CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	as, err := oauth.New(oauth.Config{
-		Issuer: issuer, Keys: []jwt.Key{jwt.ES256("k1", key)}, Store: oauth.NewMemoryStore(),
+		Issuer: issuer, Keys: []jwt.Key{jwt.ES256("k1", key)}, Store: store,
 		Clients: oauth.StaticClients{}, Consent: noConsent{}, Resources: []string{resource},
 		CSRFKey: bytes.Repeat([]byte{1}, 32),
 	})
@@ -46,7 +54,7 @@ func TestVerifierAdaptsTheAuthorizationServer(t *testing.T) {
 	sign := func(aud string) string {
 		tok, err := jwt.Sign(jwt.ES256("k1", key), jwt.Claims{
 			Issuer: issuer, Subject: "u1", Audience: []string{aud}, ExpiresAt: time.Now().Add(time.Minute),
-			Extra: map[string]any{"scope": "read write", "client_id": "app"},
+			Extra: map[string]any{"scope": "read write", "client_id": "app", "gid": "g1"},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -65,5 +73,14 @@ func TestVerifierAdaptsTheAuthorizationServer(t *testing.T) {
 		if _, err := v.VerifyAccessToken(t.Context(), tok, resource); !errors.Is(err, mcp.ErrInvalidToken) {
 			t.Errorf("%s: err = %v, want mcp.ErrInvalidToken", name, err)
 		}
+	}
+
+	live := sign(resource)
+	if err := store.RevokeGrant(t.Context(), "g1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := v.VerifyAccessToken(t.Context(), live, resource); !errors.Is(err, mcp.ErrInvalidToken) {
+		t.Errorf("revoked grant: err = %v, want mcp.ErrInvalidToken", err)
 	}
 }
