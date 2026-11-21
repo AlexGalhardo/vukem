@@ -2,6 +2,8 @@ package studio
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -39,10 +41,13 @@ type apiSource struct {
 }
 
 type apiBootstrap struct {
-	Version        string      `json:"version"`
-	Write          bool        `json:"write"`
-	RefreshSeconds float64     `json:"refreshSeconds"`
-	Sources        []apiSource `json:"sources"`
+	Version        string  `json:"version"`
+	Write          bool    `json:"write"`
+	RefreshSeconds float64 `json:"refreshSeconds"`
+	// SessionKey names this Studio run for the interface's browser storage. It is a one-way
+	// hash of the session id, so it cannot be traded for access, and it changes at every start.
+	SessionKey string      `json:"sessionKey"`
+	Sources    []apiSource `json:"sources"`
 }
 
 // apiRoutes registers the read routes of the API; apiWriteRoutes adds the
@@ -90,8 +95,14 @@ func (s *Studio) apiBootstrap(w http.ResponseWriter, _ *http.Request) {
 
 	writeJSON(w, http.StatusOK, apiBootstrap{
 		Version: s.cfg.Version, Write: s.cfg.Write,
-		RefreshSeconds: refreshInterval(s.cfg.Refresh).Seconds(), Sources: sources,
+		RefreshSeconds: refreshInterval(s.cfg.Refresh).Seconds(), SessionKey: s.sessionKey(), Sources: sources,
 	})
+}
+
+func (s *Studio) sessionKey() string {
+	sum := sha256.Sum256([]byte("vukem-studio-session-key:" + s.sessionID))
+
+	return hex.EncodeToString(sum[:8])
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
