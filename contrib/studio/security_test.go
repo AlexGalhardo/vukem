@@ -285,7 +285,7 @@ func TestRootRedirectsToUI(t *testing.T) {
 	}
 }
 
-// TestLegacyPagesAreGone: the pages of the old htmx interface no longer exist.
+// TestLegacyPagesAreGone: the pages of the old server-rendered interface no longer exist.
 // Behind the session they answer 404; without it, 401 like every other path.
 func TestLegacyPagesAreGone(t *testing.T) {
 	t.Parallel()
@@ -295,7 +295,7 @@ func TestLegacyPagesAreGone(t *testing.T) {
 
 	for _, target := range []string{
 		"/s/db", "/s/db/t/users", "/s/db/t/users/r?k=1", "/s/db/console", "/s/mongo/c/users", "/s/redis/k/a",
-		"/s/db/t/users/export", "/events?view=/s/db", "/assets/htmx.min.js", "/assets/studio.js", "/assets/studio.css",
+		"/s/db/t/users/export", "/events?view=/s/db", "/assets/app.js", "/assets/studio.js", "/assets/studio.css",
 	} {
 		r := request(http.MethodGet, target)
 		r.AddCookie(cookie)

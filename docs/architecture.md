@@ -74,7 +74,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   ├── imaging/                  module …/contrib/imaging (thumbnails from storage.Disk: bounded decode, EXIF orientation)
 │   ├── qrcode/                   module …/contrib/qrcode (PNG and SVG QR codes, rsc.io/qr)
 │   ├── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
-│   └── studio/                   module …/contrib/studio (experimental database browser behind `vukem studio`: SQL, MongoDB, Redis)
+│   └── studio/                   module …/contrib/studio (experimental database browser behind `vukem studio`: SQL, MongoDB, Redis; a React interface built into `ui/` and embedded, no JavaScript toolchain at install time)
 ├── internal/cli/starter/         app skeletons embedded by `vukem new`
 ├── docs/
 └── go.work                       local development; nested-module CI jobs run with GOWORK=off
