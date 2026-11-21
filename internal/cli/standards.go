@@ -316,7 +316,7 @@ const minimalPackageJSON = `{
   "version": "0.1.0",
   "scripts": {
     "lint:md": "markdownlint-cli2 \"**/*.md\"",
-    "secrets:scan": "betterleaks git --no-banner --redact"
+    "secrets:scan": "betterleaks git . --config .betterleaks.toml --no-banner --redact"
   },
   "devDependencies": {
     "markdownlint-cli2": "` + markdownlintVersion + `"
@@ -354,7 +354,7 @@ func patchPackageJSON(env *Env, assets, biome bool) error {
 	}{
 		{"{\n", `  "version": "0.1.0",`, `"version"`, false},
 		{"  \"scripts\": {\n", `    "lint:md": "markdownlint-cli2 \"**/*.md\"",`, `"lint:md"`, false},
-		{"  \"scripts\": {\n", `    "secrets:scan": "betterleaks git --no-banner --redact",`, `"secrets:scan"`, false},
+		{"  \"scripts\": {\n", `    "secrets:scan": "betterleaks git . --config .betterleaks.toml --no-banner --redact",`, `"secrets:scan"`, false},
 		{"  \"devDependencies\": {\n", `    "markdownlint-cli2": "` + markdownlintVersion + `",`, `"markdownlint-cli2"`, false},
 		{"  \"scripts\": {\n", `    "lint:js": "biome lint --no-errors-on-unmatched .",`, `"lint:js"`, true},
 		{"  \"scripts\": {\n", `    "format": "biome format --write --no-errors-on-unmatched .",`, `"format"`, true},

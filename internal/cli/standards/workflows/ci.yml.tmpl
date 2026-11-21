@@ -108,7 +108,7 @@ jobs:
       # print the matched value. A reviewed false positive goes in
       # .betterleaksignore as commit:file:rule:line.
       - name: betterleaks
-        run: betterleaks git . --no-banner --redact --report-format json --report-path betterleaks.json
+        run: betterleaks git . --config .betterleaks.toml --no-banner --redact --report-format json --report-path betterleaks.json
       - name: print findings
         if: failure()
         run: jq -r '.[] | "\(.RuleID) \(.File):\(.StartLine) \(.Commit)"' betterleaks.json
