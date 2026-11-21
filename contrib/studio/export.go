@@ -63,22 +63,21 @@ func writeCSV(w *csv.Writer, header []string, rows [][]string) error {
 // exportMax documents. It reads, so it works without --write. When the cap is
 // reached the trailer X-Studio-Truncated says so.
 func (s *Studio) exportDocuments(w http.ResponseWriter, r *http.Request) {
-	m := s.mongo(r)
+	m := s.apiMongo(w, r)
 	if m == nil {
-		http.NotFound(w, r)
 		return
 	}
 
 	if f := r.URL.Query().Get("format"); f != "" && f != "json" {
-		s.fail(w, r, inputError("format must be json"))
+		s.apiFail(w, r, inputError("format must be json"))
 		return
 	}
 
 	coll, q := r.PathValue("collection"), r.URL.Query()
 
-	filters, err := filtersFrom(q, htmlParams.filter)
+	filters, err := filtersFrom(q, apiParams.filter)
 	if err != nil {
-		s.fail(w, r, err)
+		s.apiFail(w, r, err)
 		return
 	}
 
@@ -86,7 +85,7 @@ func (s *Studio) exportDocuments(w http.ResponseWriter, r *http.Request) {
 
 	// Check the collection and the filters before the response starts.
 	if _, err := m.Documents(r.Context(), DocQuery{Collection: coll, Filters: query.Filters, PerPage: 1}); err != nil {
-		s.fail(w, r, err)
+		s.apiFail(w, r, err)
 		return
 	}
 

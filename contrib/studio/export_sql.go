@@ -14,23 +14,22 @@ import (
 // MongoDB export. It reads, so it works without --write. A CSV cell that
 // starts with =, +, - or @ gets a leading quote.
 func (s *Studio) exportRows(w http.ResponseWriter, r *http.Request) {
-	src := s.sql(r)
+	src := s.apiSQL(w, r)
 	if src == nil {
-		http.NotFound(w, r)
 		return
 	}
 
 	format := r.URL.Query().Get("format")
 	if format != "" && format != "json" && format != "csv" {
-		s.fail(w, r, inputError("format must be json or csv"))
+		s.apiFail(w, r, inputError("format must be json or csv"))
 		return
 	}
 
 	q := r.URL.Query()
 
-	filters, err := filtersFrom(q, htmlParams.filter)
+	filters, err := filtersFrom(q, apiParams.filter)
 	if err != nil {
-		s.fail(w, r, err)
+		s.apiFail(w, r, err)
 		return
 	}
 
@@ -43,7 +42,7 @@ func (s *Studio) exportRows(w http.ResponseWriter, r *http.Request) {
 	// filter or sort is a normal error page.
 	pg, err := src.Rows(r.Context(), query)
 	if err != nil {
-		s.fail(w, r, err)
+		s.apiFail(w, r, err)
 		return
 	}
 

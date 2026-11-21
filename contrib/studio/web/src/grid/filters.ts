@@ -215,13 +215,12 @@ export type ExportFormat = "csv" | "jsonl";
 
 /**
  * exportHref is the download link of the rows the view shows: the filters and
- * the sort go along, and the server streams at most 100,000 rows. It uses the
- * export route Studio already had, which names the filter parameter f.
+ * the sort go along, and the server streams at most 100,000 rows.
  */
 export function exportHref(source: string, table: string, view: ViewState, format: ExportFormat): string {
   const params = new URLSearchParams();
   for (const f of view.filters) {
-    params.append("f", formatFilter(f));
+    params.append("filter", formatFilter(f));
   }
   if (view.sort !== null) {
     params.set("sort", view.sort);
@@ -230,7 +229,7 @@ export function exportHref(source: string, table: string, view: ViewState, forma
     }
   }
   params.set("format", format === "csv" ? "csv" : "json");
-  return `/s/${encodeURIComponent(source)}/t/${encodeURIComponent(table)}/export?${params.toString()}`;
+  return `/api/v1/sources/${encodeURIComponent(source)}/tables/${encodeURIComponent(table)}/export?${params.toString()}`;
 }
 
 /** nextSort cycles a column header: ascending, then descending, then none. */

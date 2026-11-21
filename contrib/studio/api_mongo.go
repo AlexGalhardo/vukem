@@ -28,6 +28,7 @@ func (s *Studio) apiMongoRoutes() {
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/collections", s.apiCollections)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/collections/{collection}/documents", s.apiDocuments)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/collections/{collection}/documents/{id}", s.apiDocument)
+	s.mux.HandleFunc("GET /api/v1/sources/{source}/collections/{collection}/export", s.exportDocuments)
 	s.mux.HandleFunc("POST /api/v1/sources/{source}/find", s.apiFind)
 	s.mux.HandleFunc("POST /api/v1/sources/{source}/aggregate", s.apiAggregate)
 }

@@ -148,9 +148,9 @@ describe("exportHref", () => {
   test("carries the filters, the sort and the format on the export route", () => {
     const href = exportHref("my db", "a/b", { filters: [f("qty", "gte", "7"), f("bio", "null")], sort: "name", desc: true }, "csv");
     const [path, query] = href.split("?");
-    expect(path).toBe("/s/my%20db/t/a%2Fb/export");
+    expect(path).toBe("/api/v1/sources/my%20db/tables/a%2Fb/export");
     const params = new URLSearchParams(query);
-    expect(params.getAll("f")).toEqual(["qty:gte:7", "bio:null:"]);
+    expect(params.getAll("filter")).toEqual(["qty:gte:7", "bio:null:"]);
     expect(params.get("sort")).toBe("name");
     expect(params.get("desc")).toBe("1");
     expect(params.get("format")).toBe("csv");
@@ -158,7 +158,7 @@ describe("exportHref", () => {
 
   test("JSON Lines is the server's json format; the default view has no filters or sort", () => {
     const href = exportHref("db", "users", { filters: [], sort: null, desc: false }, "jsonl");
-    expect(href).toBe("/s/db/t/users/export?format=json");
+    expect(href).toBe("/api/v1/sources/db/tables/users/export?format=json");
   });
 });
 
