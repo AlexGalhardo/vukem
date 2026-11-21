@@ -47,6 +47,8 @@ type apiBootstrap struct {
 func (s *Studio) apiRoutes() {
 	s.mux.HandleFunc("GET /api/v1/bootstrap", s.apiBootstrap)
 	s.apiSQLRoutes()
+	s.apiMongoRoutes()
+	s.apiRedisRoutes()
 
 	// Anything else under /api/v1/ is a JSON 404, so the interface never gets
 	// an HTML page where it expects JSON.
@@ -101,6 +103,10 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, apiError{Error: apiErrorBody{Code: code, Message: message}})
 }
 
+// studioPrefix starts the messages Studio writes itself, as opposed to what a
+// driver reports.
+const studioPrefix = "studio: "
+
 // apiFail answers a data error: 404 for something that is not there, 422 for
 // input the browser sent, 500 otherwise. The cause goes to the Studio log;
 // the response only has a generic message, or the reason of a refusal that the
@@ -114,6 +120,10 @@ func (s *Studio) apiFail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, errInput):
 		status, code = http.StatusUnprocessableEntity, "invalid_input"
 		msg = strings.TrimPrefix(strings.TrimPrefix(err.Error(), errInput.Error()), "\n")
+	case strings.HasPrefix(err.Error(), studioPrefix):
+		// Studio's own refusals (a filter, a pipeline, a command) say why.
+		status, code = http.StatusUnprocessableEntity, "invalid_input"
+		msg = strings.TrimPrefix(err.Error(), studioPrefix)
 	default:
 		if _, ok := errors.AsType[*queryError](err); ok {
 			code, msg = "query_failed", "The database could not run the request. The details are in the Studio log."

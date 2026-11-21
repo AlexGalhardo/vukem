@@ -1,0 +1,14 @@
+{
+  "keys": [
+    {
+      "key": "a",
+      "type": "string",
+      "ttlSeconds": 60
+    },
+    {
+      "key": "b",
+      "type": "string",
+      "ttlSeconds": 60
+    }
+  ]
+}
