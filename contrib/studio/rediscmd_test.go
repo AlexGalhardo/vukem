@@ -1,6 +1,8 @@
 package studio
 
 import (
+	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -145,5 +147,44 @@ func TestRedisCommandNamesAreASCII(t *testing.T) {
 
 	if err := checkRedisArgs([]string{"object", "ınfo"}, false); err == nil {
 		t.Error("an OBJECT subcommand that only Unicode upper-cases to a listed one was accepted")
+	}
+}
+
+// TestRedisCommandListsMatchTheInterface keeps the lists in the interface (used
+// for completion and an early notice) equal to the allow-lists above.
+func TestRedisCommandListsMatchTheInterface(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("web/src/redis/commands.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		marker string
+		want   []string
+	}{{"readCommands", redisReadCommands}, {"writeCommands", redisWriteCommands}} {
+		_, rest, ok := strings.Cut(string(src), "// "+tc.marker+":begin")
+		body, _, ok2 := strings.Cut(rest, "// "+tc.marker+":end")
+
+		if !ok || !ok2 {
+			t.Fatalf("%s markers not found in commands.ts", tc.marker)
+		}
+
+		got := regexp.MustCompile(`"([A-Z]+)"`).FindAllStringSubmatch(body, -1)
+		names := make([]string, len(got))
+
+		for i, m := range got {
+			names[i] = m[1]
+		}
+
+		slices.Sort(names)
+
+		want := slices.Clone(tc.want)
+		slices.Sort(want)
+
+		if !slices.Equal(names, want) {
+			t.Errorf("%s in commands.ts = %v, server = %v", tc.marker, names, want)
+		}
 	}
 }
