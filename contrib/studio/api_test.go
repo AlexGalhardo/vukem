@@ -635,3 +635,131 @@ func TestAPISchemaCreateStatement(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIMongoWrite(t *testing.T) {
+	t.Parallel()
+
+	id := url.PathEscape(`{"$numberInt":"1"}`)
+	base := "/api/v1/sources/mongo/collections/users/documents"
+
+	t.Run("without the flag no write route exists", func(t *testing.T) {
+		t.Parallel()
+
+		_, h := mixedStudio(t, false)
+
+		for _, rt := range []struct{ method, target, body string }{
+			{"POST", base, `{"doc":"{\"s\":\"S3cret\"}"}`},
+			{"PUT", base + "/" + id, `{"doc":"{\"s\":\"S3cret\"}"}`},
+			{"DELETE", base + "/" + id, `{"confirm":"1"}`},
+		} {
+			if rec := apiDo(h.s, h.login, rt.method, rt.target, rt.body); rec.Code != http.StatusNotFound {
+				t.Errorf("%s %s without --write = %d, want 404", rt.method, rt.target, rec.Code)
+			}
+		}
+
+		for _, c := range h.fm.calls {
+			if c == "insert" || c == "replace" || c == "remove" {
+				t.Errorf("a write reached MongoDB: %v", h.fm.calls)
+			}
+		}
+	})
+
+	t.Run("with the flag insert, replace and delete run and are audited without values", func(t *testing.T) {
+		t.Parallel()
+
+		_, h := mixedStudio(t, true)
+
+		for _, rt := range []struct {
+			method, target, body string
+			status               int
+		}{
+			{"POST", base, `{"doc":"{\"note\":\"S3cret-insert\"}"}`, http.StatusCreated},
+			{"PUT", base + "/" + id, `{"doc":"{\"note\":\"S3cret-replace\"}"}`, http.StatusOK},
+			{"DELETE", base + "/" + id, `{"confirm":"nope"}`, http.StatusUnprocessableEntity},
+			{"DELETE", base + "/" + id, `{"confirm":"1"}`, http.StatusOK},
+		} {
+			if rec := apiDo(h.s, h.login, rt.method, rt.target, rt.body); rec.Code != rt.status {
+				t.Fatalf("%s %s = %d, want %d (%s)", rt.method, rt.target, rec.Code, rt.status, rec.Body)
+			}
+		}
+
+		for _, want := range []string{"insert", "replace", "remove"} {
+			if !slices.Contains(h.fm.calls, want) {
+				t.Errorf("MongoDB calls = %v, want %s", h.fm.calls, want)
+			}
+		}
+
+		out := h.logs.String()
+		for _, want := range []string{"action=insert", "action=replace", "action=delete"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the audit lacks %q: %s", want, out)
+			}
+		}
+
+		if strings.Contains(out, "S3cret") {
+			t.Errorf("a written value reached the log: %s", out)
+		}
+	})
+}
+
+// TestSecurityConsoleRefusalsThroughTheAPI proves, at the HTTP boundary, that a
+// filter or a command that can reach a script on the server never reaches it:
+// MongoDB's $where, $function, $accumulator, and $out and $merge without
+// --write, and the Redis commands that run scripts, change the configuration,
+// wipe data or scan the whole keyspace at once.
+func TestSecurityConsoleRefusalsThroughTheAPI(t *testing.T) {
+	t.Parallel()
+
+	_, h := mixedStudio(t, false)
+
+	bodies := map[string]string{
+		"find $where":       `{"collection":"users","filter":"{\"$where\":\"sleep(1000)\"}"}`,
+		"find $function":    `{"collection":"users","filter":"{\"a\":{\"$function\":{\"body\":\"x\",\"args\":[],\"lang\":\"js\"}}}"}`,
+		"find nested $expr": `{"collection":"users","filter":"{\"$expr\":{\"$function\":{}}}"}`,
+	}
+
+	for name, body := range bodies {
+		if rec := apiDo(h.s, h.login, "POST", "/api/v1/sources/mongo/find", body); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s = %d, want 422 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+
+	pipelines := map[string]string{
+		"$accumulator": `[{"$group":{"_id":1,"x":{"$accumulator":{}}}}]`,
+		"$function":    `[{"$addFields":{"x":{"$function":{"body":"x","args":[],"lang":"js"}}}}]`,
+		"$where":       `[{"$match":{"$where":"1"}}]`,
+		"$out":         `[{"$match":{}},{"$out":"x"}]`,
+		"$merge":       `[{"$merge":{"into":"x"}}]`,
+	}
+
+	for name, pipeline := range pipelines {
+		body := apiJSON(t, map[string]string{"collection": "users", "pipeline": pipeline})
+		if rec := apiDo(h.s, h.login, "POST", "/api/v1/sources/mongo/aggregate", body); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("aggregate with %s = %d, want 422 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+
+	for _, c := range h.fm.calls {
+		if c == "aggregate" {
+			t.Errorf("a refused pipeline reached MongoDB: %v", h.fm.calls)
+		}
+	}
+
+	for _, line := range []string{
+		`EVAL "return 1" 0`, "EVALSHA abc 0", "FUNCTION LIST", "FCALL f 0", "SCRIPT LOAD x", "CONFIG GET *", "CONFIG SET save x",
+		"FLUSHALL", "FLUSHDB", "flushall", "KEYS *", "SHUTDOWN", "DEBUG SLEEP 1", "ACL LIST", "CLIENT LIST", "MONITOR",
+		"OBJECT HELP", "MEMORY DOCTOR",
+	} {
+		body := apiJSON(t, map[string]string{"line": line})
+		if rec := apiDo(h.s, h.login, "POST", "/api/v1/sources/redis/command", body); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("redis %q = %d, want 422 (%s)", line, rec.Code, rec.Body)
+		}
+	}
+
+	for _, c := range h.rec.names() {
+		switch c {
+		case "EVAL", "EVALSHA", "FUNCTION", "FCALL", "SCRIPT", "CONFIG", "FLUSHALL", "FLUSHDB", "KEYS", "SHUTDOWN", "DEBUG", "ACL", "CLIENT", "MONITOR":
+			t.Errorf("a refused command reached Redis: %v", h.rec.names())
+		}
+	}
+}
