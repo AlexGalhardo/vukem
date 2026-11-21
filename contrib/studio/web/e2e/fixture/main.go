@@ -71,6 +71,7 @@ func grid(db *sql.DB) error {
 			(8, 'big', 1, printf('%070000d', 1), 2, 1, NULL, NULL, NULL)`,
 		`CREATE TABLE audit_lines (line TEXT, at TEXT)`,
 		`INSERT INTO audit_lines VALUES ('one', '2026-01-01'), ('two', '2026-01-02'), ('three', NULL)`,
+		`CREATE VIEW audit_view AS SELECT line FROM audit_lines`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			return err

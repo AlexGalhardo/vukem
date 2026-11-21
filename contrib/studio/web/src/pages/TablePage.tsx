@@ -294,7 +294,15 @@ export function TablePage({ source, table, write }: { source: string; table: str
       <h1 id="table-title">{table}</h1>
 
       {detail.loading || tables.loading ? <Loading what="table" /> : null}
-      {detail.error ? <ErrorNotice error={detail.error} onRetry={detail.reload} /> : null}
+      {detail.error?.status === 404 ? (
+        <div className="notice notice-error" role="alert">
+          <p>
+            Studio has no table called {table} in this source. A view is not listed either: Studio browses tables only.
+          </p>
+        </div>
+      ) : detail.error ? (
+        <ErrorNotice error={detail.error} onRetry={detail.reload} />
+      ) : null}
       {tables.error ? <ErrorNotice error={tables.error} onRetry={tables.reload} /> : null}
 
       {detail.data && tables.data ? (
