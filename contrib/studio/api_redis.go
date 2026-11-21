@@ -83,10 +83,15 @@ func (s *Studio) apiKey(w http.ResponseWriter, r *http.Request) {
 		fields = [][2]string{}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"key": d.Key, "type": d.Type, "ttlSeconds": ttlSeconds(d.TTL), "size": d.Size,
 		"fields": fields, "more": d.More,
-	})
+	}
+	if d.Binary {
+		body["binary"] = true
+	}
+
+	writeJSON(w, http.StatusOK, body)
 }
 
 type commandBody struct {

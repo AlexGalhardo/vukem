@@ -18,6 +18,8 @@ type recorder struct {
 	mu   sync.Mutex
 	cmds []string
 	typ  string
+	// value is what GET answers when it is set.
+	value string
 }
 
 func (r *recorder) names() []string {
@@ -44,7 +46,11 @@ func (r *recorder) answer(cmd goredis.Cmder) {
 	case *goredis.DurationCmd:
 		c.SetVal(time.Minute)
 	case *goredis.StringCmd:
-		c.SetVal("v")
+		if r.value != "" {
+			c.SetVal(r.value)
+		} else {
+			c.SetVal("v")
+		}
 	case *goredis.IntCmd:
 		c.SetVal(3)
 	case *goredis.StringSliceCmd:
@@ -189,5 +195,31 @@ func TestRedisWritesUseTheDocumentedCommands(t *testing.T) {
 
 	if !slices.Equal(got, want) {
 		t.Errorf("commands = %v, want %v", got, want)
+	}
+}
+
+func TestRedisBinaryStringIsFlagged(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, value string
+		binary      bool
+		shown       string
+	}{
+		{"text", "héllo", false, "héllo"},
+		{"binary", "\xff\x00ab", true, `\xff\x00ab`},
+	} {
+		c := goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:1"})
+		c.AddHook(&recorder{typ: "string", value: tc.value})
+		t.Cleanup(func() { _ = c.Close() })
+
+		d, err := newRedisDB("redis", "redis  localhost:6379/0", c).Key(t.Context(), "k", 1)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+
+		if d.Binary != tc.binary || d.Fields[0][1] != tc.shown {
+			t.Errorf("%s: Binary = %v, value = %q; want %v, %q", tc.name, d.Binary, d.Fields[0][1], tc.binary, tc.shown)
+		}
 	}
 }
