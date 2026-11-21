@@ -1,9 +1,12 @@
 package z_test
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -73,4 +76,108 @@ func TestUnrecognized(t *testing.T) {
 			}
 		})
 	}
+}
+
+type unrecognizedHostile struct {
+	Items map[string]unrecognizedAddr `json:"items"`
+	Rows  []unrecognizedAddr          `json:"rows"`
+}
+
+func unknownBody(n int) map[string]any {
+	m := make(map[string]any, n)
+	for i := range n {
+		m[fmt.Sprintf("k%06d", i)] = 1
+	}
+
+	return m
+}
+
+func TestSecurity_UnrecognizedIsBounded(t *testing.T) {
+	t.Parallel()
+
+	typ := reflect.TypeFor[unrecognizedHostile]()
+
+	t.Run("one huge key holding many unknown keys", func(t *testing.T) {
+		t.Parallel()
+
+		body := map[string]any{"items": map[string]any{
+			strings.Repeat("x", 500_000): map[string]any{"zip": 1, "zap": 1},
+			"a":                          unknownBody(50_000),
+		}}
+
+		start := time.Now()
+		got := z.Unrecognized(typ, body)
+
+		if len(got) > 100 {
+			t.Fatalf("got %d issues, want at most 100", len(got))
+		}
+
+		for _, is := range got {
+			if len(is.Path) > 1024+3 || len(is.Message) > 1024+200 {
+				t.Fatalf("issue path %d bytes, message %d bytes, want bounded", len(is.Path), len(is.Message))
+			}
+		}
+
+		if d := time.Since(start); d > 2*time.Second {
+			t.Fatalf("Unrecognized took %v, want it bounded", d)
+		}
+	})
+
+	t.Run("stops out of nested slices and maps", func(t *testing.T) {
+		t.Parallel()
+
+		rows := make([]any, 1000)
+		for i := range rows {
+			rows[i] = map[string]any{"a": 1, "b": 1}
+		}
+
+		got := z.Unrecognized(typ, map[string]any{"rows": rows})
+		if len(got) != 100 {
+			t.Fatalf("got %d issues, want exactly 100", len(got))
+		}
+	})
+
+	t.Run("exact paths for ordinary bodies", func(t *testing.T) {
+		t.Parallel()
+
+		got := z.Unrecognized(typ, map[string]any{"rows": []any{map[string]any{"zip": 1}}})
+		if len(got) != 1 || got[0].Path != "rows.0.zip" {
+			t.Fatalf("got %+v, want one issue at rows.0.zip", got)
+		}
+	})
+
+	t.Run("a clipped multibyte key stays valid UTF-8", func(t *testing.T) {
+		t.Parallel()
+
+		key := strings.Repeat("é", 300) // 600 bytes, boundary falls mid-rune for odd cuts
+		got := z.Unrecognized(typ, map[string]any{key: 1})
+
+		if len(got) != 1 || !utf8.ValidString(got[0].Path) || !utf8.ValidString(got[0].Message) ||
+			!strings.HasSuffix(got[0].Path, "...") || len(got[0].Path) > 256+3 {
+			t.Fatalf("got %+v, want one valid, clipped path", got)
+		}
+
+		odd := strings.Repeat("a", 255) + "é" // the rune straddles byte 256
+		if p := z.Unrecognized(typ, map[string]any{odd: 1})[0].Path; !utf8.ValidString(p) {
+			t.Fatalf("path %q is not valid UTF-8", p)
+		}
+	})
+
+	for _, n := range []int{100, 101} {
+		t.Run(fmt.Sprintf("%d unknown keys", n), func(t *testing.T) {
+			t.Parallel()
+
+			if got := z.Unrecognized(typ, unknownBody(n)); len(got) != 100 {
+				t.Fatalf("got %d issues, want 100", len(got))
+			}
+		})
+	}
+
+	t.Run("99 unknown keys are all reported", func(t *testing.T) {
+		t.Parallel()
+
+		if got := z.Unrecognized(typ, unknownBody(99)); len(got) != 99 {
+			t.Fatalf("got %d issues, want 99", len(got))
+		}
+	})
 }
