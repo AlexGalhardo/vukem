@@ -118,6 +118,11 @@ func (j JWK) Key() (Key, error) {
 	return Key{}, fmt.Errorf("jwt: key %q: type %q not accepted", j.Kid, j.Kty)
 }
 
+// Doer sends one HTTP request; *http.Client implements it.
+type Doer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 // RemoteJWKS fetches an identity provider's key set and refreshes it when
 // a token names an unknown key id (rotation), at most once per MinRefresh.
 type RemoteJWKS struct {
@@ -126,9 +131,10 @@ type RemoteJWKS struct {
 	// Dangerous: the keys that verify tokens can be replaced in transit.
 	InsecureHTTP bool
 	// Client fetches the set (default: 10s timeout, and redirects that leave
-	// https are refused). A client you set is not changed: give it a
-	// CheckRedirect with the same rule.
-	Client *http.Client
+	// https are refused). A *http.Client you set is not changed: give it a
+	// CheckRedirect with the same rule. Any Doer works, such as a client that
+	// gates outbound calls; it must apply its own redirect policy.
+	Client Doer
 	// MaxAge refreshes the cache after this long (default 1h).
 	MaxAge time.Duration
 	// MinRefresh limits refetches for unknown key ids (default 1m), so
@@ -335,7 +341,9 @@ func (r *RemoteJWKS) fetch(ctx context.Context) (map[string]Key, error) {
 	}
 
 	client := r.Client
-	if client == nil {
+	// A nil *http.Client stored in the interface is also "unset": calling Do
+	// on it would panic.
+	if hc, ok := client.(*http.Client); client == nil || ok && hc == nil {
 		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: r.checkRedirect}
 	}
 
