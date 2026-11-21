@@ -116,7 +116,19 @@ const studioPrefix = "studio: "
 // the response only has a generic message, or the reason of a refusal that the
 // request itself caused.
 func (s *Studio) apiFail(w http.ResponseWriter, r *http.Request, err error) {
+	s.apiAnswerFailure(w, r, err, errors.Unwrap(err))
+}
+
+// apiWriteFail is apiFail for a write: the log gets the class of the failure,
+// because the driver's text can quote the values being written.
+func (s *Studio) apiWriteFail(w http.ResponseWriter, r *http.Request, err error) {
+	s.apiAnswerFailure(w, r, err, errorClass(err))
+}
+
+func (s *Studio) apiAnswerFailure(w http.ResponseWriter, r *http.Request, err error, cause any) {
 	status, code, msg := http.StatusInternalServerError, "internal", "The request failed."
+
+	_, isQuery := errors.AsType[*queryError](err)
 
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -124,18 +136,17 @@ func (s *Studio) apiFail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, errInput):
 		status, code = http.StatusUnprocessableEntity, "invalid_input"
 		msg = strings.TrimPrefix(strings.TrimPrefix(err.Error(), errInput.Error()), "\n")
+	case isQuery:
+		// Before the prefix check: queryError's own text starts with "studio: ".
+		code, msg = "query_failed", "The database could not run the request. The details are in the Studio log."
 	case strings.HasPrefix(err.Error(), studioPrefix):
 		// Studio's own refusals (a filter, a pipeline, a command) say why.
 		status, code = http.StatusUnprocessableEntity, "invalid_input"
 		msg = strings.TrimPrefix(err.Error(), studioPrefix)
-	default:
-		if _, ok := errors.AsType[*queryError](err); ok {
-			code, msg = "query_failed", "The database could not run the request. The details are in the Studio log."
-		}
 	}
 
 	s.cfg.Log.WarnContext(r.Context(), "studio api request failed",
-		"path", r.URL.Path, "status", status, "cause", errors.Unwrap(err))
+		"path", r.URL.Path, "status", status, "cause", cause)
 
 	writeAPIError(w, status, code, msg)
 }

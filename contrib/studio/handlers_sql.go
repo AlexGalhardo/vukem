@@ -368,18 +368,22 @@ func (s *Studio) sqlConsole(w http.ResponseWriter, r *http.Request) {
 
 		rs, err := src.Query(r.Context(), run, write)
 		if write {
-			s.audit(r.Context(), src, "console", "sql", err, "statement", truncateBytes(text, 200))
+			s.audit(r.Context(), src, "console", "sql", err, "bytes", len(text))
 		}
 
 		if err != nil {
-			s.cfg.Log.WarnContext(
-				r.Context(),
-				"studio console failed",
-				"error",
-				err.Error(),
-				"cause",
-				errors.Unwrap(err),
-			)
+			// A failed write is already audited by class; its cause can quote values.
+			if !write {
+				s.cfg.Log.WarnContext(
+					r.Context(),
+					"studio console failed",
+					"error",
+					err.Error(),
+					"cause",
+					errors.Unwrap(err),
+				)
+			}
+
 			data["Error"] = clientMessage(err)
 		} else {
 			data["Result"], data["ResultRows"] = rs, gridCells(rs.Rows)
