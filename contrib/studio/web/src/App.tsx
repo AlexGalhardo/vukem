@@ -6,6 +6,7 @@ import { Layout } from "./components/Layout";
 import { ErrorNotice, Loading } from "./components/Notices";
 import { useRoute } from "./lib/history";
 import type { Route } from "./lib/router";
+import { ConsolePage } from "./pages/ConsolePage";
 import { NotFound } from "./pages/NotFound";
 import { Overview } from "./pages/Overview";
 import { SourcePage } from "./pages/SourcePage";
@@ -19,6 +20,8 @@ function titleFor(route: Route): string {
       return route.source;
     case "table":
       return `${route.table} - ${route.source}`;
+    case "console":
+      return `SQL - ${route.source}`;
     case "notfound":
       return "Not found";
   }
@@ -38,6 +41,10 @@ function Page({ bootstrap, route }: { bootstrap: Bootstrap; route: Route }): Rea
       ) : (
         <NotFound />
       );
+    case "console": {
+      const source = bootstrap.sources.find((s) => s.name === route.source && s.kind === "sql");
+      return source ? <ConsolePage source={source} write={bootstrap.write} /> : <NotFound />;
+    }
     case "notfound":
       return <NotFound />;
   }

@@ -7,6 +7,8 @@ import "./styles/tokens.css";
 import "./styles/app.css";
 import "./styles/shell.css";
 import "./styles/grid.css";
+import "./styles/editor.css";
+import "./styles/console.css";
 
 // A saved choice wins over the system setting; without one the tokens follow
 // prefers-color-scheme on their own.

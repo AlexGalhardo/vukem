@@ -72,7 +72,7 @@ function SourceChildren({ source, route }: { source: Source; route: Route }): Re
 
 /** SideNav lists the sources; the open one also lists its tables, collections or keys. */
 export function SideNav({ sources, route }: { sources: Source[]; route: Route }): ReactElement {
-  const open = route.name === "source" || route.name === "table" ? route.source : null;
+  const open = route.name === "source" || route.name === "table" || route.name === "console" ? route.source : null;
 
   return (
     <nav className="sidenav" aria-label="Sources">
@@ -88,6 +88,15 @@ export function SideNav({ sources, route }: { sources: Source[]; route: Route })
               <span className="truncate">{source.name}</span>
               <span className="nav-kind">{source.kind}</span>
             </Link>
+            {open === source.name && source.kind === "sql" ? (
+              <Link
+                route={{ name: "console", source: source.name }}
+                className="nav-link nav-link-child"
+                current={route.name === "console"}
+              >
+                <span className="truncate">SQL console</span>
+              </Link>
+            ) : null}
             {open === source.name ? <SourceChildren source={source} route={route} /> : null}
           </li>
         ))}

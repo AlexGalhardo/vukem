@@ -104,3 +104,13 @@ describe("tablesIn", () => {
     expect(tablesIn("select 1 from nope", 0, source.tables)).toEqual([]);
   });
 });
+
+describe("a word typed in full", () => {
+  test("a lone exact match needs no list", () => {
+    expect(at("select|").labels).toEqual([]);
+  });
+
+  test("an exact match with other candidates stays, first", () => {
+    expect(at("or|").labels.slice(0, 2)).toEqual(["OR", "orders"]);
+  });
+});

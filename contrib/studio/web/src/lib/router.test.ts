@@ -14,6 +14,12 @@ describe("matchRoute", () => {
     expect(matchRoute("/ui/s/db/t/users")).toEqual({ name: "table", source: "db", table: "users" });
   });
 
+  test("matches the SQL console of a source", () => {
+    expect(matchRoute("/ui/s/db/q")).toEqual({ name: "console", source: "db" });
+    expect(matchRoute("/ui/s/db/q/")).toEqual({ name: "console", source: "db" });
+    expect(matchRoute("/ui/s/db/q/x")).toEqual({ name: "notfound" });
+  });
+
   test("decodes escaped names", () => {
     expect(matchRoute("/ui/s/my%20db/t/a%2Fb")).toEqual({ name: "table", source: "my db", table: "a/b" });
   });
@@ -31,6 +37,7 @@ describe("hrefFor", () => {
       { name: "overview" },
       { name: "source", source: "db" },
       { name: "table", source: "my db", table: "a/b" },
+      { name: "console", source: "my db" },
     ];
 
     for (const route of routes) {

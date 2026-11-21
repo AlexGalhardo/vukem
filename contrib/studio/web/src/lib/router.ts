@@ -2,6 +2,7 @@ export type Route =
   | { name: "overview" }
   | { name: "source"; source: string }
   | { name: "table"; source: string; table: string }
+  | { name: "console"; source: string }
   | { name: "notfound" };
 
 export const basePath = "/ui";
@@ -44,6 +45,10 @@ export function matchRoute(pathname: string): Route {
     return { name: "source", source };
   }
 
+  if (kind === "q" && table === undefined) {
+    return { name: "console", source };
+  }
+
   if (kind === "t" && table !== undefined && rest.length === 0) {
     return { name: "table", source, table };
   }
@@ -60,6 +65,8 @@ export function hrefFor(route: Route): string {
       return `${basePath}/s/${encodeURIComponent(route.source)}`;
     case "table":
       return `${basePath}/s/${encodeURIComponent(route.source)}/t/${encodeURIComponent(route.table)}`;
+    case "console":
+      return `${basePath}/s/${encodeURIComponent(route.source)}/q`;
     case "notfound":
       return basePath + "/";
   }
