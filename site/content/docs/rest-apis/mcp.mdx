@@ -1,297 +1,237 @@
 ---
 title: An MCP server for your app
-description: Expose typed app methods to AI agents as Model Context Protocol tools, built on the jsonrpc package, with schemas from your structs and auth from the router.
+description: Serve the Model Context Protocol from your app with the mcp package - typed tools, resources, prompts, confirmation, stdio and Streamable HTTP, with pluggable OAuth.
 ---
 
-The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets an AI agent discover and call the functions of an app. Its wire format is JSON-RPC 2.0: an agent sends `initialize`, asks for `tools/list`, then runs `tools/call`. Vukem has no MCP package for your app yet (the `boost:mcp` command serves agents that **write** your app, not agents that **use** it), but the pieces are already in the framework, so a small server is a page of code:
+The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets an AI agent discover and call the functions of an app. The `mcp` package serves revision `2026-07-28`, the stable one, from any Vukem app. It is not the `boost:mcp` command: Boost serves agents that **write** your app, `mcp` serves agents that **use** it.
 
-- [`jsonrpc`](/docs/rest-apis/json-rpc) parses the requests, batches, errors and notifications.
-- `openapi.Schemas` turns the same structs and `validate` tags that feed [OpenAPI](/docs/rest-apis/openapi) into each tool's `inputSchema` and `outputSchema`.
-- The router middleware authenticates the caller, and `jsonrpc.Guard` checks the scope of each tool.
+You will learn how to:
 
-This page is a recipe, not an API: copy it, shape it to your app and keep it next to your routes.
+- register typed tools whose schemas come from your Go structs
+- add resources, prompts, completion and pagination
+- ask the user to confirm an action with the `input_required` flow
+- serve the server over stdio and over HTTP on the router
+- protect the HTTP endpoint with any OAuth server
+- test it with an in-memory client
 
-## What MCP asks of the server
+## The idea
 
-Three methods and one notification are enough for tools:
+MCP speaks JSON-RPC 2.0. In this revision it is **stateless**: there is no `initialize` handshake and no session, so every request carries its protocol version and the client capabilities in `_meta`. A server behind a load balancer needs no sticky routing.
 
-| Method | Returns |
+The package follows that model. It keeps no state between requests, and a tool is a plain Go function: `func(context.Context, P) (R, error)`, like a [`jsonrpc.Method`](/docs/rest-apis/json-rpc). The transport is its own, because MCP needs Server-Sent Events, no batches and per-request headers that `jsonrpc` does not have.
+
+## Quick start
+
+<Steps>
+
+1. Register a tool. `P` is the input struct and `R` the result struct; both schemas are built once, from the `json`, `validate`, `enum` and `doc` tags, the same ones [OpenAPI](/docs/rest-apis/openapi) reads.
+
+   ```go title="app/mcp/server.go"
+   package appmcp
+
+   import (
+   	"context"
+
+   	"github.com/AlexGalhardo/vukem/mcp"
+   )
+
+   type GetInvoice struct {
+   	ID string `json:"id" validate:"required,uuid" doc:"invoice id"`
+   }
+
+   type Invoice struct {
+   	ID    string `json:"id"`
+   	Total int64  `json:"total" doc:"amount in cents"`
+   }
+
+   func New(invoices Invoices) *mcp.Server {
+   	srv := mcp.NewServer(mcp.Config{Name: "billing", Version: "1.0.0"})
+
+   	mcp.AddTool(srv, mcp.Tool{
+   		Name:        "get_invoice",
+   		Description: "Read one invoice.",
+   		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: new(true)},
+   	}, func(ctx context.Context, in GetInvoice) (Invoice, error) {
+   		return invoices.Find(ctx, in.ID)
+   	})
+
+   	return srv
+   }
+   ```
+
+2. Serve it over HTTP on the router. The handler takes a `TokenVerifier` (see [Authorization](#authorization)); `InsecureNoAuth` is for localhost only.
+
+   ```go title="routes/web.go"
+   h, err := srv.HTTPHandler(mcp.HTTPConfig{
+   	AllowedOrigins:       []string{"https://app.example.com"},
+   	Resource:             "https://api.example.com/mcp",
+   	AuthorizationServers: []string{"https://auth.example.com"},
+   	Verifier:             verifier,
+   })
+   if err != nil {
+   	return err
+   }
+
+   r.Handle("/mcp", h)
+   r.Handle("GET "+h.MetadataPath(), h.MetadataHandler())
+   ```
+
+3. Or serve it over stdio from a command, for a local agent. Standard output carries only protocol messages: log to standard error or a file.
+
+   ```go title="commands/mcp.go"
+   return srv.ServeStdio(ctx, os.Stdin, os.Stdout)
+   ```
+
+</Steps>
+
+## Tools
+
+`AddTool` panics on a bad name, a duplicate or a non-struct `P`, like `http.ServeMux`: these are mistakes to catch at boot. A name has 1 to 128 characters of letters, digits, `_`, `-` and `.`.
+
+When the model calls a tool the server parses the arguments with a strict `z` schema. Bad input becomes a tool result with `isError: true`, so the model can fix it and retry. The result `R` goes out as `structuredContent` with its JSON as a text fallback, and is checked against its own `validate` tags first.
+
+What a tool function returns decides what the client sees:
+
+| Return | The client gets |
 | --- | --- |
-| `initialize` | the protocol version the server speaks, its capabilities (`tools`) and its name |
-| `notifications/initialized` | nothing (a notification) |
-| `tools/list` | every tool with `name`, `description`, `inputSchema` and `outputSchema` |
-| `tools/call` | `content` (text for the model), `structuredContent` (the typed result) and `isError` |
+| a value | `structuredContent` and the JSON text |
+| `mcp.Result` | exactly the content blocks you built |
+| `mcp.ToolErrorf(...)` | a tool error shown to the model |
+| a 4xx `*errs.HTTPError` | a tool error with its safe message |
+| any other error or a panic | `-32603 Internal error`, nothing else; the cause is logged |
 
-MCP is versioned by date and the revisions differ in how a session starts, so read the specification of the revision you target and keep the server on its side of it. The recipe below does not keep session state, which is what a stateless revision and a server behind a load balancer both want.
+Use `mcp.Progress(ctx, 3, 10, "step")` to report progress; it sends nothing unless the client asked for it. Cancellation arrives as `ctx.Done()`: on HTTP a closed connection cancels the request, on stdio `notifications/cancelled` does. Always watch the context, because the server waits for your function.
 
-## A tool registry
+## Confirm before acting
 
-A tool is a name, a description, the two schemas and a function. `Add` is generic like `jsonrpc.Method`: it takes the params type `P` and the result type `R`, validates the arguments with the same strict `z` schema, and builds both JSON Schemas once at registration:
+Return control to the user with `mcp.Confirm`. The server answers `input_required`, the client asks the user and retries the same call with the answer, and your function runs again from the start:
 
 ```go title="app/mcp/tools.go"
-package mcp
-
-import (
-	"context"
-	"encoding/json"
-	"reflect"
-
-	"github.com/AlexGalhardo/vukem/jsonrpc"
-	"github.com/AlexGalhardo/vukem/openapi"
-	"github.com/AlexGalhardo/vukem/z"
-)
-
-type tool struct {
-	Name         string         `json:"name"`
-	Description  string         `json:"description"`
-	InputSchema  map[string]any `json:"inputSchema"`
-	OutputSchema map[string]any `json:"outputSchema,omitempty"`
-
-	guards []jsonrpc.Guard
-	call   func(ctx context.Context, args map[string]any) (any, error)
-}
-
-// Registry holds the tools of one MCP server.
-type Registry struct {
-	tools []*tool
-}
-
-// schemaOf builds a self-contained JSON Schema for t: nested structs are
-// $ref entries under components, so the document carries them along.
-func schemaOf(t reflect.Type) map[string]any {
-	schemas := openapi.NewSchemas()
-	out := schemas.Object(t, nil)
-
-	if defs := schemas.Components(); len(defs) > 0 {
-		out["components"] = map[string]any{"schemas": defs}
-	}
-
-	return out
-}
-
-// Add registers fn as the tool name. P must be a struct.
-func Add[P, R any](reg *Registry, name, description string, fn func(context.Context, P) (R, error), guards ...jsonrpc.Guard) {
-	args := z.For[P]().Strict()
-
-	reg.tools = append(reg.tools, &tool{
-		Name:         name,
-		Description:  description,
-		InputSchema:  schemaOf(reflect.TypeFor[P]()),
-		OutputSchema: schemaOf(reflect.TypeFor[R]()),
-		guards:       guards,
-		call: func(ctx context.Context, in map[string]any) (any, error) {
-			p, err := args.Parse(in)
-			if err != nil {
-				if is, ok := z.AsIssues(err); ok {
-					return nil, &jsonrpc.Error{
-						Code:    jsonrpc.CodeInvalidParams,
-						Message: "Invalid params",
-						Data:    map[string]any{"fields": is.Fields()},
-					}
-				}
-
-				return nil, err
-			}
-
-			return fn(ctx, p)
-		},
-	})
-}
-
-func (r *Registry) find(name string) *tool {
-	for _, t := range r.tools {
-		if t.Name == name {
-			return t
-		}
-	}
-
-	return nil
-}
-
-// result is the answer to tools/call.
-type result struct {
-	Content           []map[string]any `json:"content"`
-	StructuredContent any              `json:"structuredContent,omitempty"`
-	IsError           bool             `json:"isError"`
-}
-
-func ok(v any) (result, error) {
-	text, err := json.Marshal(v)
-	if err != nil {
-		return result{}, err
-	}
-
-	return result{
-		Content:           []map[string]any{{"type": "text", "text": string(text)}},
-		StructuredContent: v,
-	}, nil
-}
-```
-
-`R` must be a struct for `OutputSchema` (the schema of a scalar result is a plain type, and MCP wants an object for `structuredContent`): return a small result struct, not a bare string or number.
-
-## The server
-
-The three methods are ordinary `jsonrpc.Method` registrations. The params of `tools/call` carry the tool name and its arguments; the arguments stay an open object until the tool's own schema parses them:
-
-```go title="app/mcp/server.go"
-package mcp
-
-import (
-	"context"
-	"net/http"
-
-	"github.com/AlexGalhardo/vukem/errs"
-	"github.com/AlexGalhardo/vukem/jsonrpc"
-)
-
-// protocolVersion is the MCP revision this server answers with.
-const protocolVersion = "2026-07-28"
-
-type initializeParams struct {
-	ProtocolVersion string         `json:"protocolVersion"`
-	Capabilities    map[string]any `json:"capabilities"`
-	ClientInfo      map[string]any `json:"clientInfo"`
-}
-
-type callParams struct {
-	Name      string         `json:"name" validate:"required"`
-	Arguments map[string]any `json:"arguments"`
-}
-
-type listResult struct {
-	Tools []*tool `json:"tools"`
-}
-
-// Handler returns the MCP endpoint of reg, to mount behind your
-// authentication middleware.
-func Handler(reg *Registry, name, version string, cfg jsonrpc.Config) http.Handler {
-	srv := jsonrpc.NewServer(cfg)
-
-	jsonrpc.Method(srv, "initialize", func(ctx context.Context, p initializeParams) (map[string]any, error) {
-		return map[string]any{
-			"protocolVersion": protocolVersion,
-			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": name, "version": version},
-		}, nil
-	})
-
-	jsonrpc.Method(srv, "notifications/initialized", func(ctx context.Context, _ struct{}) (struct{}, error) {
-		return struct{}{}, nil
-	})
-
-	jsonrpc.Method(srv, "tools/list", func(ctx context.Context, _ struct{}) (listResult, error) {
-		return listResult{Tools: reg.tools}, nil
-	})
-
-	jsonrpc.Method(srv, "tools/call", func(ctx context.Context, p callParams) (result, error) {
-		t := reg.find(p.Name)
-		if t == nil {
-			return result{}, errs.ErrNotFound
-		}
-
-		for _, guard := range t.guards {
-			if err := guard(ctx); err != nil {
-				return result{}, err
-			}
-		}
-
-		out, err := t.call(ctx, p.Arguments)
+mcp.AddTool(srv, mcp.Tool{Name: "delete_invoice", Description: "Delete an invoice."},
+	func(ctx context.Context, in GetInvoice) (Done, error) {
+		ok, err := mcp.Confirm(ctx, "Delete invoice "+in.ID+"?")
 		if err != nil {
-			return result{}, err
+			return Done{}, err // asks the user; also ErrElicitationUnsupported
 		}
 
-		return ok(out)
+		if !ok {
+			return Done{Deleted: false}, nil
+		}
+
+		return Done{Deleted: true}, invoices.Delete(ctx, in.ID)
+	})
+```
+
+The `requestState` that travels through the client is signed with HMAC-SHA256 and bound to the caller, the method, the target, the arguments and a ten-minute expiry. An answer without a valid state is ignored and the user is asked again. Set `Config.StateKey` to the same secret on every instance. `mcp.Elicit` asks for a form instead of a yes or no.
+
+## Resources, prompts and completion
+
+```go title="app/mcp/catalog.go"
+mcp.AddResource(srv, mcp.Resource{URI: "app://terms", Name: "terms", MIMEType: "text/markdown"},
+	func(ctx context.Context) ([]mcp.ResourceContents, error) {
+		return []mcp.ResourceContents{{Text: terms}}, nil
 	})
 
-	return srv
+mcp.AddResourceTemplate(srv, mcp.ResourceTemplate{URITemplate: "app://invoices/{id}", Name: "invoice"},
+	func(ctx context.Context, uri string, vars map[string]string) ([]mcp.ResourceContents, error) {
+		return readInvoice(ctx, vars["id"]) // return mcp.ErrNotFound for a missing one
+	}, completeInvoiceIDs)
+
+mcp.AddPrompt(srv, mcp.Prompt{Name: "summarize"}, func(ctx context.Context, a SummarizeArgs) (mcp.PromptResult, error) {
+	return mcp.PromptResult{Messages: []mcp.PromptMessage{{Role: "user", Content: mcp.Text("Summarize " + a.ID)}}}, nil
+}, nil)
+```
+
+Templates understand `{var}` (one segment) and `{+var}` (slashes allowed). A variable with a `..` segment or a NUL never matches, so a template over files cannot leave its root. Prompt arguments are strings on the wire, so the struct passed to `AddPrompt` has only string fields.
+
+Lists are sorted and paged with an opaque cursor that is the last key of the page, so it survives inserts. `Config.PageSize` defaults to 50. List results carry `ttlMs` (from `Config.CacheTTL`, default 0) and `cacheScope: "private"`.
+
+Call `srv.NotifyToolsChanged()`, `NotifyPromptsChanged()`, `NotifyResourcesChanged()` or `NotifyResourceUpdated(uri)` and every `subscriptions/listen` stream that opted in receives it.
+
+## Authorization
+
+The package does not depend on an OAuth implementation. It asks a `TokenVerifier`:
+
+```go title="mcp/auth.go"
+type TokenVerifier interface {
+	VerifyAccessToken(ctx context.Context, token string, resource string) (*TokenInfo, error)
 }
 ```
 
-`jsonrpc.Server` is an `http.Handler`, so `Handler` returns it directly. Bad arguments come back as the usual `-32602 Invalid params` with `data.fields`, which an agent can read and retry; an unknown tool is a `-32004`; anything unexpected is a `-32603` with no detail.
+`TokenInfo` has `Subject`, `ClientID`, `Scopes`, `Resource`, `ExpiresAt` and `Extra`. Return `mcp.ErrInvalidToken` for a token that is unknown, expired or for another audience. Any other error is a 503 without detail: the check fails closed.
 
-## Mounting it, with auth and scopes
+The handler does the rest:
 
-Authentication belongs on the route, before the server reads the method, exactly as for any [JSON-RPC endpoint](/docs/rest-apis/json-rpc#authorization). An agent gets an `auth.Tokens` token with abilities.
+- no token or a bad one is a 401 with `WWW-Authenticate: Bearer resource_metadata="..."`, plus `scope` and `error="invalid_token"`
+- `TokenInfo.Resource` must equal `HTTPConfig.Resource`; an empty or different audience is refused
+- a tool with `Scopes` is hidden from `tools/list` and refused with 403 `insufficient_scope` when the token lacks one
+- a token in the query string (`?access_token=`) is a 400 and is never read
+- `h.MetadataHandler()` serves the RFC 9728 protected resource metadata at `h.MetadataPath()`
+- `mcp.TokenInfoFrom(ctx)` gives the verified token to your tools
 
-A `jsonrpc.Guard` only receives a `context.Context`, so a small middleware, placed after `auth.Required`, copies the token into it:
+## Protocol details
 
-```go title="app/mcp/token.go"
-package mcp
+- `POST` only. `GET` and `DELETE` are 405; there is no session and `Mcp-Session-Id` is ignored.
+- `MCP-Protocol-Version`, `Mcp-Method` and, for `tools/call`, `prompts/get` and `resources/read`, `Mcp-Name` are required and must match the body: a mismatch is a 400 with `-32020`. A name outside plain ASCII travels as `=?base64?...?=`.
+- A version the server does not serve is a 400 with `-32022` and the list it supports.
+- `Origin`, when present, must be in `AllowedOrigins`, otherwise 403. Non-browser clients send none.
+- Progress and `subscriptions/listen` answer as Server-Sent Events with `X-Accel-Buffering: no`; everything else is plain JSON.
+- Older clients (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`) are answered per request with their own shape: `initialize` and `ping` work, no `resultType` is added, and no state is kept.
 
-import (
-	"context"
-	"net/http"
+## Configuration
 
-	"github.com/AlexGalhardo/vukem/auth"
-	"github.com/AlexGalhardo/vukem/errs"
-	"github.com/AlexGalhardo/vukem/jsonrpc"
-	"github.com/AlexGalhardo/vukem/web"
-)
+| Option | Default | Effect |
+| --- | --- | --- |
+| `Config.Name`, `Version` | required | identity in `server/discover` and every result |
+| `Config.MaxMessageBytes` | 1 MiB | largest inbound message; more is a 413 (HTTP) or `-32600` (stdio) |
+| `Config.PageSize` | 50 | items per list page |
+| `Config.CacheTTL` | 0 | `ttlMs` of list results |
+| `Config.StateKey` | random per process | HMAC key of `requestState` |
+| `Config.StateTTL` | 10 minutes | lifetime of a `requestState` |
+| `Config.MaxInFlight` | 32 | concurrent stdio requests; more is "Server busy" |
+| `Config.MaxSubscriptions` | 1000 | open `subscriptions/listen` streams |
+| `Config.KeepAlive` | 25 seconds | idle comment on event streams |
+| `Config.ShutdownGrace` | 5 seconds | stdio drain time after end of input |
+| `Config.Versions` | all five | revisions served |
+| `HTTPConfig.InsecureNoAuth` | false | serve without authorization (localhost only) |
 
-type tokenKey struct{}
+## Security
 
-// WithToken stores the access token that authenticated the request (from
-// the token guard named guard) in the request context.
-func WithToken(guard string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c := web.NewCtx(w, r, web.ServicesFrom(r.Context()))
-			if tok, ok := auth.CurrentToken(c, guard); ok {
-				r = r.WithContext(context.WithValue(r.Context(), tokenKey{}, tok))
-			}
+- Fail closed: `HTTPHandler` returns an error without a `Verifier` unless `InsecureNoAuth` is set.
+- Clients never see a path, SQL, a panic message or an error chain: they get `Internal error`.
+- Annotations are hints that clients treat as untrusted; enforce rules in the function.
+- `Resource` must be the canonical URI of the endpoint, and the authorization server must issue tokens for it (RFC 8707).
 
-			next.ServeHTTP(w, r)
-		})
+## Testing
+
+`mcptest` runs the server over pipes, adds the per-request metadata and answers `input_required` for you:
+
+```go title="app/mcp/server_test.go"
+func TestGetInvoice(t *testing.T) {
+	c := mcptest.NewClient(t, New(fakeInvoices{}))
+
+	res := c.CallTool("get_invoice", map[string]any{"id": id})
+	if res.IsError {
+		t.Fatal(res.Text())
 	}
 }
-
-// Can is a guard that needs the token to grant ability. Without a token
-// it refuses: it fails closed.
-func Can(ability string) jsonrpc.Guard {
-	return func(ctx context.Context) error {
-		tok, ok := ctx.Value(tokenKey{}).(auth.Token)
-		if !ok || !tok.Can(ability) {
-			return errs.ErrForbidden
-		}
-
-		return nil
-	}
-}
 ```
 
-Then register each tool with its scope and mount the endpoint:
+Use `mcptest.WithElicitation` to answer a confirmation, `c.Start` and `c.Wait` for concurrent calls and `c.Cancel` to cancel one.
 
-```go title="routes/api.go"
-reg := &mcp.Registry{}
+## Common mistakes
 
-mcp.Add(reg, "projects.render", "Render a project to a video file.",
-	func(ctx context.Context, p RenderParams) (RenderResult, error) {
-		return renders.Start(ctx, p)
-	},
-	mcp.Can("projects:render"),
-)
+Wrong: returning `fmt.Errorf("db: %w", err)` and expecting the model to read it. The client gets `Internal error`; return `mcp.ToolErrorf` for what the model can act on.
 
-r.Group("/mcp", func(g *router.Group) {
-	g.Use(auth.Required(acc.API), mcp.WithToken("api"))
-	g.Handle("POST /", mcp.Handler(reg, "my-app", app.Version, jsonrpc.Config{Logger: app.Logger}))
-})
-```
+Wrong: a tool that ignores `ctx`. The server waits for it, so a cancelled request keeps a goroutine until it ends.
 
-`Token.Resource` (see [Authentication](/docs/security/api-tokens)) can limit a key to one project: compare it with the project id in the tool's params, and refuse when it differs. An empty `Resource` means the token carries none, so decide on purpose whether that is "any project" for your app.
+Wrong: the same URL for `Resource` and a different one in the access token audience. The 401 reads `error="invalid_token"` and nothing else.
 
-Rate limits, request ids, logging and tracing come from the middleware you already put on the group; nothing here is MCP-specific.
+## Not implemented
 
-## Standard input and output
+Logging, roots and sampling (deprecated in this revision), the tasks extension, `x-mcp-header` parameter mirroring and JSON-RPC batches. The `boost:mcp` command keeps its own small server.
 
-A local agent often starts the server as a child process and talks over standard input and output, one JSON message per line. The `http.Handler` serves that too: read a line, run it through the handler with `httptest.NewRequest` and a recorder, and write the body back.
+## Next steps
 
-Keep that for a `stdio` command of your binary, and never mount it on the network: it has no authentication.
-
-## The official SDK instead
-
-The [official Go SDK](https://github.com/modelcontextprotocol/go-sdk) implements the protocol, both transports and the session handling for you, and tracks new revisions of the specification. Prefer it when you want those without owning the code, or need features beyond tools (resources, prompts, sampling). It is a third-party dependency, so it follows your own dependency policy, and you still build `inputSchema` from your structs (the `schemaOf` helper above works there too) and put the same router middleware and guards in front of it.
-
-## Where this is going
-
-Vukem may ship a `contrib/mcp` module once an app has proved the shape of this recipe: typed tool registration, schemas from `z`, the router's auth and the guards you saw here. Until then it stays a recipe so that the API is settled by real use, not by guesses. Tell us in the issue tracker what your server needed that the recipe did not give you.
+- [JSON-RPC](/docs/rest-apis/json-rpc) for plain RPC APIs
+- [OpenAPI](/docs/rest-apis/openapi) for the schema tags
