@@ -204,3 +204,75 @@
 .tab[draggable="true"] {
   cursor: grab;
 }
+
+.history {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+}
+
+.history-note {
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.history-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-4);
+}
+
+.history-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-md);
+}
+
+.history-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.history-list {
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.history-item {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-name {
+  margin: 0;
+  font-weight: 600;
+}
+
+.history-sql {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  margin: 0;
+  overflow: hidden;
+  font: var(--text-sm) / 1.4 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.history-meta {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.history-actions {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}

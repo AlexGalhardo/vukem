@@ -7,16 +7,18 @@ export function ConsolePage({
   source,
   write,
   refreshSeconds,
+  sessionKey,
 }: {
   source: Source;
   write: boolean;
   refreshSeconds: number;
+  sessionKey: string;
 }): ReactElement {
   return (
     <section aria-labelledby="console-title">
       <h1 id="console-title">SQL console</h1>
       <p className="muted mono">{source.label}</p>
-      <Workspace key={source.name} source={source} write={write} refreshSeconds={refreshSeconds} />
+      <Workspace key={source.name} source={source} write={write} refreshSeconds={refreshSeconds} sessionKey={sessionKey} />
     </section>
   );
 }

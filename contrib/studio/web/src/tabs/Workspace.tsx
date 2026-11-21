@@ -6,6 +6,13 @@ import { ConfirmDialog } from "../console/ConfirmDialog";
 import type { ConfirmRequest } from "../console/ConfirmDialog";
 import { QueryPanel } from "../console/QueryPanel";
 import { RunnerStore } from "../console/runner";
+import type { RunState } from "../console/runner";
+import { localStore } from "../history/browser";
+import { HistoryPanel } from "../history/HistoryPanel";
+import { NameDialog } from "../history/NameDialog";
+import type { NameRequest } from "../history/NameDialog";
+import { entryFrom, openHistory } from "../history/store";
+import type { SavedQuery } from "../history/store";
 import { replaceSearch } from "../lib/history";
 import { TablePage } from "../pages/TablePage";
 import { loadTabs, saveTabs } from "./persist";
@@ -28,10 +35,11 @@ export interface WorkspaceProps {
   source: Source;
   write: boolean;
   refreshSeconds: number;
+  sessionKey: string;
 }
 
 /** Workspace is the tabs of one source: queries and tables side by side, kept for the browser tab's session. */
-export function Workspace({ source, write, refreshSeconds }: WorkspaceProps): ReactElement {
+export function Workspace({ source, write, refreshSeconds, sessionKey }: WorkspaceProps): ReactElement {
   const idPrefix = useId();
   const [state, rawDispatch] = useReducer(tabsReducer, source.name, initialState);
   const [writeModes, setWriteModes] = useState<Record<string, boolean>>({});
@@ -39,6 +47,11 @@ export function Workspace({ source, write, refreshSeconds }: WorkspaceProps): Re
   const [notice, setNotice] = useState("");
   const store = useMemo(() => new RunnerStore(source.name), [source.name]);
   const strip = useRef<HTMLDivElement>(null);
+  const history = useMemo(() => openHistory(localStore(), sessionKey), [sessionKey]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [naming, setNaming] = useState<{ request: NameRequest; tabId: string | null; rename: SavedQuery | null; sql: string } | null>(null);
+  const [nameError, setNameError] = useState("");
+  const [said, setSaid] = useState("");
 
   const activeTab = state.tabs.find((t) => t.id === state.active) ?? null;
   const catalog = useCatalog(source.name, activeTab?.kind === "query" ? activeTab.text : "");
@@ -116,6 +129,84 @@ export function Workspace({ source, write, refreshSeconds }: WorkspaceProps): Re
     dispatch({ type: "openTable", id: newTabId(), table });
   };
 
+  const say = useCallback((text: string): void => {
+    // The same sentence twice would not be read twice.
+    setSaid((prev) => (prev === text ? `${text} ` : text));
+  }, []);
+
+  const record = (state: RunState): void => {
+    const entry = entryFrom(newTabId(), source.name, state, Date.now());
+    if (entry) {
+      history.add(entry);
+    }
+  };
+
+  const requestSave = (tab: Tab): void => {
+    if (tab.text.trim() === "") {
+      say("Type a query before saving it.");
+      return;
+    }
+    setNameError("");
+    setNaming({
+      request: { title: "Save query", label: "Name", initial: tab.title, confirmLabel: "Save" },
+      tabId: tab.id,
+      rename: null,
+      sql: tab.text,
+    });
+  };
+
+  const requestRename = (query: SavedQuery): void => {
+    setNameError("");
+    setNaming({
+      request: { title: "Rename saved query", label: "New name", initial: query.name, confirmLabel: "Rename" },
+      tabId: null,
+      rename: query,
+      sql: query.sql,
+    });
+  };
+
+  const confirmName = (name: string): void => {
+    if (!naming) {
+      return;
+    }
+    if (naming.rename) {
+      if (!history.rename(naming.rename.id, name)) {
+        setNameError("That name is already used by another saved query.");
+        return;
+      }
+      say(`Renamed to ${name.trim()}.`);
+    } else {
+      const result = history.save(name, naming.sql, source.name, newTabId(), Date.now());
+      if (result === "full") {
+        setNameError("The library holds 100 queries. Delete one first.");
+        return;
+      }
+      if (result === "invalid") {
+        setNameError("Give the query a name.");
+        return;
+      }
+      if (naming.tabId !== null) {
+        dispatch({ type: "markSaved", id: naming.tabId });
+        dispatch({ type: "rename", id: naming.tabId, title: name.trim() });
+      }
+      say(`${result === "replaced" ? "Replaced" : "Saved"} ${name.trim()}.`);
+    }
+    setNaming(null);
+  };
+
+  const openFromHistory = (sql: string, title?: string): void => {
+    if (!canOpen(latest.current)) {
+      setNotice(`${maxTabs} tabs are open. Close one to open another.`);
+      return;
+    }
+    setNotice("");
+    const id = newTabId();
+    dispatch({ type: "openQuery", id, text: sql });
+    if (title) {
+      dispatch({ type: "rename", id, title });
+    }
+  };
+
   const closeOthers = (tab: Tab): void => {
     const others = state.tabs.filter((t) => t.id !== tab.id && !t.pinned);
     const losing = others.filter((t) => isUnsaved(t) && t.text.trim() !== "");
@@ -158,6 +249,15 @@ export function Workspace({ source, write, refreshSeconds }: WorkspaceProps): Re
         </div>
         <button type="button" className="button" onClick={() => openQuery()}>
           New query
+        </button>
+        <button
+          type="button"
+          className="button"
+          aria-expanded={historyOpen}
+          aria-controls={`${idPrefix}-history`}
+          onClick={() => setHistoryOpen((o) => !o)}
+        >
+          History and saved queries
         </button>
         <label className="field-inline">
           <span className="visually-hidden">Open a table in a tab</span>
@@ -218,6 +318,15 @@ export function Workspace({ source, write, refreshSeconds }: WorkspaceProps): Re
         </p>
       )}
 
+      {historyOpen ? (
+        <div id={`${idPrefix}-history`}>
+          <HistoryPanel store={history} source={source.name} onOpen={openFromHistory} onRename={requestRename} say={say} />
+        </div>
+      ) : null}
+      <p className="visually-hidden" role="status">
+        {said}
+      </p>
+
       {activeTab === null ? (
         <div className="empty">
           <p className="empty-title">No tab is open</p>
@@ -246,11 +355,22 @@ export function Workspace({ source, write, refreshSeconds }: WorkspaceProps): Re
               serverWrite={write}
               writeMode={writeModes[activeTab.id] === true}
               onWriteMode={(on) => setWriteModes((prev) => ({ ...prev, [activeTab.id]: on }))}
+              onRan={record}
+              onSave={() => requestSave(activeTab)}
             />
           )}
         </div>
       )}
 
+      <NameDialog
+        request={naming?.request ?? null}
+        error={nameError}
+        onConfirm={confirmName}
+        onCancel={() => setNaming(null)}
+        onAfterClose={() => {
+          document.querySelector<HTMLTextAreaElement>(".sqled-input")?.focus();
+        }}
+      />
       <ConfirmDialog
         request={confirm?.request ?? null}
         onConfirm={() => {

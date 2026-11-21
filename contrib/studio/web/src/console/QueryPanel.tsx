@@ -8,7 +8,7 @@ import { classify } from "./classify";
 import { ConfirmWriteDialog } from "./ConfirmWriteDialog";
 import type { PendingWrite } from "./ConfirmWriteDialog";
 import { ResultView } from "./ResultView";
-import type { RunKind, RunnerStore } from "./runner";
+import type { RunKind, RunnerStore, RunState } from "./runner";
 
 export interface QueryPanelProps {
   sourceName: string;
@@ -22,6 +22,10 @@ export interface QueryPanelProps {
   /** The switch of this tab; off when the tab opens. */
   writeMode: boolean;
   onWriteMode: (on: boolean) => void;
+  /** A run ended: for the history. */
+  onRan: (state: RunState) => void;
+  /** Ctrl or Cmd+S, or the Save button: save this query to the library. */
+  onSave: () => void;
 }
 
 /** QueryPanel is one query: the editor, the buttons that run it and the result of the last run. */
@@ -35,6 +39,8 @@ export function QueryPanel({
   serverWrite,
   writeMode,
   onWriteMode,
+  onRan,
+  onSave,
 }: QueryPanelProps): ReactElement {
   const editor = useRef<EditorHandle>(null);
   const toolbar = useRef<HTMLDivElement>(null);
@@ -47,6 +53,7 @@ export function QueryPanel({
 
   const send = async (kind: RunKind, statement: string, write: boolean): Promise<void> => {
     await store.start(tabId, kind, statement, write);
+    onRan(store.get(tabId));
     focusEditor();
   };
 
@@ -92,7 +99,10 @@ export function QueryPanel({
     const write = pending;
     setPending(null);
     if (write) {
-      void store.start(tabId, "run", write.statement, true).then(() => editor.current?.focus());
+      void store.start(tabId, "run", write.statement, true).then(() => {
+        onRan(store.get(tabId));
+        editor.current?.focus();
+      });
     }
   };
 
@@ -110,6 +120,9 @@ export function QueryPanel({
         </button>
         <button type="button" className="button" onClick={() => editor.current?.insert(format(text))} disabled={text.trim() === ""}>
           Format
+        </button>
+        <button type="button" className="button" onClick={onSave} disabled={text.trim() === ""}>
+          Save query
         </button>
         <span className={writing ? "badge badge-write" : "badge badge-readonly"} data-testid="console-mode">
           {writing ? "Write mode" : "Read-only"}
@@ -134,7 +147,7 @@ export function QueryPanel({
         label={`SQL for ${sourceName}`}
         completion={catalog}
         onRun={(scope) => void start("run", scope)}
-        onSave={() => undefined}
+        onSave={onSave}
       />
       {notice ? (
         <p role="status" className="muted">
