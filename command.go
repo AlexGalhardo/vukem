@@ -81,6 +81,147 @@ type RawArgsCommand interface {
 	RawArgs()
 }
 
+// AliasedCommand is a [Command] that also answers to other names, so a command
+// can move or join a [CommandGroup] and keep its old name working. An alias
+// never shadows the real name of another command, and the alias of a group's
+// child is valid at the top level ("image:edit" for "image edit").
+type AliasedCommand interface {
+	Command
+	Aliases() []string
+}
+
+// CommandGroup is a [Command] that dispatches to its children by the next
+// argument: "app image edit photo.png" runs the child "edit" of the group
+// "image" with the argument "photo.png". Each child keeps its own flags and
+// boot behavior. Groups can nest. Without a child name the group prints its
+// commands and returns [ErrUsage].
+type CommandGroup struct {
+	GroupName    string
+	Desc         string
+	GroupAliases []string
+	Commands     []Command
+}
+
+// Name implements Command.
+func (g CommandGroup) Name() string { return g.GroupName }
+
+// Description implements Command.
+func (g CommandGroup) Description() string { return g.Desc }
+
+// Aliases implements AliasedCommand.
+func (g CommandGroup) Aliases() []string { return g.GroupAliases }
+
+// Flags implements Command. A group has none: flags belong to its children.
+func (CommandGroup) Flags(*flag.FlagSet) {}
+
+// RawArgs implements RawArgsCommand, so a flag reaches the child.
+func (CommandGroup) RawArgs() {}
+
+// NoBoot implements NoBootCommand: the group only routes, and the child it
+// routes to boots the app on its own terms.
+func (CommandGroup) NoBoot() bool { return true }
+
+// Run implements Command. It is reached only when no child matched.
+func (g CommandGroup) Run(_ context.Context, app *App, args []string) error {
+	return g.usage(args, app.stdout, app.stderr)
+}
+
+func (g CommandGroup) usage(args []string, stdout, stderrOut io.Writer) error {
+	if len(args) == 0 {
+		g.printTo(stderrOut)
+		return errUsage
+	}
+
+	if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		g.printTo(stdout)
+		return nil
+	}
+
+	if s := suggest.Closest(args[0], commandNames(g.Commands)); s != "" {
+		fmt.Fprintf(stderrOut, "unknown command %q (did you mean %q?)\n", g.GroupName+" "+args[0], g.GroupName+" "+s)
+		return errUsage
+	}
+
+	fmt.Fprintf(stderrOut, "unknown command %q\n\n", g.GroupName+" "+args[0])
+	g.printTo(stderrOut)
+
+	return errUsage
+}
+
+func (g CommandGroup) printTo(w io.Writer) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(tw, "Commands of %s:\n", g.GroupName)
+	writeCommandRows(tw, g.Commands, "  ", nil)
+
+	_ = tw.Flush()
+}
+
+// lookupCommand finds name among cmds: a real name first, then an alias, then
+// the alias of a child of a group. A child's real name is not a top-level name.
+func lookupCommand(name string, cmds []Command) (Command, bool) {
+	if c, ok := findNamed(name, cmds); ok {
+		return c, true
+	}
+
+	for _, c := range cmds {
+		if a, ok := c.(AliasedCommand); ok && slices.Contains(a.Aliases(), name) {
+			return c, true
+		}
+	}
+
+	for _, c := range cmds {
+		if g, ok := c.(CommandGroup); ok {
+			if child, ok := lookupAlias(name, g.Commands); ok {
+				return child, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+func lookupAlias(name string, cmds []Command) (Command, bool) {
+	for _, c := range cmds {
+		if a, ok := c.(AliasedCommand); ok && slices.Contains(a.Aliases(), name) {
+			return c, true
+		}
+
+		if g, ok := c.(CommandGroup); ok {
+			if child, ok := lookupAlias(name, g.Commands); ok {
+				return child, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+// resolveCommand walks name and the leading args down through groups. It
+// returns the command to run with the args left for it, or nil when name is
+// unknown. A group comes back when no child matched the next argument.
+func resolveCommand(name string, args []string, cmds []Command) (Command, []string) {
+	cmd, ok := lookupCommand(name, cmds)
+	if !ok {
+		return nil, args
+	}
+
+	for len(args) > 0 {
+		g, isGroup := cmd.(CommandGroup)
+		if !isGroup {
+			break
+		}
+
+		child, ok := lookupCommand(args[0], g.Commands)
+		if !ok {
+			break
+		}
+
+		cmd, args = child, args[1:]
+	}
+
+	return cmd, args
+}
+
 // AddCommand registers commands. Call it from a provider's Register.
 func (a *App) AddCommand(cmds ...Command) {
 	a.mu.Lock()
@@ -127,14 +268,7 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 		return nil
 	}
 
-	var cmd Command
-
-	for _, c := range app.Commands() {
-		if c.Name() == name {
-			cmd = c
-			break
-		}
-	}
+	cmd, args := resolveCommand(name, args, app.Commands())
 
 	if cmd == nil {
 		names := commandNames(app.Commands())
@@ -148,6 +282,10 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 		printCommandsTo(app.stderr, app)
 
 		return errUsage
+	}
+
+	if g, ok := cmd.(CommandGroup); ok {
+		return g.usage(args, app.stdout, app.stderr)
 	}
 
 	args, err := parseCommandArgs(cmd, args, app.stdout, app.stderr)
@@ -201,12 +339,16 @@ func dispatchBeforeBuild(ctx context.Context, name string, args []string, opts [
 		return false, nil
 	}
 
-	cmd, ok := findNamed(name, earlyCommandSet(opts))
-	if !ok {
+	cmd, args := resolveCommand(name, args, earlyCommandSet(opts))
+	if cmd == nil {
 		return false, nil
 	}
 
 	stdout, stderrOut := commandStreams(opts)
+
+	if g, ok := cmd.(CommandGroup); ok {
+		return true, g.usage(args, stdout, stderrOut)
+	}
 
 	parsed, err := parseCommandArgs(cmd, args, stdout, stderrOut)
 	if err != nil {
@@ -234,7 +376,7 @@ func unknownIfUnbuilt(name string, opts []Option, err error) error {
 	}
 
 	known := earlyCommandSet(opts)
-	if _, ok := findNamed(name, known); ok {
+	if _, ok := lookupCommand(name, known); ok {
 		return err
 	}
 
@@ -395,27 +537,46 @@ func printCommandsTo(w io.Writer, app *App) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "Available commands:")
 
-	for _, c := range app.Commands() {
-		if app.hiddenCommands[c.Name()] {
+	writeCommandRows(tw, app.Commands(), "  ", app.hiddenCommands)
+
+	_ = tw.Flush()
+}
+
+// writeCommandRows lists cmds, with the children of a group indented below it.
+func writeCommandRows(w io.Writer, cmds []Command, indent string, hidden map[string]bool) {
+	for _, c := range cmds {
+		if hidden[c.Name()] {
 			continue
 		}
 
-		fmt.Fprintf(tw, "  %s\t%s\n", c.Name(), c.Description())
-	}
+		desc := c.Description()
+		if a, ok := c.(AliasedCommand); ok && len(a.Aliases()) > 0 {
+			desc = strings.TrimSpace(desc + " (aliases: " + strings.Join(a.Aliases(), ", ") + ")")
+		}
 
-	_ = tw.Flush()
+		fmt.Fprintf(w, "%s%s\t%s\n", indent, c.Name(), desc)
+
+		if g, ok := c.(CommandGroup); ok {
+			writeCommandRows(w, g.Commands, indent+"  ", hidden)
+		}
+	}
 }
 
 // CommandFunc builds a Command from a function.
 type CommandFunc struct {
 	CommandName string
 	Desc        string
-	DefineFlags func(fs *flag.FlagSet)
-	Fn          func(ctx context.Context, app *App, args []string) error
+	// CommandAliases are other names for the command (see [AliasedCommand]).
+	CommandAliases []string
+	DefineFlags    func(fs *flag.FlagSet)
+	Fn             func(ctx context.Context, app *App, args []string) error
 }
 
 // Name implements Command.
 func (c CommandFunc) Name() string { return c.CommandName }
+
+// Aliases implements AliasedCommand.
+func (c CommandFunc) Aliases() []string { return c.CommandAliases }
 
 // Description implements Command.
 func (c CommandFunc) Description() string { return c.Desc }
