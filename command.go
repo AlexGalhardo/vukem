@@ -797,6 +797,8 @@ func aboutCommand() Command {
 				{"Routes", strconv.Itoa(len(app.Router.Routes()))},
 			}
 
+			info = appendAboutInfo(info, app)
+
 			if *asJSON {
 				m := map[string]string{}
 				for _, kv := range info {
@@ -814,6 +816,26 @@ func aboutCommand() Command {
 			return tw.Flush()
 		},
 	}
+}
+
+// appendAboutInfo adds the lines from WithAbout, skipping a label already
+// present so an app cannot shadow a framework line such as APP_KEY.
+func appendAboutInfo(info [][2]string, app *App) [][2]string {
+	seen := make(map[string]bool, len(info))
+	for _, kv := range info {
+		seen[kv[0]] = true
+	}
+
+	for _, fn := range app.aboutInfo {
+		for _, kv := range fn(app) {
+			if !seen[kv[0]] {
+				seen[kv[0]] = true
+				info = append(info, kv)
+			}
+		}
+	}
+
+	return info
 }
 
 // Process-level helpers, kept tiny so RunMain stays testable.

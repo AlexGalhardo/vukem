@@ -241,6 +241,21 @@ func WithVersion(version string) Option {
 	return func(o *options) error { o.version = version; return nil }
 }
 
+// WithAbout adds lines to the output of the built-in `about` command (text
+// and --json), after the framework's own, so an app can show its edition or
+// build without replacing the command and losing the framework's lines. fn
+// runs on a booted App on each `about` call and returns {label, value}
+// pairs. A label that repeats a framework line (APP_KEY included, which
+// stays [redacted]) or an earlier one is ignored. Unlike WithVersion, it does
+// not touch GET /up.
+//
+//	vukem.WithAbout(func(app *vukem.App) [][2]string {
+//		return [][2]string{{"Build", build}}
+//	})
+func WithAbout(fn func(app *App) [][2]string) Option {
+	return func(o *options) error { o.aboutInfo = append(o.aboutInfo, fn); return nil }
+}
+
 // WithHiddenCommands leaves the named commands out of the output of "list" and
 // "help", for a product CLI that does not want make:*, db:* and the like to
 // confuse its users. A hidden command still runs when named, and still shows

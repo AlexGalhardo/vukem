@@ -363,6 +363,8 @@ type App struct {
 	benchScenarios []BenchScenario
 	// hiddenCommands are left out of the "list" output (WithHiddenCommands).
 	hiddenCommands map[string]bool
+	// aboutInfo adds lines to the about command (WithAbout).
+	aboutInfo []func(app *App) [][2]string
 
 	mu     sync.Mutex
 	booted bool
@@ -444,6 +446,7 @@ type options struct {
 	seeders        []AppSeeder
 	benchScenarios []BenchScenario
 	hiddenCommands map[string]bool
+	aboutInfo      []func(app *App) [][2]string
 	mailTransport  mail.Transport
 	listeners      []events.Registration
 	jobs           []queue.Registration
@@ -586,6 +589,7 @@ func New(opts ...Option) (*App, error) {
 		seeders:        o.seeders,
 		benchScenarios: o.benchScenarios,
 		hiddenCommands: o.hiddenCommands,
+		aboutInfo:      o.aboutInfo,
 		jobs:           o.jobs,
 		jobFuncs:       o.jobFuncs,
 		queueDriver:    o.queueDriver,

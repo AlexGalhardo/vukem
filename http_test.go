@@ -3962,3 +3962,45 @@ func matchOrder(t *testing.T, stack string, got, want []string) {
 		t.Errorf("%s stack = %v, want in order %v", stack, got, want)
 	}
 }
+
+func TestWithAboutAddsLinesAndKeepsRedaction(t *testing.T) {
+	var out bytes.Buffer
+
+	app, err := New(
+		WithSource(testSource(nil)),
+		WithLogger(discardLogger()),
+		WithStdout(&out),
+		WithAbout(func(*App) [][2]string {
+			return [][2]string{{"Build", "abc123"}, {"APP_KEY", "leak"}, {"Name", "x"}}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := aboutCommand()
+	fs := flag.NewFlagSet("about", flag.ContinueOnError)
+	cmd.Flags(fs)
+
+	if err := fs.Parse([]string{"-json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmd.Run(t.Context(), app, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]string
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if got["Build"] != "abc123" || got["Trusted proxies"] != "none" {
+		t.Fatalf("about = %v, want Build and the framework lines", got)
+	}
+
+	if !strings.Contains(got["APP_KEY"], "[redacted]") || strings.Contains(out.String(), testKey) ||
+		strings.Contains(out.String(), "leak") || got["Name"] == "x" {
+		t.Fatalf("about = %v, an app line shadowed a framework line", got)
+	}
+}
