@@ -1,10 +1,12 @@
 package studio
 
 import (
+	"bytes"
 	"encoding/csv"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAPIExportRows(t *testing.T) {
@@ -150,5 +152,46 @@ func TestBootstrapListsSourcesWithoutCredentials(t *testing.T) {
 
 	if rec := apiGet(s, cookie, "/api/v1/nope"); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown API path: status = %d, want 404", rec.Code)
+	}
+}
+
+func TestExportFilenameAndCSVFormulas(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"users": "users.jsonl", "../etc/passwd": "_etc_passwd.jsonl", `a"b;c`: "a_b_c.jsonl", "": "export.jsonl", "..": "export.jsonl",
+		"résumé": "r_sum_.jsonl",
+	} {
+		if got := exportFilename(in, "jsonl"); got != want {
+			t.Errorf("exportFilename(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSecurity_A03_StudioExportNeutralizesFormulas(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	rows := [][]string{{"=1+1", "+x", "-x", "@x", "plain", ""}}
+	if err := writeCSV(csv.NewWriter(&buf), []string{"a", "b", "c", "d", "e", "f"}, rows); err != nil {
+		t.Fatal(err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "'=1+1,'+x,'-x,'@x,plain,") {
+		t.Errorf("csv = %q, want formula cells prefixed with a quote", got)
+	}
+}
+
+func TestRefreshInterval(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[time.Duration]time.Duration{
+		0: defaultRefresh, -1: 0, time.Millisecond: minRefresh, 3 * time.Second: 3 * time.Second,
+	} {
+		if got := refreshInterval(in); got != want {
+			t.Errorf("refreshInterval(%v) = %v, want %v", in, got, want)
+		}
 	}
 }

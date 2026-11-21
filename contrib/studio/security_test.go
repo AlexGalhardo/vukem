@@ -155,12 +155,12 @@ func TestSecurity_A07_StudioTokenBecomesCookie(t *testing.T) {
 
 	s := newStudio(t)
 
-	rec := serve(s, request(http.MethodGet, "/s/db?token="+s.Token()+"&x=1"))
+	rec := serve(s, request(http.MethodGet, "/ui/s/db?token="+s.Token()+"&x=1"))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", rec.Code)
 	}
 
-	if loc := rec.Header().Get("Location"); strings.Contains(loc, "token") || loc != "/s/db?x=1" {
+	if loc := rec.Header().Get("Location"); strings.Contains(loc, "token") || loc != "/ui/s/db?x=1" {
 		t.Errorf("Location = %q, want the same URL without the token", loc)
 	}
 
@@ -180,8 +180,8 @@ func TestSecurity_A07_StudioTokenBecomesCookie(t *testing.T) {
 		t.Error("the cookie carries the URL token itself")
 	}
 
-	// The cookie opens the page.
-	r := request(http.MethodGet, "/")
+	// The cookie opens the interface.
+	r := request(http.MethodGet, "/ui/")
 	r.AddCookie(cookie)
 
 	if rec := serve(s, r); rec.Code != http.StatusOK {
@@ -219,7 +219,7 @@ func TestSecurity_A01_StudioRejectsCrossOriginPost(t *testing.T) {
 	s := newStudio(t)
 	cookie := session(t, s)
 
-	r := request(http.MethodPost, "/s/db/console")
+	r := request(http.MethodPost, "/api/v1/sources/db/query")
 	r.Header.Set("Origin", "https://evil.example")
 	r.AddCookie(cookie)
 
@@ -234,31 +234,6 @@ func TestSecurity_A07_StudioTokensAreRandom(t *testing.T) {
 	a, b := newStudio(t), newStudio(t)
 	if a.Token() == b.Token() || len(a.Token()) != 43 {
 		t.Errorf("tokens %q and %q: want distinct, 43 characters (32 bytes, base64url)", a.Token(), b.Token())
-	}
-}
-
-func TestOverviewListsSourcesWithoutCredentials(t *testing.T) {
-	t.Parallel()
-
-	s := newStudio(t)
-	cookie := session(t, s)
-
-	r := request(http.MethodGet, "/")
-	r.AddCookie(cookie)
-
-	rec := serve(s, r)
-
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK || !strings.Contains(body, "sqlite  storage/app.db") ||
-		!strings.Contains(body, "read-only") {
-		t.Errorf("overview = %d %q", rec.Code, body)
-	}
-
-	if rec := serve(
-		s,
-		func() *http.Request { r := request(http.MethodGet, "/nope"); r.AddCookie(cookie); return r }(),
-	); rec.Code != http.StatusNotFound {
-		t.Errorf("unknown path: status = %d, want 404", rec.Code)
 	}
 }
 
@@ -287,5 +262,59 @@ func TestSecurity_A07_StudioTokenIsSingleUse(t *testing.T) {
 
 	if got := serve(s, r).Code; got == http.StatusUnauthorized {
 		t.Error("the first browser lost its session when the token was refused")
+	}
+}
+
+func TestRootRedirectsToUI(t *testing.T) {
+	t.Parallel()
+
+	s := newStudio(t)
+	cookie := session(t, s)
+
+	r := request(http.MethodGet, "/")
+	r.AddCookie(cookie)
+
+	rec := serve(s, r)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/ui/" {
+		t.Errorf("GET / = %d to %q, want 303 to /ui/", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// Without the session the root is as closed as every other path.
+	if rec := serve(s, request(http.MethodGet, "/")); rec.Code != http.StatusUnauthorized {
+		t.Errorf("GET / without a session = %d, want 401", rec.Code)
+	}
+}
+
+// TestLegacyPagesAreGone: the pages of the old htmx interface no longer exist.
+// Behind the session they answer 404; without it, 401 like every other path.
+func TestLegacyPagesAreGone(t *testing.T) {
+	t.Parallel()
+
+	s := newStudio(t)
+	cookie := session(t, s)
+
+	for _, target := range []string{
+		"/s/db", "/s/db/t/users", "/s/db/t/users/r?k=1", "/s/db/console", "/s/mongo/c/users", "/s/redis/k/a",
+		"/s/db/t/users/export", "/events?view=/s/db", "/assets/htmx.min.js", "/assets/studio.js", "/assets/studio.css",
+	} {
+		r := request(http.MethodGet, target)
+		r.AddCookie(cookie)
+
+		if rec := serve(s, r); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", target, rec.Code)
+		}
+
+		if rec := serve(s, request(http.MethodGet, target)); rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s without a session = %d, want 401", target, rec.Code)
+		}
+	}
+
+	for _, target := range []string{"/s/db/t/users", "/s/db/console", "/s/db/t/users/r?k=1"} {
+		r := request(http.MethodPost, target)
+		r.AddCookie(cookie)
+
+		if rec := serve(s, r); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("POST %s = %d, want 404", target, rec.Code)
+		}
 	}
 }

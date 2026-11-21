@@ -123,3 +123,29 @@ func TestAPICellsHoldingHTMLAreJSONText(t *testing.T) {
 		t.Errorf("column %q, cell %q; want the payload as text in both", got.Columns[1], got.Rows[0][0].T)
 	}
 }
+
+func TestAPIRedisConsoleAuditsOnlyTheCommandName(t *testing.T) {
+	t.Parallel()
+
+	_, h := mixedStudio(t, true)
+
+	for _, line := range []string{`SET session:1 "S3cret-value"`, "GET session:1"} {
+		body := apiJSON(t, map[string]string{"line": line})
+		if rec := apiDo(h.s, h.login, "POST", "/api/v1/sources/redis/command", body); rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d %s", line, rec.Code, rec.Body)
+		}
+	}
+
+	out := h.logs.String()
+	if !strings.Contains(out, "action=console") || !strings.Contains(out, "target=SET") || !strings.Contains(out, "args=2") {
+		t.Errorf("the audit lacks the command name and the argument count: %s", out)
+	}
+
+	if strings.Contains(out, "S3cret") || strings.Contains(out, "session:1") {
+		t.Errorf("an argument reached the log: %s", out)
+	}
+
+	if strings.Count(out, "action=console") != 1 {
+		t.Errorf("a read command was audited as a write: %s", out)
+	}
+}
