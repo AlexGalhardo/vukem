@@ -29,6 +29,7 @@ regexes = [
 	'''^p%40ss$''',
 	'''^CHANGEME$''',
 	'''^(longenough|a very long one)$''',
+	'''^9f2c41d07a3b6e58$''',
 	'''^_etc_passwd\.jsonl$''',
 	'''(?i)^(a brand new|another long|wrong|not my) password$''',
 	'''testPassword''',
