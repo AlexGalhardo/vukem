@@ -4,6 +4,8 @@
 // behind a session token, strict security headers and a refusal to run
 // against production unless asked.
 //
-// This module is experimental. Rendering uses html/template and htmx; there is
-// no JavaScript build.
+// This module is experimental. It serves two interfaces: the pages rendered
+// with html/template and htmx, and a React interface under /ui/ that talks to
+// the JSON API under /api/v1 (docs/api.md). The React build is committed in
+// ui/ and embedded, so installing the binary needs no JavaScript toolchain.
 package studio
