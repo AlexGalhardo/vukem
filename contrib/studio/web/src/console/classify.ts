@@ -19,20 +19,38 @@ export interface StatementInfo {
 
 const readVerbs = new Set(["select", "with", "show", "explain", "describe", "desc", "table", "values", "pragma"]);
 const writeVerbs = new Set(["insert", "update", "delete", "merge", "replace", "create", "drop", "alter", "truncate"]);
+/** Verbs that are also scalar functions: followed by "(" they only read. */
+const scalarFunctions = new Set(["replace", "insert", "truncate"]);
 
 export function classify(sql: string): StatementInfo {
-  const words: string[] = [];
+  const tokens = tokenize(sql).filter((t) => t.kind !== "space" && t.kind !== "comment");
   let first = "";
   let carried = "";
-  let hasWhere = false;
   let hasInto = false;
   let sets = false;
+  let depth = 0;
+  // The UPDATE or DELETE being read. Only a WHERE at its own depth filters it:
+  // one inside a subquery or a CTE says nothing about the rows it changes.
+  let open: { depth: number; filtered: boolean } | null = null;
+  let unfiltered = false;
 
-  for (const t of tokenize(sql)) {
-    if (t.kind === "space" || t.kind === "comment") {
+  const closeOpen = (): void => {
+    if (open !== null && !open.filtered) {
+      unfiltered = true;
+    }
+    open = null;
+  };
+
+  for (const [i, t] of tokens.entries()) {
+    if (t.kind === "operator" && t.text === "(") {
+      depth++;
       continue;
     }
-    if (t.kind === "operator" && first === "" && t.text === "(") {
+    if (t.kind === "operator" && t.text === ")") {
+      depth--;
+      if (open !== null && depth < open.depth) {
+        closeOpen();
+      }
       continue;
     }
     if (t.kind === "operator" && t.text === "=") {
@@ -42,20 +60,30 @@ export function classify(sql: string): StatementInfo {
       continue;
     }
     const w = t.text.toLowerCase();
-    words.push(w);
     if (first === "") {
       first = w;
     }
     // Quoted names are identifiers: a column called "update" is not a verb.
     const bare = t.kind === "keyword";
+    const next = tokens[i + 1];
+    const isCall = next?.kind === "operator" && next.text === "(" && scalarFunctions.has(w);
     if (bare && w === "where") {
-      hasWhere = true;
+      if (open !== null && depth === open.depth) {
+        open.filtered = true;
+      }
     } else if (bare && w === "into") {
       hasInto = true;
-    } else if (bare && first === "with" && carried === "" && writeVerbs.has(w)) {
-      carried = w;
+    } else if (bare && !isCall && writeVerbs.has(w)) {
+      if (first === "with" && carried === "") {
+        carried = w;
+      }
+      if (w === "update" || w === "delete") {
+        closeOpen();
+        open = { depth, filtered: false };
+      }
     }
   }
+  closeOpen();
 
   const verb = carried !== "" ? carried : first;
   let write = !readVerbs.has(verb) || hasInto;
@@ -70,7 +98,7 @@ export function classify(sql: string): StatementInfo {
   let warning = "";
   if (verb === "drop" || verb === "truncate") {
     warning = `${kind} removes data or structure that a rollback cannot bring back once it is committed.`;
-  } else if ((verb === "update" || verb === "delete") && !hasWhere) {
+  } else if ((verb === "update" || verb === "delete") && unfiltered) {
     warning = `This ${kind} has no WHERE, so it changes every row of the table.`;
   }
 
