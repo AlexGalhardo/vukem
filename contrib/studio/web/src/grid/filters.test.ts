@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   apiQuery,
   columnKind,
+  exportHref,
   nextSort,
   operatorsFor,
   parseFilter,
@@ -140,6 +141,24 @@ describe("operators by type", () => {
     expect(validateFilter(f("name", "gt", "a"), columns)).toContain("cannot be filtered");
     expect(validateFilter(f("name", "eq", ""), columns)).toContain("Give a value");
     expect(validateFilter(f("name", "null"), columns)).toBeNull();
+  });
+});
+
+describe("exportHref", () => {
+  test("carries the filters, the sort and the format on the export route", () => {
+    const href = exportHref("my db", "a/b", { filters: [f("qty", "gte", "7"), f("bio", "null")], sort: "name", desc: true }, "csv");
+    const [path, query] = href.split("?");
+    expect(path).toBe("/s/my%20db/t/a%2Fb/export");
+    const params = new URLSearchParams(query);
+    expect(params.getAll("f")).toEqual(["qty:gte:7", "bio:null:"]);
+    expect(params.get("sort")).toBe("name");
+    expect(params.get("desc")).toBe("1");
+    expect(params.get("format")).toBe("csv");
+  });
+
+  test("JSON Lines is the server's json format; the default view has no filters or sort", () => {
+    const href = exportHref("db", "users", { filters: [], sort: null, desc: false }, "jsonl");
+    expect(href).toBe("/s/db/t/users/export?format=json");
   });
 });
 
