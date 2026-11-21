@@ -1,0 +1,28 @@
+{
+  "columns": [
+    "id",
+    "name"
+  ],
+  "elapsedMs": 0,
+  "rows": [
+    [
+      {
+        "t": "1",
+        "l": true
+      },
+      {
+        "t": "ada"
+      }
+    ],
+    [
+      {
+        "t": "2",
+        "l": true
+      },
+      {
+        "t": "linus"
+      }
+    ]
+  ],
+  "truncated": false
+}
