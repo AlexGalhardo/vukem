@@ -6,7 +6,11 @@
 
 export const maxTabs = 20;
 
-export type TabKind = "query" | "table";
+/**
+ * What a tab shows: a query, a SQL table, the schema of a SQL source, a MongoDB
+ * collection or a Redis key. The console of MongoDB and Redis is a query tab.
+ */
+export type TabKind = "query" | "table" | "schema" | "collection" | "key";
 
 export interface Tab {
   id: string;
@@ -17,7 +21,7 @@ export interface Tab {
   text: string;
   /** What the text was when it was last saved to the library or loaded from it; the tab is unsaved while text differs. */
   savedText: string;
-  /** The table of a table tab. */
+  /** The name of what a table, collection or key tab shows. A query or schema tab has none. */
   table?: string;
 }
 
@@ -33,6 +37,9 @@ export const emptyTabs: TabsState = { tabs: [], active: null, seq: 0 };
 export type TabsAction =
   | { type: "openQuery"; id: string; text?: string }
   | { type: "openTable"; id: string; table: string }
+  | { type: "openCollection"; id: string; collection: string }
+  | { type: "openKey"; id: string; key: string }
+  | { type: "openSchema"; id: string }
   | { type: "close"; id: string }
   | { type: "closeOthers"; id: string }
   | { type: "activate"; id: string }
@@ -120,6 +127,18 @@ function update(state: TabsState, id: string, change: (t: Tab) => Tab): TabsStat
   return { ...state, tabs };
 }
 
+function openNamed(state: TabsState, id: string, kind: "collection" | "key", name: string): TabsState {
+  const existing = state.tabs.find((t) => t.kind === kind && t.table === name);
+  if (existing) {
+    return { ...state, active: existing.id };
+  }
+  if (!canOpen(state) || indexOf(state, id) >= 0) {
+    return state;
+  }
+  const tab: Tab = { id, kind, title: name, pinned: false, text: "", savedText: "", table: name };
+  return insert(state, tab, state.tabs.length);
+}
+
 export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
   switch (action.type) {
     case "openQuery": {
@@ -140,6 +159,21 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
         return state;
       }
       const tab: Tab = { id: action.id, kind: "table", title: action.table, pinned: false, text: "", savedText: "", table: action.table };
+      return insert(state, tab, state.tabs.length);
+    }
+    case "openCollection":
+      return openNamed(state, action.id, "collection", action.collection);
+    case "openKey":
+      return openNamed(state, action.id, "key", action.key);
+    case "openSchema": {
+      const existing = state.tabs.find((t) => t.kind === "schema");
+      if (existing) {
+        return { ...state, active: existing.id };
+      }
+      if (!canOpen(state) || indexOf(state, action.id) >= 0) {
+        return state;
+      }
+      const tab: Tab = { id: action.id, kind: "schema", title: "Schema", pinned: false, text: "", savedText: "" };
       return insert(state, tab, state.tabs.length);
     }
     case "close":
@@ -187,7 +221,7 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       if (!tab || !canOpen(state) || indexOf(state, action.newId) >= 0) {
         return state;
       }
-      if (tab.kind === "table") {
+      if (tab.kind !== "query") {
         return state;
       }
       const seq = state.seq + 1;

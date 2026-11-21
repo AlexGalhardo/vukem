@@ -175,3 +175,41 @@ describe("text", () => {
     expect(run(three(), { type: "rename", id: "a", title: "   " }).tabs[0]?.title).toBe("Query 1");
   });
 });
+
+describe("schema, collection and key tabs", () => {
+  test("the schema opens once and is activated the second time", () => {
+    const s = run(emptyTabs, { type: "openSchema", id: "s1" }, { type: "openQuery", id: "q" }, { type: "openSchema", id: "s2" });
+    expect(ids(s)).toEqual(["s1", "q"]);
+    expect(s.active).toBe("s1");
+    expect([s.tabs[0]?.kind, s.tabs[0]?.title, s.tabs[0]?.table]).toEqual(["schema", "Schema", undefined]);
+  });
+
+  test("a collection and a key open once each, by name", () => {
+    const s = run(
+      emptyTabs,
+      { type: "openCollection", id: "c1", collection: "users" },
+      { type: "openKey", id: "k1", key: "users" },
+      { type: "openCollection", id: "c2", collection: "users" },
+      { type: "openKey", id: "k2", key: "users" },
+    );
+    expect(ids(s)).toEqual(["c1", "k1"]);
+    expect(s.tabs.map((t) => t.kind)).toEqual(["collection", "key"]);
+    expect(s.active).toBe("k1");
+  });
+
+  test("they count against the tab limit and are not duplicated", () => {
+    let s = emptyTabs;
+    for (let i = 0; i < maxTabs; i++) {
+      s = tabsReducer(s, { type: "openKey", id: `k${i}`, key: `key${i}` });
+    }
+    expect(tabsReducer(s, { type: "openSchema", id: "x" })).toBe(s);
+    expect(tabsReducer(s, { type: "openCollection", id: "y", collection: "c" })).toBe(s);
+    const one = run(emptyTabs, { type: "openSchema", id: "s" });
+    expect(tabsReducer(one, { type: "duplicate", id: "s", newId: "s2" })).toBe(one);
+  });
+
+  test("they are never unsaved", () => {
+    const s = run(emptyTabs, { type: "openSchema", id: "s" }, { type: "openKey", id: "k", key: "a" });
+    expect(s.tabs.some((t) => isUnsaved(t))).toBe(false);
+  });
+});
