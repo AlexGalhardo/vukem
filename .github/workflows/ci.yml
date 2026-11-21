@@ -445,6 +445,34 @@ jobs:
         working-directory: contrib/studio
         run: go test -count=1 ./...
 
+  studio-ui:
+    name: Studio interface build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.5
+      - name: Install, type check and test
+        working-directory: contrib/studio/web
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test src
+      - name: Rebuild the committed build
+        working-directory: contrib/studio/web
+        run: bun run build
+      - name: The committed build is current
+        run: |
+          git diff --exit-code -- contrib/studio/ui
+          test -z "$(git status --porcelain -- contrib/studio/ui)"
+      - name: The module builds and serves the UI without Node
+        run: bash contrib/studio/scripts/gonly-check.sh
+
   engine:
     name: Engine module (subprocess seam)
     runs-on: ubuntu-latest
