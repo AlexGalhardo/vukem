@@ -217,6 +217,7 @@ Every exported `With*` option of the root package, grouped in the source by subs
 | `WithStdout` | Runtime | `options_runtime.go` | [testing.md](testing.md) |
 | `WithTelegram` | Logging | `services.go` | [subsystems.md](subsystems.md) |
 | `WithTranslations` | i18n | `options_views.go` | [subsystems.md](subsystems.md) |
+| `WithValidate` | Config | `options.go` | [architecture.md](architecture.md) |
 | `WithViewFuncs` | Views | `options_views.go` | [frontend.md](frontend.md) |
 | `WithViews` | Views | `options_views.go` | [frontend.md](frontend.md) |
 | `WithVite` | Vite | `options_views.go` | [frontend.md](frontend.md) |
