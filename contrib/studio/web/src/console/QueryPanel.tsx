@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactElement } from "react";
 import type { CompletionSource } from "../editor/complete";
 import { Editor } from "../editor/Editor";
@@ -43,6 +43,7 @@ export function QueryPanel({
   const state = useSyncExternalStore(store.subscribe, () => store.get(tabId));
   const running = state.status === "running";
   const writing = serverWrite && writeMode;
+  const cancel = useCallback(() => store.cancel(tabId), [store, tabId]);
 
   const send = async (kind: RunKind, statement: string, write: boolean): Promise<void> => {
     await store.start(tabId, kind, statement, write);
@@ -140,7 +141,7 @@ export function QueryPanel({
           {notice}
         </p>
       ) : null}
-      <ResultView state={state} onCancel={() => store.cancel(tabId)} />
+      <ResultView state={state} onCancel={cancel} />
       <ConfirmWriteDialog pending={pending} source={sourceName} onConfirm={confirm} onCancel={() => setPending(null)}
         onAfterClose={() => editor.current?.focus()} />
     </div>
