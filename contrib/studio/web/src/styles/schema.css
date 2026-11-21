@@ -229,3 +229,127 @@
     max-height: 240px;
   }
 }
+
+/* MongoDB */
+
+.toggle-group,
+.drawer-tools,
+.reply-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.toggle-group .button[aria-pressed="true"],
+.drawer-tools .button[aria-pressed="true"],
+.reply-tools .button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--surface-sunken);
+  font-weight: 600;
+}
+
+.doc-view,
+.key-view {
+  min-width: 0;
+}
+
+.doc-textarea {
+  min-height: 160px;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+}
+
+.dialog-wide {
+  width: min(760px, calc(100vw - 2 * var(--space-5)));
+}
+
+.tree-list {
+  margin: 0;
+  padding-left: var(--space-4);
+  list-style: none;
+  font: var(--text-sm) / 1.6 var(--font-mono);
+}
+
+.tree-root {
+  padding-left: 0;
+}
+
+.tree-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tree-caret {
+  display: inline-block;
+  width: 1.2em;
+  color: var(--text-muted);
+}
+
+.tree-key {
+  color: var(--accent);
+}
+
+.tree-string {
+  color: var(--ok);
+  overflow-wrap: anywhere;
+}
+
+.tree-number {
+  color: var(--warn);
+}
+
+.tree-null {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.tree-wrapper {
+  color: var(--text);
+}
+
+/* Redis */
+
+.key-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  margin: 0 0 var(--space-3);
+}
+
+.key-facts dt {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+}
+
+.key-facts dd {
+  margin: 0;
+}
+
+.hex-table td,
+.hex-table th {
+  padding: var(--space-1) var(--space-3);
+  white-space: pre;
+}
+
+.string-value .drawer-value {
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.key-grid {
+  display: flex;
+  flex-direction: column;
+  height: min(60vh, 520px);
+  min-height: 240px;
+}
+
+.doc-view > .grid-wrap {
+  flex: 1;
+}

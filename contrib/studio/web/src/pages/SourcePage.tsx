@@ -1,10 +1,12 @@
 import type { ReactElement } from "react";
 import { apiPath } from "../api/client";
-import type { CollectionsResponse, KeysResponse, Source, TablesResponse } from "../api/types";
+import type { CollectionsResponse, Source, TablesResponse } from "../api/types";
 import { useApi } from "../api/useApi";
 import { EmptyState, ErrorNotice, Loading } from "../components/Notices";
-import { Link } from "../lib/history";
-import { formatCount, formatTTL } from "../lib/mode";
+import { Link, navigate } from "../lib/history";
+import { formatCount } from "../lib/mode";
+import { hrefFor } from "../lib/router";
+import { KeyBrowser } from "../redis/KeyBrowser";
 
 function TableList({ source }: { source: Source }): ReactElement {
   const { data, error, loading, reload } = useApi<TablesResponse>(apiPath("sources", source.name, "tables"));
@@ -52,53 +54,21 @@ function CollectionList({ source }: { source: Source }): ReactElement {
         <tr>
           <th scope="col">Collection</th>
           <th scope="col" className="num">
-            Documents (estimate)
+            Documents
           </th>
         </tr>
       </thead>
       <tbody>
         {data.collections.map((c) => (
           <tr key={c.name}>
-            <th scope="row">{c.name}</th>
-            <td className="num">{formatCount(c.estimate)}</td>
+            <th scope="row">
+              <Link route={{ name: "collection", source: source.name, collection: c.name }}>{c.name}</Link>
+            </th>
+            <td className="num">{c.estimate < 0 ? "unknown" : `about ${formatCount(c.estimate)}`}</td>
           </tr>
         ))}
       </tbody>
     </table>
-  );
-}
-
-function KeyList({ source }: { source: Source }): ReactElement {
-  const { data, error, loading, reload } = useApi<KeysResponse>(apiPath("sources", source.name, "keys"));
-
-  if (loading) return <Loading what="keys" />;
-  if (error) return <ErrorNotice error={error} onRetry={reload} />;
-  if (!data || data.keys.length === 0) return <EmptyState title="No key matched" />;
-
-  return (
-    <>
-      <table className="data-table" aria-label="Keys">
-        <thead>
-          <tr>
-            <th scope="col">Key</th>
-            <th scope="col">Type</th>
-            <th scope="col">Expires in</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.keys.map((k) => (
-            <tr key={k.key}>
-              <th scope="row" className="mono">
-                {k.key}
-              </th>
-              <td>{k.type}</td>
-              <td>{formatTTL(k.ttlSeconds)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {data.cursor ? <p className="muted">This is the first step of the scan; more keys exist.</p> : null}
-    </>
   );
 }
 
@@ -108,16 +78,18 @@ export function SourcePage({ source }: { source: Source }): ReactElement {
     <section aria-labelledby="source-title">
       <h1 id="source-title">{source.name}</h1>
       <p className="muted mono">{source.label}</p>
-      {source.kind === "sql" ? (
-        <p>
-          <Link route={{ name: "console", source: source.name }}>Open the SQL console</Link>
-          {" · "}
-          <Link route={{ name: "schema", source: source.name }}>Open the schema</Link>
-        </p>
-      ) : null}
+      <p>
+        <Link route={{ name: "console", source: source.name }}>{source.kind === "sql" ? "Open the SQL console" : "Open the console"}</Link>
+        {source.kind === "sql" ? (
+          <>
+            {" · "}
+            <Link route={{ name: "schema", source: source.name }}>Open the schema</Link>
+          </>
+        ) : null}
+      </p>
       {source.kind === "sql" ? <TableList source={source} /> : null}
       {source.kind === "mongo" ? <CollectionList source={source} /> : null}
-      {source.kind === "redis" ? <KeyList source={source} /> : null}
+      {source.kind === "redis" ? <KeyBrowser source={source.name} onOpenKey={(key) => navigate(hrefFor({ name: "key", source: source.name, key }))} /> : null}
     </section>
   );
 }

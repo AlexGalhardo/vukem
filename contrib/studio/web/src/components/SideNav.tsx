@@ -19,7 +19,11 @@ function Items({ names, route }: { names: { label: string; route?: Route }[]; ro
             <Link
               route={item.route}
               className="nav-link nav-link-child"
-              current={route.name === "table" && item.route.name === "table" && route.table === item.route.table}
+              current={
+                (route.name === "table" && item.route.name === "table" && route.table === item.route.table) ||
+                (route.name === "collection" && item.route.name === "collection" && route.collection === item.route.collection) ||
+                (route.name === "key" && item.route.name === "key" && route.key === item.route.key)
+              }
             >
               <TableIcon />
               <span className="truncate">{item.label}</span>
@@ -64,15 +68,28 @@ function SourceChildren({ source, route }: { source: Source; route: Route }): Re
   }
 
   if (source.kind === "mongo") {
-    return <Items route={route} names={data.collections.map((c) => ({ label: c.name }))} />;
+    return (
+      <Items
+        route={route}
+        names={data.collections.map((c) => ({ label: c.name, route: { name: "collection", source: source.name, collection: c.name } }))}
+      />
+    );
   }
 
-  return <Items route={route} names={data.keys.map((k) => ({ label: k.key }))} />;
+  return <Items route={route} names={data.keys.map((k) => ({ label: k.key, route: { name: "key", source: source.name, key: k.key } }))} />;
 }
 
 /** SideNav lists the sources; the open one also lists its tables, collections or keys. */
 export function SideNav({ sources, route }: { sources: Source[]; route: Route }): ReactElement {
-  const open = route.name === "source" || route.name === "table" || route.name === "console" ? route.source : null;
+  const open =
+    route.name === "source" ||
+    route.name === "table" ||
+    route.name === "console" ||
+    route.name === "schema" ||
+    route.name === "collection" ||
+    route.name === "key"
+      ? route.source
+      : null;
 
   return (
     <nav className="sidenav" aria-label="Sources">
@@ -88,13 +105,22 @@ export function SideNav({ sources, route }: { sources: Source[]; route: Route })
               <span className="truncate">{source.name}</span>
               <span className="nav-kind">{source.kind}</span>
             </Link>
-            {open === source.name && source.kind === "sql" ? (
+            {open === source.name ? (
               <Link
                 route={{ name: "console", source: source.name }}
                 className="nav-link nav-link-child"
                 current={route.name === "console"}
               >
-                <span className="truncate">SQL console</span>
+                <span className="truncate">{source.kind === "sql" ? "SQL console" : "Console"}</span>
+              </Link>
+            ) : null}
+            {open === source.name && source.kind === "sql" ? (
+              <Link
+                route={{ name: "schema", source: source.name }}
+                className="nav-link nav-link-child"
+                current={route.name === "schema"}
+              >
+                <span className="truncate">Schema</span>
               </Link>
             ) : null}
             {open === source.name ? <SourceChildren source={source} route={route} /> : null}

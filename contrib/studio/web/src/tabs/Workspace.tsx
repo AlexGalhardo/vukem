@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import type { Source } from "../api/types";
+import { apiPath } from "../api/client";
+import type { CollectionsResponse, Source } from "../api/types";
+import { useApi } from "../api/useApi";
 import { useCatalog } from "../console/catalog";
 import { ConfirmDialog } from "../console/ConfirmDialog";
 import type { ConfirmRequest } from "../console/ConfirmDialog";
@@ -15,7 +17,14 @@ import { entryFrom, openHistory } from "../history/store";
 import type { SavedQuery } from "../history/store";
 import { replaceSearch } from "../lib/history";
 import { useShortcut } from "../shortcuts/ShortcutsProvider";
+import { CollectionView } from "../mongo/CollectionView";
+import { mongoLanguage } from "../mongo/language";
+import { template } from "../mongo/json";
+import { mongoProtocol } from "../mongo/protocol";
 import { TablePage } from "../pages/TablePage";
+import { KeyView } from "../redis/KeyView";
+import { redisLanguage } from "../redis/language";
+import { redisProtocol } from "../redis/protocol";
 import { SchemaView } from "../schema/SchemaView";
 import { loadTabs, saveTabs } from "./persist";
 import { panelDomId, tabDomId, TabStrip } from "./TabStrip";
@@ -47,7 +56,19 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
   const [writeModes, setWriteModes] = useState<Record<string, boolean>>({});
   const [confirm, setConfirm] = useState<{ request: ConfirmRequest; run: () => void } | null>(null);
   const [notice, setNotice] = useState("");
-  const store = useMemo(() => new RunnerStore(source.name), [source.name]);
+  const store = useMemo(
+    () =>
+      source.kind === "mongo"
+        ? new RunnerStore(source.name, undefined, undefined, mongoProtocol(source.name))
+        : source.kind === "redis"
+          ? new RunnerStore(source.name, undefined, undefined, redisProtocol(source.name))
+          : new RunnerStore(source.name),
+    [source.name, source.kind],
+  );
+  const collections = useApi<CollectionsResponse>(source.kind === "mongo" ? apiPath("sources", source.name, "collections") : null);
+  const collectionNames = useMemo(() => collections.data?.collections.map((c) => c.name) ?? [], [collections.data]);
+  const mongoLang = useMemo(() => mongoLanguage(collectionNames), [collectionNames]);
+  const [keyToOpen, setKeyToOpen] = useState("");
   const strip = useRef<HTMLDivElement>(null);
   const history = useMemo(() => openHistory(localStore(), sessionKey), [sessionKey]);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -56,7 +77,7 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
   const [said, setSaid] = useState("");
 
   const activeTab = state.tabs.find((t) => t.id === state.active) ?? null;
-  const catalog = useCatalog(source.name, activeTab?.kind === "query" ? activeTab.text : "");
+  const catalog = useCatalog(source.kind === "sql" ? source.name : null, activeTab?.kind === "query" ? activeTab.text : "");
 
   // A table tab keeps its view in the URL's query string: another tab must not inherit it.
   const dispatch = useCallback((action: TabsAction): void => {
@@ -89,8 +110,10 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
       return;
     }
     setNotice("");
-    dispatch({ type: "openQuery", id: newTabId(), text });
-  }, [dispatch]);
+    // A new MongoDB console starts from a find on the first collection, so the shape of a statement is in front of the person.
+    const start = text ?? (source.kind === "mongo" ? template(collectionNames[0] ?? "") : undefined);
+    dispatch({ type: "openQuery", id: newTabId(), text: start });
+  }, [dispatch, source.kind, collectionNames]);
 
   const closeNow = useCallback(
     (id: string): void => {
@@ -140,6 +163,30 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
     }
     setNotice("");
     dispatch({ type: "openTable", id: newTabId(), table });
+  };
+
+  const openCollection = (collection: string): void => {
+    if (collection === "") {
+      return;
+    }
+    if (!canOpen(state) && !state.tabs.some((t) => t.kind === "collection" && t.table === collection)) {
+      setNotice(`${maxTabs} tabs are open. Close one to open another.`);
+      return;
+    }
+    setNotice("");
+    dispatch({ type: "openCollection", id: newTabId(), collection });
+  };
+
+  const openKey = (key: string): void => {
+    if (key === "") {
+      return;
+    }
+    if (!canOpen(state) && !state.tabs.some((t) => t.kind === "key" && t.table === key)) {
+      setNotice(`${maxTabs} tabs are open. Close one to open another.`);
+      return;
+    }
+    setNotice("");
+    dispatch({ type: "openKey", id: newTabId(), key });
   };
 
   const openSchema = (): void => {
@@ -270,11 +317,13 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
           />
         </div>
         <button type="button" className="button" onClick={() => openQuery()}>
-          New query
+          {source.kind === "sql" ? "New query" : "New console"}
         </button>
-        <button type="button" className="button" onClick={() => openSchema()}>
-          Schema
-        </button>
+        {source.kind === "sql" ? (
+          <button type="button" className="button" onClick={() => openSchema()}>
+            Schema
+          </button>
+        ) : null}
         <button
           type="button"
           className="button"
@@ -284,21 +333,47 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
         >
           History and saved queries
         </button>
-        <label className="field-inline">
-          <span className="visually-hidden">Open a table in a tab</span>
-          <select
-            value=""
-            aria-label="Open a table in a tab"
-            onChange={(e) => openTable(e.target.value)}
+        {source.kind === "sql" ? (
+          <label className="field-inline">
+            <span className="visually-hidden">Open a table in a tab</span>
+            <select value="" aria-label="Open a table in a tab" onChange={(e) => openTable(e.target.value)}>
+              <option value="">Open table…</option>
+              {catalog.tables.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {source.kind === "mongo" ? (
+          <label className="field-inline">
+            <span className="visually-hidden">Open a collection in a tab</span>
+            <select value="" aria-label="Open a collection in a tab" onChange={(e) => openCollection(e.target.value)}>
+              <option value="">Open collection…</option>
+              {collectionNames.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {source.kind === "redis" ? (
+          <form
+            className="field-inline"
+            onSubmit={(e) => {
+              e.preventDefault();
+              openKey(keyToOpen.trim());
+              setKeyToOpen("");
+            }}
           >
-            <option value="">Open table…</option>
-            {catalog.tables.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
+            <input type="text" aria-label="Key to open in a tab" placeholder="Key to open" value={keyToOpen} autoComplete="off" spellCheck={false} onChange={(e) => setKeyToOpen(e.target.value)} />
+            <button type="submit" className="button" disabled={keyToOpen.trim() === ""}>
+              Open key
+            </button>
+          </form>
+        ) : null}
         <button type="button" className="button" onClick={() => stepTab(-1)} disabled={state.tabs.length < 2}>
           Previous tab
         </button>
@@ -377,9 +452,15 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
             <TablePage source={source.name} table={activeTab.table} write={write} refreshSeconds={refreshSeconds} />
           ) : activeTab.kind === "schema" ? (
             <SchemaView source={source.name} onOpenTable={openTable} />
+          ) : activeTab.kind === "collection" && activeTab.table !== undefined ? (
+            <CollectionView source={source.name} collection={activeTab.table} write={write} />
+          ) : activeTab.kind === "key" && activeTab.table !== undefined ? (
+            <KeyView source={source.name} keyName={activeTab.table} write={write} onDeleted={() => dispatch({ type: "close", id: activeTab.id })} />
           ) : (
             <QueryPanel
               sourceName={source.name}
+              kind={source.kind}
+              language={source.kind === "mongo" ? mongoLang : source.kind === "redis" ? redisLanguage(write && writeModes[activeTab.id] === true) : undefined}
               tabId={activeTab.id}
               text={activeTab.text}
               onText={(text) => dispatch({ type: "setText", id: activeTab.id, text })}

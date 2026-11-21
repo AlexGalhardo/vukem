@@ -156,7 +156,7 @@ export function TabStrip({ idPrefix, tabs, active, onActivate, onClose, onShift,
               }}
               onKeyDown={(e) => onKeyDown(e, tab, index)}
             >
-              {tab.kind === "table" ? <TableIcon className="tab-icon" /> : null}
+              {tab.kind !== "query" ? <TableIcon className="tab-icon" /> : null}
               <span className="truncate tab-title">{tab.title}</span>
               {tab.pinned ? <span className="visually-hidden"> (pinned)</span> : null}
               {unsaved ? (
