@@ -19,6 +19,29 @@ import (
 	"github.com/AlexGalhardo/vukem/view"
 )
 
+// WithValidate registers a check of the app's own configuration. New runs it
+// right after the configuration loads and before every other check (APP_KEY,
+// TRUSTED_PROXIES, HSTS and the like), the providers and the routes, so the
+// error the app returns is the one that stops `about`, `route:list`, the
+// other commands and the server, instead of a framework error about a
+// setting the app has not fixed yet. A configuration that fails to load
+// (a malformed value) still fails first, because the app has nothing to read.
+//
+// The *App passed in is partly built: Config, Source, Kind and Version are
+// set; Key, Crypt, Router, Log and the services are not, so read settings
+// through Config and Source only. Checks run in the order registered and the
+// first error stops New, wrapped as "vukem: validate: ...".
+//
+//	vukem.WithValidate(func(app *vukem.App) error {
+//		if app.Source.Get("APP_EDITION") == "" {
+//			return errors.New("APP_EDITION is required")
+//		}
+//		return nil
+//	})
+func WithValidate(fn func(app *App) error) Option {
+	return func(o *options) error { o.validate = append(o.validate, fn); return nil }
+}
+
 // WithRoutes registers routes (and router middleware) after providers
 // registered, so handlers can use the services they added. An error stops
 // New.

@@ -428,6 +428,7 @@ type options struct {
 	name           string
 	fuzzAuth       func(context.Context, *App) (FuzzAuth, error)
 	proxies        []*net.IPNet
+	validate       []func(app *App) error
 	routes         []func(r *router.Router, app *App) error
 	bootRoutes     []func(r *router.Router, app *App) error
 	views          fs.FS
@@ -506,6 +507,13 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	cfg.Devtools = cfg.Devtools || o.devtools
+
+	for _, fn := range o.validate {
+		probe := &App{Config: cfg, Source: src, Kind: o.kind, Version: o.version}
+		if err := fn(probe); err != nil {
+			return nil, fmt.Errorf("vukem: validate: %w", err)
+		}
+	}
 
 	key, proxies, previous, err := checkBootConfig(&cfg, src, &o)
 	if err != nil {
