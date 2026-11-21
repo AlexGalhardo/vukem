@@ -3,10 +3,11 @@
 # Installed by `vukem new --standards`; bypass with `git commit --no-verify`.
 set -eu
 
-# Betterleaks reads .betterleaks.toml. Without the binary the hook says so and
-# goes on: CI runs the same scan and fails there, so nothing passes silently.
+# The config is named because Betterleaks 1.10 no longer loads it from the
+# repository by itself. Without the binary the hook says so and goes on: CI
+# runs the same scan and fails there, so nothing passes silently.
 if command -v betterleaks >/dev/null 2>&1; then
-	betterleaks git --pre-commit --staged --no-banner --redact
+	betterleaks git . --config .betterleaks.toml --pre-commit --staged --no-banner --redact
 else
 	echo "pre-commit: betterleaks not installed, secret scan skipped (CI still runs it)." >&2
 	echo "pre-commit: install it from https://github.com/betterleaks/betterleaks/releases" >&2
