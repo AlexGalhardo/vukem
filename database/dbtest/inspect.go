@@ -2,6 +2,7 @@ package dbtest
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -185,5 +186,44 @@ func testInspect(ctx context.Context, t *testing.T, db *database.DB) {
 
 	if has, err := s.HasColumn("dbt_inspect", "owner_id"); err != nil || !has {
 		t.Errorf("HasColumn = %v, %v", has, err)
+	}
+}
+
+// testInspectViews proves InspectViews on the real engine: a view is listed
+// by it and left out of Inspect.
+func testInspectViews(ctx context.Context, t *testing.T, db *database.DB) {
+	t.Helper()
+
+	s := schema.New(ctx, db)
+
+	mustOK(t, "create base", s.Create("dbt_view_base", func(t *schema.Table) {
+		t.ID()
+		t.String("name", 40)
+	}))
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), "DROP VIEW IF EXISTS dbt_view_names")
+		_ = s.DropIfExists("dbt_view_base")
+	})
+
+	_, err := db.ExecContext(ctx, "CREATE VIEW dbt_view_names AS SELECT id, name FROM dbt_view_base")
+	mustOK(t, "create view", err)
+
+	views, err := schema.InspectViews(ctx, db)
+	mustOK(t, "inspect views", err)
+
+	if !slices.Contains(views, "dbt_view_names") || slices.Contains(views, "dbt_view_base") {
+		t.Errorf("InspectViews = %v, want dbt_view_names and not dbt_view_base", views)
+	}
+
+	snap, err := schema.Inspect(ctx, db)
+	mustOK(t, "inspect all", err)
+
+	if _, ok := snap.Table("dbt_view_names"); ok {
+		t.Error("Inspect lists the view as a table")
+	}
+
+	if _, ok := snap.Table("dbt_view_base"); !ok {
+		t.Error("Inspect does not list dbt_view_base")
 	}
 }

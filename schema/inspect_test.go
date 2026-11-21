@@ -183,3 +183,45 @@ func TestInspectSQLiteExpressionIndexTriggersAndCheck(t *testing.T) {
 		t.Errorf("SQLite = %+v, want a CHECK and the trigger notes_t", tbl.SQLite)
 	}
 }
+
+func TestInspectViewsListsOnlyViewsOnSQLite(t *testing.T) {
+	t.Parallel()
+
+	db := rebuildDB(t)
+	execAll(t, db,
+		"CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)",
+		"CREATE VIEW b_notes AS SELECT id FROM notes",
+		"CREATE VIEW a_notes AS SELECT body FROM notes",
+		`CREATE VIEW "odd'name" AS SELECT id FROM notes`,
+	)
+
+	views, err := InspectViews(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"a_notes", "b_notes", "odd'name"}; !cmp.Equal(views, want) {
+		t.Errorf("InspectViews = %v, want %v", views, want)
+	}
+
+	snap, err := Inspect(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(snap.Tables) != 1 || snap.Tables[0].Name != "notes" {
+		t.Errorf("Inspect tables = %+v, want only notes", snap.Tables)
+	}
+}
+
+func TestInspectViewsEmptyOnSQLite(t *testing.T) {
+	t.Parallel()
+
+	db := rebuildDB(t)
+	execAll(t, db, "CREATE TABLE notes (id INTEGER PRIMARY KEY)")
+
+	views, err := InspectViews(t.Context(), db)
+	if err != nil || len(views) != 0 {
+		t.Errorf("InspectViews = %v, %v, want none", views, err)
+	}
+}

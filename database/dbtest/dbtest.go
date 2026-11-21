@@ -134,6 +134,7 @@ func Run(t *testing.T, db *database.DB) {
 	run("Upsert", testUpsert)
 	run("SchemaAlter", testAlter)
 	run("Inspect", testInspect)
+	run("InspectViews", testInspectViews)
 	run("Queue", testQueue)
 	run("BulkLocksChecks", testBulkLocksChecks)
 	run("PartialIndexRebind", testPartialIndexRebind)
@@ -146,7 +147,11 @@ func clean(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
 	s := schema.New(ctx, db)
-	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks", "dbt_conflict", "dbt_upserts", "dbt_trash_upserts", "dbt_versioned", "dbt_inspect_members", "dbt_inspect", "dbt_inspect_owners", "dbt_qbook_tag", "dbt_qreviews", "dbt_qtags", "dbt_qbooks", "dbt_qauthors"} {
+	if _, err := db.ExecContext(ctx, "DROP VIEW IF EXISTS dbt_view_names"); err != nil {
+		t.Fatalf("drop view dbt_view_names: %v", err)
+	}
+
+	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks", "dbt_conflict", "dbt_upserts", "dbt_trash_upserts", "dbt_versioned", "dbt_inspect_members", "dbt_inspect", "dbt_inspect_owners", "dbt_view_base", "dbt_qbook_tag", "dbt_qreviews", "dbt_qtags", "dbt_qbooks", "dbt_qauthors"} {
 		if err := s.DropIfExists(table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
