@@ -9,6 +9,7 @@ import { ErrorNotice, Loading } from "./components/Notices";
 import { useRoute } from "./lib/history";
 import type { Route } from "./lib/router";
 import { ConsolePage } from "./pages/ConsolePage";
+import { CollectionPage, KeyPage } from "./pages/DocPages";
 import { NotFound } from "./pages/NotFound";
 import { SchemaPage } from "./schema/SchemaView";
 import { Overview } from "./pages/Overview";
@@ -51,14 +52,23 @@ function Page({ bootstrap, route }: { bootstrap: Bootstrap; route: Route }): Rea
         <NotFound />
       );
     case "console": {
-      const source = bootstrap.sources.find((s) => s.name === route.source && s.kind === "sql");
+      const source = bootstrap.sources.find((s) => s.name === route.source);
       return source ? <ConsolePage source={source} write={bootstrap.write} refreshSeconds={bootstrap.refreshSeconds} sessionKey={bootstrap.sessionKey} /> : <NotFound />;
     }
     case "schema":
       return bootstrap.sources.some((s) => s.name === route.source && s.kind === "sql") ? <SchemaPage source={route.source} /> : <NotFound />;
     case "collection":
+      return bootstrap.sources.some((s) => s.name === route.source && s.kind === "mongo") ? (
+        <CollectionPage source={route.source} collection={route.collection} write={bootstrap.write} />
+      ) : (
+        <NotFound />
+      );
     case "key":
-      return <NotFound />;
+      return bootstrap.sources.some((s) => s.name === route.source && s.kind === "redis") ? (
+        <KeyPage source={route.source} keyName={route.key} write={bootstrap.write} />
+      ) : (
+        <NotFound />
+      );
     case "notfound":
       return <NotFound />;
   }

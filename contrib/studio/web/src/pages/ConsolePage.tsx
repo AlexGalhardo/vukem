@@ -16,7 +16,7 @@ export function ConsolePage({
 }): ReactElement {
   return (
     <section aria-labelledby="console-title">
-      <h1 id="console-title">SQL console</h1>
+      <h1 id="console-title">{source.kind === "sql" ? "SQL console" : source.kind === "mongo" ? "MongoDB console" : "Redis console"}</h1>
       <p className="muted mono">{source.label}</p>
       <Workspace key={source.name} source={source} write={write} refreshSeconds={refreshSeconds} sessionKey={sessionKey} />
     </section>
