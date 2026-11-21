@@ -20,6 +20,14 @@ describe("matchRoute", () => {
     expect(matchRoute("/ui/s/db/q/x")).toEqual({ name: "notfound" });
   });
 
+  test("matches the schema, a collection and a key", () => {
+    expect(matchRoute("/ui/s/db/schema")).toEqual({ name: "schema", source: "db" });
+    expect(matchRoute("/ui/s/db/schema/x")).toEqual({ name: "notfound" });
+    expect(matchRoute("/ui/s/m/c/users")).toEqual({ name: "collection", source: "m", collection: "users" });
+    expect(matchRoute("/ui/s/r/k/session%3A1%2Fx")).toEqual({ name: "key", source: "r", key: "session:1/x" });
+    expect(matchRoute("/ui/s/r/k")).toEqual({ name: "notfound" });
+  });
+
   test("decodes escaped names", () => {
     expect(matchRoute("/ui/s/my%20db/t/a%2Fb")).toEqual({ name: "table", source: "my db", table: "a/b" });
   });
@@ -38,6 +46,9 @@ describe("hrefFor", () => {
       { name: "source", source: "db" },
       { name: "table", source: "my db", table: "a/b" },
       { name: "console", source: "my db" },
+      { name: "schema", source: "my db" },
+      { name: "collection", source: "m", collection: "a b/c" },
+      { name: "key", source: "r", key: "user:1/x?y" },
     ];
 
     for (const route of routes) {

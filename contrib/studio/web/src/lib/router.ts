@@ -3,6 +3,9 @@ export type Route =
   | { name: "source"; source: string }
   | { name: "table"; source: string; table: string }
   | { name: "console"; source: string }
+  | { name: "schema"; source: string }
+  | { name: "collection"; source: string; collection: string }
+  | { name: "key"; source: string; key: string }
   | { name: "notfound" };
 
 export const basePath = "/ui";
@@ -49,8 +52,20 @@ export function matchRoute(pathname: string): Route {
     return { name: "console", source };
   }
 
+  if (kind === "schema" && table === undefined) {
+    return { name: "schema", source };
+  }
+
   if (kind === "t" && table !== undefined && rest.length === 0) {
     return { name: "table", source, table };
+  }
+
+  if (kind === "c" && table !== undefined && rest.length === 0) {
+    return { name: "collection", source, collection: table };
+  }
+
+  if (kind === "k" && table !== undefined && rest.length === 0) {
+    return { name: "key", source, key: table };
   }
 
   return { name: "notfound" };
@@ -67,6 +82,12 @@ export function hrefFor(route: Route): string {
       return `${basePath}/s/${encodeURIComponent(route.source)}/t/${encodeURIComponent(route.table)}`;
     case "console":
       return `${basePath}/s/${encodeURIComponent(route.source)}/q`;
+    case "schema":
+      return `${basePath}/s/${encodeURIComponent(route.source)}/schema`;
+    case "collection":
+      return `${basePath}/s/${encodeURIComponent(route.source)}/c/${encodeURIComponent(route.collection)}`;
+    case "key":
+      return `${basePath}/s/${encodeURIComponent(route.source)}/k/${encodeURIComponent(route.key)}`;
     case "notfound":
       return basePath + "/";
   }

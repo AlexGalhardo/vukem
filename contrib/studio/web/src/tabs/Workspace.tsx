@@ -16,6 +16,7 @@ import type { SavedQuery } from "../history/store";
 import { replaceSearch } from "../lib/history";
 import { useShortcut } from "../shortcuts/ShortcutsProvider";
 import { TablePage } from "../pages/TablePage";
+import { SchemaView } from "../schema/SchemaView";
 import { loadTabs, saveTabs } from "./persist";
 import { panelDomId, tabDomId, TabStrip } from "./TabStrip";
 import { canOpen, emptyTabs, isUnsaved, maxTabs, tabsReducer } from "./tabsState";
@@ -141,6 +142,15 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
     dispatch({ type: "openTable", id: newTabId(), table });
   };
 
+  const openSchema = (): void => {
+    if (!canOpen(state) && !state.tabs.some((t) => t.kind === "schema")) {
+      setNotice(`${maxTabs} tabs are open. Close one to open another.`);
+      return;
+    }
+    setNotice("");
+    dispatch({ type: "openSchema", id: newTabId() });
+  };
+
   const say = useCallback((text: string): void => {
     // The same sentence twice would not be read twice.
     setSaid((prev) => (prev === text ? `${text} ` : text));
@@ -262,6 +272,9 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
         <button type="button" className="button" onClick={() => openQuery()}>
           New query
         </button>
+        <button type="button" className="button" onClick={() => openSchema()}>
+          Schema
+        </button>
         <button
           type="button"
           className="button"
@@ -362,6 +375,8 @@ export function Workspace({ source, write, refreshSeconds, sessionKey }: Workspa
         >
           {activeTab.kind === "table" && activeTab.table !== undefined ? (
             <TablePage source={source.name} table={activeTab.table} write={write} refreshSeconds={refreshSeconds} />
+          ) : activeTab.kind === "schema" ? (
+            <SchemaView source={source.name} onOpenTable={openTable} />
           ) : (
             <QueryPanel
               sourceName={source.name}

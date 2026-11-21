@@ -1,0 +1,231 @@
+/* Schema view, MongoDB and Redis */
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--accent-hover);
+}
+
+.row-active {
+  background: var(--surface-sunken);
+}
+
+.schema {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.schema-list {
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: var(--space-2);
+  max-height: 80vh;
+  overflow: auto;
+}
+
+.schema-list input[type="search"] {
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.schema-tables {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.schema-table-button {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.schema-table-button:hover {
+  background: var(--surface-sunken);
+}
+
+.schema-table-button[aria-current="true"] {
+  background: var(--surface-sunken);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.schema-main {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.schema-main h2 {
+  margin: 0;
+  font-size: var(--text-xl);
+}
+
+.schema-main h3 {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-lg);
+}
+
+.schema-detail-head,
+.schema-diagram-head,
+.schema-create-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.schema-links {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+}
+
+.key-badge {
+  margin-right: var(--space-1);
+}
+
+.key-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.schema-create {
+  margin-top: var(--space-4);
+}
+
+.diagram {
+  margin-top: var(--space-3);
+}
+
+.diagram-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.diagram-box {
+  height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-sunken);
+  cursor: grab;
+  touch-action: none;
+}
+
+.diagram-box:active {
+  cursor: grabbing;
+}
+
+.diagram-svg {
+  display: block;
+}
+
+.diagram-edge {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.25;
+  opacity: 0.7;
+}
+
+.diagram-edge-active {
+  stroke: var(--accent);
+  stroke-width: 2;
+  opacity: 1;
+}
+
+.diagram-arrow {
+  fill: var(--text-muted);
+}
+
+.diagram-rect {
+  fill: var(--surface-raised);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.diagram-node {
+  cursor: pointer;
+}
+
+.diagram-node:focus {
+  outline: none;
+}
+
+.diagram-node:focus-visible .diagram-rect {
+  stroke: var(--focus);
+  stroke-width: 3;
+}
+
+.diagram-node-selected .diagram-rect {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.diagram-node-near .diagram-rect {
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
+}
+
+.diagram-node-dim {
+  opacity: 0.55;
+}
+
+.diagram-name {
+  fill: var(--text);
+  font: 600 13px var(--font-mono);
+}
+
+.diagram-sub {
+  fill: var(--text-muted);
+  font: 12px var(--font-ui);
+}
+
+@media (forced-colors: active) {
+  .diagram-rect,
+  .diagram-edge {
+    stroke: CanvasText;
+  }
+
+  .diagram-node-selected .diagram-rect {
+    stroke: Highlight;
+  }
+}
+
+@media (max-width: 900px) {
+  .schema {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .schema-list {
+    position: static;
+    max-height: 240px;
+  }
+}

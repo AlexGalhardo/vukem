@@ -10,6 +10,7 @@ import { useRoute } from "./lib/history";
 import type { Route } from "./lib/router";
 import { ConsolePage } from "./pages/ConsolePage";
 import { NotFound } from "./pages/NotFound";
+import { SchemaPage } from "./schema/SchemaView";
 import { Overview } from "./pages/Overview";
 import { SourcePage } from "./pages/SourcePage";
 import { TablePage } from "./pages/TablePage";
@@ -23,7 +24,13 @@ function titleFor(route: Route): string {
     case "table":
       return `${route.table} - ${route.source}`;
     case "console":
-      return `SQL - ${route.source}`;
+      return `Console - ${route.source}`;
+    case "schema":
+      return `Schema - ${route.source}`;
+    case "collection":
+      return `${route.collection} - ${route.source}`;
+    case "key":
+      return `${route.key} - ${route.source}`;
     case "notfound":
       return "Not found";
   }
@@ -47,6 +54,11 @@ function Page({ bootstrap, route }: { bootstrap: Bootstrap; route: Route }): Rea
       const source = bootstrap.sources.find((s) => s.name === route.source && s.kind === "sql");
       return source ? <ConsolePage source={source} write={bootstrap.write} refreshSeconds={bootstrap.refreshSeconds} sessionKey={bootstrap.sessionKey} /> : <NotFound />;
     }
+    case "schema":
+      return bootstrap.sources.some((s) => s.name === route.source && s.kind === "sql") ? <SchemaPage source={route.source} /> : <NotFound />;
+    case "collection":
+    case "key":
+      return <NotFound />;
     case "notfound":
       return <NotFound />;
   }
