@@ -139,6 +139,8 @@ type Operation struct {
 	RequestBody *RequestBody          `json:"requestBody,omitempty"`
 	Responses   map[string]Response   `json:"responses"`
 	Security    []map[string][]string `json:"security,omitempty"`
+	// MaxBodyBytes is the route's body limit (api.Op.MaxBody).
+	MaxBodyBytes int64 `json:"x-max-body-bytes,omitempty"`
 }
 
 // MarshalJSON writes a non-nil empty Security as "security": [], the
@@ -558,12 +560,13 @@ func pathParams(s *Schemas, path string, types map[string]Field) []Parameter {
 
 func typedOperation(s *Schemas, t *api.Operation) *Operation {
 	op := &Operation{
-		OperationID: t.Name,
-		Summary:     cmpOr(t.Summary, t.Name),
-		Description: t.Description,
-		Tags:        t.Tags,
-		Deprecated:  t.Deprecated,
-		Responses:   map[string]Response{"default": {Ref: "#/components/responses/Problem"}},
+		OperationID:  t.Name,
+		Summary:      cmpOr(t.Summary, t.Name),
+		Description:  t.Description,
+		Tags:         t.Tags,
+		Deprecated:   t.Deprecated,
+		MaxBodyBytes: t.MaxBody,
+		Responses:    map[string]Response{"default": {Ref: "#/components/responses/Problem"}},
 	}
 
 	for _, name := range t.Security {
