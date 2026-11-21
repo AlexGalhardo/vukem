@@ -8,7 +8,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"log/slog"
-	"net/url"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -564,7 +564,7 @@ func TestIntegrationConsoleWriteRollsBackWhenTheCommitFails(t *testing.T) {
 	})
 }
 
-func itStudio(t *testing.T, e *itEnv, write bool) (*bytes.Buffer, func(url.Values) (int, string)) {
+func itStudio(t *testing.T, e *itEnv, write bool) (*bytes.Buffer, func(string, bool) (int, string)) {
 	t.Helper()
 
 	logs := &bytes.Buffer{}
@@ -578,7 +578,12 @@ func itStudio(t *testing.T, e *itEnv, write bool) (*bytes.Buffer, func(url.Value
 
 	c := session(t, s)
 
-	return logs, func(form url.Values) (int, string) { return postConsole(s, c, form) }
+	return logs, func(text string, asWrite bool) (int, string) {
+		body := apiJSON(t, map[string]any{"sql": text, "write": asWrite})
+		rec := apiDo(s, c, "POST", "/api/v1/sources/"+e.src.Name()+"/query", body)
+
+		return rec.Code, rec.Body.String()
+	}
 }
 
 func TestIntegrationConsoleWriteIsAudited(t *testing.T) {
@@ -588,10 +593,7 @@ func TestIntegrationConsoleWriteIsAudited(t *testing.T) {
 		logs, post := itStudio(t, e, true)
 
 		stmt := "UPDATE " + e.items + " SET n = 77 WHERE id = 1"
-		if code, body := post(
-			url.Values{"sql": {stmt}, "write": {"1"}},
-		); code != 200 ||
-			strings.Contains(body, "role=\"alert\"") {
+		if code, body := post(stmt, true); code != 200 {
 			t.Fatalf("write = %d %q", code, body)
 		}
 
@@ -612,8 +614,8 @@ func TestIntegrationConsoleWriteIsAudited(t *testing.T) {
 		logs.Reset()
 
 		bad := "UPDATE " + e.items + " SET name = NULL WHERE id = 1"
-		if code, _ := post(url.Values{"sql": {bad}, "write": {"1"}}); code != 200 {
-			t.Fatalf("failed write = %d", code)
+		if code, body := post(bad, true); code == 200 {
+			t.Fatalf("a write the database refuses answered 200: %s", body)
 		}
 
 		if !strings.Contains(logs.String(), "ok=false") {
@@ -629,7 +631,7 @@ func TestIntegrationConsoleWriteIsAudited(t *testing.T) {
 
 		// A read-mode statement is not an audited write.
 		logs.Reset()
-		post(url.Values{"sql": {"SELECT 1"}})
+		post("SELECT 1", false)
 
 		if strings.Contains(logs.String(), `msg="studio write"`) {
 			t.Errorf("a read was audited as a write: %s", logs.String())
@@ -645,14 +647,9 @@ func TestIntegrationDatabaseErrorsAreMasked(t *testing.T) {
 
 		missing := "sit_missing_" + e.suffix
 
-		code, body := post(url.Values{"sql": {"SELECT * FROM " + missing}})
-		if code != 200 {
-			t.Fatalf("console = %d", code)
-		}
-
-		_, alert, _ := strings.Cut(body, `role="alert"`)
-		if alert == "" {
-			t.Fatalf("no alert in the page: %s", body)
+		code, body := post("SELECT * FROM "+missing, false)
+		if code != http.StatusInternalServerError || !strings.Contains(body, "query_failed") {
+			t.Fatalf("console = %d %s, want 500 query_failed", code, body)
 		}
 
 		leaks := []string{
@@ -661,13 +658,14 @@ func TestIntegrationDatabaseErrorsAreMasked(t *testing.T) {
 		}
 
 		for _, leak := range leaks {
-			if strings.Contains(strings.ToLower(alert), strings.ToLower(leak)) {
-				t.Errorf("the database error reached the client (%q): %s", leak, alert)
+			if strings.Contains(strings.ToLower(body), strings.ToLower(leak)) {
+				t.Errorf("the database error reached the client (%q): %s", leak, body)
 			}
 		}
 
-		if !strings.Contains(logs.String(), missing) {
-			t.Errorf("the cause is not in the Studio log: %s", logs.String())
+		// The log keeps the class of the failure: the driver's text quotes the statement.
+		if strings.Contains(logs.String(), missing) {
+			t.Errorf("the statement reached the Studio log: %s", logs.String())
 		}
 
 		// The grid: a value the column's type refuses.
