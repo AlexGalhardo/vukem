@@ -10,6 +10,8 @@ export interface Bootstrap {
   version: string;
   write: boolean;
   refreshSeconds: number;
+  /** Names this Studio run for the browser storage of the interface. */
+  sessionKey: string;
   sources: Source[];
 }
 

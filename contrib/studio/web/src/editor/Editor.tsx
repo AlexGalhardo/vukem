@@ -511,7 +511,15 @@ export function Editor({ value, onChange, label, completion, onRun, onSave, ref 
             onKeyDown={onKeyDown}
             onSelect={(e) => setSel({ start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd })}
             onScroll={(e) => setScroll({ top: e.currentTarget.scrollTop, left: e.currentTarget.scrollLeft })}
-            onFocus={() => setHasFocus(true)}
+            onFocus={(e) => {
+              setHasFocus(true);
+              // A modal dialog that closes hands focus back with the caret reset: put it back where it was.
+              const at = blurSel.current;
+              const ta = e.currentTarget;
+              if (at && ta.selectionStart === 0 && ta.selectionEnd === 0 && (at.start !== 0 || at.end !== 0)) {
+                ta.setSelectionRange(Math.min(at.start, ta.value.length), Math.min(at.end, ta.value.length));
+              }
+            }}
             onBlur={(e) => {
               blurSel.current = { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd };
               setHasFocus(false);

@@ -3,6 +3,8 @@ import type { ReactElement } from "react";
 import type { Bootstrap } from "./api/types";
 import { useApi } from "./api/useApi";
 import { Layout } from "./components/Layout";
+import { localStore } from "./history/browser";
+import { purgeOldHistory } from "./history/store";
 import { ErrorNotice, Loading } from "./components/Notices";
 import { useRoute } from "./lib/history";
 import type { Route } from "./lib/router";
@@ -43,7 +45,7 @@ function Page({ bootstrap, route }: { bootstrap: Bootstrap; route: Route }): Rea
       );
     case "console": {
       const source = bootstrap.sources.find((s) => s.name === route.source && s.kind === "sql");
-      return source ? <ConsolePage source={source} write={bootstrap.write} refreshSeconds={bootstrap.refreshSeconds} /> : <NotFound />;
+      return source ? <ConsolePage source={source} write={bootstrap.write} refreshSeconds={bootstrap.refreshSeconds} sessionKey={bootstrap.sessionKey} /> : <NotFound />;
     }
     case "notfound":
       return <NotFound />;
@@ -57,6 +59,14 @@ export function App(): ReactElement {
   useEffect(() => {
     document.title = `${titleFor(route)} - Vukem Studio`;
   }, [route]);
+
+  const sessionKey = data?.sessionKey;
+  useEffect(() => {
+    // A new Studio run starts with an empty history: statements of earlier runs can hold values nobody wants kept.
+    if (sessionKey) {
+      purgeOldHistory(localStore(), sessionKey);
+    }
+  }, [sessionKey]);
 
   if (loading) {
     return (
