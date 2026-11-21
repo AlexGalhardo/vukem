@@ -204,3 +204,77 @@ func TestUpdateExpectNull(t *testing.T) {
 		t.Errorf("bio is NULL = %v, %v; want true", isNull, err)
 	}
 }
+
+func TestAPIUpdateRefusals(t *testing.T) {
+	t.Parallel()
+
+	sh, h := mixedStudio(t, true)
+	target := "/api/v1/sources/db/tables/users/rows/1"
+
+	for name, body := range map[string]string{
+		"an unknown column":              `{"fields":{"nope":{"text":"x"}}}`,
+		"a primary key change":           `{"fields":{"id":{"text":"99"}}}`,
+		"an unknown expect column":       `{"fields":{"name":{"text":"x"}},"expect":{"nope":{"text":"x"}}}`,
+		"an unknown field of the body":   `{"fields":{"name":{"text":"x"}},"extra":1}`,
+		"NULL on a column without NULL":  `{"fields":{"name":{"null":true}}}`,
+		"no field at all":                `{"fields":{}}`,
+		"an unknown field of a value":    `{"fields":{"name":{"text":"x","sql":"1"}}}`,
+		"a column given as a path":       `{"fields":{"users.name":{"text":"x"}}}`,
+		"a quote in a column name":       `{"fields":{"name\"; DROP TABLE users; --":{"text":"x"}}}`,
+		"a key part that is not the key": `{"fields":{"name":{"text":"x"}},"expect":{"id":{"text":"2"}}}`,
+	} {
+		rec := apiDo(h.s, h.login, "PATCH", target, body)
+		if rec.Code != http.StatusUnprocessableEntity && rec.Code != http.StatusConflict {
+			t.Errorf("%s: PATCH = %d (%s), want 422 or 409", name, rec.Code, rec.Body)
+		}
+	}
+
+	if got := userName(t, sh, 1); got != "ada" {
+		t.Errorf("name = %q after refused updates, want ada", got)
+	}
+
+	if n := sh.users(t); n != 5 {
+		t.Errorf("users has %d rows, want 5", n)
+	}
+}
+
+func TestAPIUpdateOversizedBodyIsRefused(t *testing.T) {
+	t.Parallel()
+
+	sh, h := mixedStudio(t, true)
+	huge := strings.Repeat("x", maxAPIBody+1)
+
+	rec := apiDo(h.s, h.login, "PATCH", "/api/v1/sources/db/tables/users/rows/1",
+		`{"fields":{"name":{"text":"`+huge+`"}}}`)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("an oversized value = %d, want 413", rec.Code)
+	}
+
+	if got := userName(t, sh, 1); got != "ada" {
+		t.Errorf("name = %q after an oversized update, want ada", got)
+	}
+}
+
+// TestAPIWriteFailuresKeepValuesOutOfTheLog proves that a refused write logs a
+// class and never the secret it carried, for the paths a value travels.
+func TestAPIWriteFailuresKeepValuesOutOfTheLog(t *testing.T) {
+	t.Parallel()
+
+	_, h := mixedStudio(t, true)
+
+	for _, rt := range []struct{ method, target, body string }{
+		{"PATCH", "/api/v1/sources/db/tables/users/rows/1", `{"fields":{"id":{"text":"S3cretKey"}}}`},
+		{"PATCH", "/api/v1/sources/db/tables/users/rows/1", `{"fields":{"name":{"text":"S3cretNew"}},"expect":{"name":{"text":"S3cretOld"}}}`},
+		{"PATCH", "/api/v1/sources/db/tables/users/rows/1", `{"fields":{"S3cretColumn":{"text":"x"}}}`},
+		{"POST", "/api/v1/sources/db/tables/users/rows", `{"fields":{"id":{"text":"1"},"name":{"text":"S3cretDup"}}}`},
+		{"DELETE", "/api/v1/sources/db/tables/users/rows/1", `{"confirm":"S3cretConfirm"}`},
+	} {
+		if rec := apiDo(h.s, h.login, rt.method, rt.target, rt.body); rec.Code < 400 {
+			t.Fatalf("%s %s = %d, want a refusal", rt.method, rt.target, rec.Code)
+		}
+	}
+
+	if out := h.logs.String(); strings.Contains(out, "S3cret") {
+		t.Errorf("a value of a refused write reached the log: %s", out)
+	}
+}
