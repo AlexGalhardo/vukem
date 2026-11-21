@@ -7,58 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.47.0] - 2026-11-21
-
-### Added
-
-- **database:** Add IsUnique, a unique-violation check that needs no executor ([49bfa1e](https://github.com/AlexGalhardo/vukem/commit/49bfa1e55df4f9522b0b2bedd1b2710fe869433e))
-- **jwt:** Accept any Do(*http.Request) client in RemoteJWKS ([a5d7189](https://github.com/AlexGalhardo/vukem/commit/a5d718971dc18f8505988cf396c5d39f02e49b56))
-- **api:** Declare a per-route body limit with Op.MaxBody ([7c5bf82](https://github.com/AlexGalhardo/vukem/commit/7c5bf827c216eedc9182f14104c7eed02ada6121))
-- **cli:** Add command groups and aliases ([4f0e088](https://github.com/AlexGalhardo/vukem/commit/4f0e0886ecb10deab37dd1c4ef783e95022fcac3))
-- **web:** Answer a client that went away with 499 and add MapErrorIf ([f809e74](https://github.com/AlexGalhardo/vukem/commit/f809e743bec13d5f888a90b2f1a2e3b17526c8c9))
-- **schema:** Keep or refuse to lose the indexes of a rebuilt table ([853d833](https://github.com/AlexGalhardo/vukem/commit/853d8337013241504249bcb659ffea14218cac0a))
-- **api:** Refuse unknown JSON body keys with Op.StrictBody ([75f1f4c](https://github.com/AlexGalhardo/vukem/commit/75f1f4c6f347f926d030c19ae572d78096299147))
-- **schema:** Add Schema.Inspect and the text of each SQLite CHECK ([d799627](https://github.com/AlexGalhardo/vukem/commit/d7996276b7689e7b7ec647be56a4d1a2b1dd94cf))
-- **schema:** Add Schema.VirtualTable for SQLite virtual tables ([7d7e7d2](https://github.com/AlexGalhardo/vukem/commit/7d7e7d2e1dde97fb10d10ad31a028aeb577d30e4))
-- **middleware:** Add CSPPaths and accept 'wasm-unsafe-eval' in script directives ([04baede](https://github.com/AlexGalhardo/vukem/commit/04baeded624a5fb6cabc58d6fe3b32748c130eb5))
-- **schema:** Refuse to run migrations that sort before an applied one ([4204fc5](https://github.com/AlexGalhardo/vukem/commit/4204fc5d1142d315ed0d78a1604e30efd3d17118))
-- **api:** Add api.RawBody and query tags to typed routes ([6e75409](https://github.com/AlexGalhardo/vukem/commit/6e75409084a84f2860ae72ea9166eed6c44f7e92))
-- **z:** Add String().Date, MinDate and Keyword ([ee626c9](https://github.com/AlexGalhardo/vukem/commit/ee626c94d10052d18c6a0258472f7be5d9842eef))
-- **api:** Add CheckInputs to report bad validate tags from a test ([b7ae463](https://github.com/AlexGalhardo/vukem/commit/b7ae463d831ac50bac59c653a0a024616b11c2fa))
-- **mcp:** Add a public MCP server for apps ([c17eba8](https://github.com/AlexGalhardo/vukem/commit/c17eba809e5eca118bf1876ef127c783a36ca495))
-- **mcp:** Add mcpoauth, the adapter from oauth to mcp.TokenVerifier ([20f215d](https://github.com/AlexGalhardo/vukem/commit/20f215d976c9a2ba207ae238451bd536610ab20a))
-- **vukemtest:** Add Client.WithIP to simulate a client address ([272042d](https://github.com/AlexGalhardo/vukem/commit/272042d5f283a010b2de43d7d2436a2637f6d40f))
-- **vukem:** Add WithValidate to check the app's configuration before routes ([0ef8c3e](https://github.com/AlexGalhardo/vukem/commit/0ef8c3e21415aef5b12ad00ef19209db2ea6582d))
-- **vukem:** Add WithAbout to append app lines to the about command ([dfbd648](https://github.com/AlexGalhardo/vukem/commit/dfbd6483ce8e837fdfde03821f3ca6c14ea11918))
-- **schema:** Add InspectViews to list the views of a database ([1935236](https://github.com/AlexGalhardo/vukem/commit/1935236b0b6119bb31d072ffedd9dc47f4961713))
-
-### Fixed
-
-- **schema:** Refuse a Rebuild that would lose a column ([c505c4f](https://github.com/AlexGalhardo/vukem/commit/c505c4f22a95313c3334de207de9975eed175b8a))
-- **starter:** Honor build.outDir in the Vite plugin ([9f0e914](https://github.com/AlexGalhardo/vukem/commit/9f0e914bdb97b3e7bfa91081feecbcf05cb88579))
-- **starter:** Leave a chosen outDir to Vite's emptying rule ([1488d21](https://github.com/AlexGalhardo/vukem/commit/1488d2116c11f07fe942b19dd0699b141ff4f9bd))
-- **schema:** Exempt module migrations with an AnyOrder field ([cc29994](https://github.com/AlexGalhardo/vukem/commit/cc29994175226b78f3147c3a07c3df80d9d344ea))
-- **api:** Refuse a RawBody whose form was already parsed ([2568544](https://github.com/AlexGalhardo/vukem/commit/25685449e9e302a28a86bf7d42b644a03bdd322e))
-- **cli:** Start the SQLite starter without PostgreSQL ([7e516dc](https://github.com/AlexGalhardo/vukem/commit/7e516dc09171bdc287fc48a2b409b7e850603c9e))
-- **cli:** Quote the URLs in the generated finance setup-local.md ([f4d1c0f](https://github.com/AlexGalhardo/vukem/commit/f4d1c0f889a62a08aba3aa9a5574f96ccaa42b6c))
-- **cli:** Let a --standards project pass its own secret scan ([c319c58](https://github.com/AlexGalhardo/vukem/commit/c319c586a016362dadc79398db5cec0bbd19e0f4))
-- **oauth:** Refuse access tokens of a revoked grant and bound the consent body ([817d363](https://github.com/AlexGalhardo/vukem/commit/817d363850d216070a93e1e00e912a851748b096))
-- **cli:** Wrap the long lines of the two-factor limit templates ([6fc99a2](https://github.com/AlexGalhardo/vukem/commit/6fc99a2e24bf54627a9bbc2f626305e5bf81a3a7))
-- **mcp:** Bind a confirmation state to the OAuth client ([0b9cb85](https://github.com/AlexGalhardo/vukem/commit/0b9cb85bc0219bd36c8295d6bfa72a39c55e2aaf))
-- **cli:** Name the betterleaks config in generated scans ([1f98fdb](https://github.com/AlexGalhardo/vukem/commit/1f98fdb813233968cfbc443a22858dd477347e32))
-
-### Security
-
-- **api:** Keep a replaced body and a parsed form under Op.MaxBody ([98e946b](https://github.com/AlexGalhardo/vukem/commit/98e946b89fd87fe695f40efea11f14fd5b66d89f))
-- **z:** Bound the Unrecognized walk against hostile bodies ([5d4889f](https://github.com/AlexGalhardo/vukem/commit/5d4889f983c546ac363eaccc6915f4c9eefe4810))
-- **middleware:** Match CSPPaths through a locale prefix ([8f4e44f](https://github.com/AlexGalhardo/vukem/commit/8f4e44f998a3844c05838ea533729ecb997cdf1d))
-- **mcp:** Serve Streamable HTTP with pluggable authorization ([3dbb882](https://github.com/AlexGalhardo/vukem/commit/3dbb88200062246840d2f68c5b49cace52bcc1c2))
-- **oauth:** Add an OAuth 2.1 authorization server ([1cf6309](https://github.com/AlexGalhardo/vukem/commit/1cf6309f57379b59e54349c8e167e81f43f6c222))
-- **telegram:** Add contrib/telegram to receive updates and route a bot ([5ea4e0a](https://github.com/AlexGalhardo/vukem/commit/5ea4e0a82dc4db5185d426b97178b5b15250bd9a))
-- **cli:** Never mark a self-asserted address verified in the finance scaffold ([b151cb8](https://github.com/AlexGalhardo/vukem/commit/b151cb8f87ac9a4c8884b696f810ea30228834b8))
-- **auth:** Add a per-account limit on failed two-factor login codes ([2a9f719](https://github.com/AlexGalhardo/vukem/commit/2a9f719fcb8362854b86ef9f24e9ed708506a214))
-- **jwt:** Add SignTyped and issue OAuth access tokens as at+jwt ([758c9d6](https://github.com/AlexGalhardo/vukem/commit/758c9d6f5080359c1dbddf5b04d01d6c95431840))
-
 ## [0.46.0] - 2026-11-17
 
 ### Added
@@ -1767,8 +1715,7 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.47.0...HEAD
-[0.47.0]: https://github.com/AlexGalhardo/vukem/compare/v0.46.0...v0.47.0
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.46.0...HEAD
 [0.46.0]: https://github.com/AlexGalhardo/vukem/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/AlexGalhardo/vukem/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/AlexGalhardo/vukem/compare/v0.43.0...v0.44.0
