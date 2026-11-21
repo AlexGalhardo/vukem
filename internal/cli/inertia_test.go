@@ -142,7 +142,7 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 			}
 
 			if props := read(t, project, "resources/js/page-props.ts"); !strings.Contains(props, `"Auth/Login"`) ||
-				!strings.Contains(props, `"Auth/TwoFactor"`) || !strings.Contains(props, `"Billing"`) {
+				!strings.Contains(props, `"Auth/TwoFactor"`) || !strings.Contains(props, `Billing:`) {
 				t.Errorf("page-props.ts lacks the pages of the installers:\n%s", props)
 			}
 

@@ -105,9 +105,9 @@ export interface PageProps {
   "Auth/TwoFactorChallenge": AuthTwoFactorChallengeProps;
   "Auth/TwoFactor": AuthTwoFactorProps;
   "Auth/VerifyEmail": AuthVerifyEmailProps;
-  "Billing": BillingProps;
-  "Dashboard": DashboardProps;
-  "Home": HomeProps;
+  Billing: BillingProps;
+  Dashboard: DashboardProps;
+  Home: HomeProps;
   "Projects/Create": ProjectsCreateProps;
   "Projects/Edit": ProjectsEditProps;
   "Projects/Index": ProjectsIndexProps;

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -15,6 +16,10 @@ import (
 )
 
 type pagesAuthor struct {
+	Name string `json:"name"`
+}
+
+type pagesAuthorWithAVeryLongTypeNameXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX struct {
 	Name string `json:"name"`
 }
 
@@ -233,5 +238,103 @@ func TestCodegenPagesCommand_ErrorsTypeAdmitsBags(t *testing.T) {
 
 	if !strings.Contains(got, "errors: Record<string, string | Record<string, string>>;") {
 		t.Errorf("SharedProps.errors does not admit an error bag:\n%s", got)
+	}
+}
+
+func TestWrapLongUnions(t *testing.T) {
+	t.Parallel()
+
+	long := `"aaaaaaaaaaaaaaa" | "bbbbbbbbbbbbbbb" | "ccccccccccccccc" | "ddddddddddddddd" | "eeeeeeeeeeeeeee" | "f | g"`
+
+	tests := []struct {
+		name, in, want string
+	}{
+		{"short line untouched", "  a: string | null;", "  a: string | null;"},
+		{
+			"property",
+			"  status: " + long + ";",
+			"  status:\n" + `    | "aaaaaaaaaaaaaaa"` + "\n" + `    | "bbbbbbbbbbbbbbb"` + "\n" + `    | "ccccccccccccccc"` + "\n" +
+				`    | "ddddddddddddddd"` + "\n" + `    | "eeeeeeeeeeeeeee"` + "\n" + `    | "f | g";`,
+		},
+		{
+			"type alias",
+			"export type X = " + long + ";",
+			"export type X =\n" + `  | "aaaaaaaaaaaaaaa"` + "\n" + `  | "bbbbbbbbbbbbbbb"` + "\n" + `  | "ccccccccccccccc"` + "\n" +
+				`  | "ddddddddddddddd"` + "\n" + `  | "eeeeeeeeeeeeeee"` + "\n" + `  | "f | g";`,
+		},
+		{
+			"nested union stays whole",
+			"  a: Record<string, " + strings.Repeat("string | ", 14) + "number>;",
+			"  a: Record<string, " + strings.Repeat("string | ", 14) + "number>;",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if diff := cmp.Diff(tt.want, wrapLongUnions(tt.in, 100)); diff != "" {
+				t.Errorf("wrapLongUnions mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestTsPropKey(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{"Home": "Home", "ok_key": "ok_key", "Projects/Index": `"Projects/Index"`} {
+		if got := tsPropKey(in); got != want {
+			t.Errorf("tsPropKey(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// TestCodegenPages_StableUnderBiome runs the biome binary, when installed,
+// over the generated file with the config vukem new writes (VF-107).
+func TestCodegenPages_StableUnderBiome(t *testing.T) {
+	t.Parallel()
+
+	biome, err := exec.LookPath("biome")
+	if err != nil {
+		t.Skip("biome is not installed")
+	}
+
+	cfg, err := os.ReadFile(filepath.Join("internal", "cli", "standards", "biome.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	icfg := pagesConfig()
+	icfg.Pages = append(icfg.Pages, inertia.Define[struct {
+		Owner *pagesAuthorWithAVeryLongTypeNameXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX `json:"owner"`
+	}]("Long/Enum").Info())
+
+	dir := t.TempDir()
+	// The config's "vcs" block needs a git repository; the check does not.
+	cfg = bytes.Replace(cfg, []byte(`"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },`), nil, 1)
+
+	if err := os.WriteFile(filepath.Join(dir, "biome.json"), cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, "resources", "js"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := runPagesApp(t, icfg, "codegen:pages", "-o", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "resources", "js", "page-props.ts"), []byte(got), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.CommandContext(t.Context(), biome, "format", "resources/js/page-props.ts")
+	cmd.Dir = dir
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Errorf("biome would reformat the generated file: %v\n%s\n%s", err, out, got)
 	}
 }
