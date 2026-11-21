@@ -115,7 +115,7 @@ func TestNewFinanceProjectEndToEnd(t *testing.T) {
 		t.Fatalf("codegen:pages -check = %d\n%s%s", code, out, errOut)
 	}
 
-	if props := read(t, project, "resources/js/page-props.ts"); !strings.Contains(props, `"Transactions"`) ||
+	if props := read(t, project, "resources/js/page-props.ts"); !strings.Contains(props, `Transactions:`) ||
 		!strings.Contains(props, `"Auth/Login"`) || !strings.Contains(props, `"Admin/Revenue"`) {
 		t.Errorf("page-props.ts lacks the finance pages:\n%s", props)
 	}

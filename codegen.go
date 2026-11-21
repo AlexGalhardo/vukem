@@ -303,7 +303,7 @@ func pagePropsTypeScript(app *App) (string, error) {
 	b.WriteString("/** PageProps maps every typed page component to its props. */\nexport interface PageProps {\n")
 
 	for _, name := range slices.Sorted(maps.Keys(byName)) {
-		fmt.Fprintf(&b, "  %s: %s;\n", strconv.Quote(byName[name]), name)
+		fmt.Fprintf(&b, "  %s: %s;\n", tsPropKey(byName[name]), name)
 	}
 
 	b.WriteString("}\n\nexport type PageName = keyof PageProps;\n\n")
@@ -315,7 +315,121 @@ func pagePropsTypeScript(app *App) (string, error) {
 			strings.Join(dups, ", "))
 	}
 
-	return b.String(), nil
+	return wrapLongUnions(b.String(), biomeLineWidth), nil
+}
+
+// biomeLineWidth is the default line width of the Biome config that vukem
+// new writes (biome.json).
+const biomeLineWidth = 120
+
+var tsPlainKeyRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+
+// tsPropKey quotes a property name only when it is not a plain identifier,
+// as Biome's default "asNeeded" quoteProperties does.
+func tsPropKey(k string) string {
+	if tsPlainKeyRe.MatchString(k) {
+		return k
+	}
+
+	return strconv.Quote(k)
+}
+
+// wrapLongUnions breaks every line wider than width that ends in a top-level
+// union the way Biome does, one "| member" per line, so a file this command
+// wrote is already what the formatter would write and -check stays stable
+// after `biome format`. The generator emits one declaration per line, and
+// the only lines that can pass the width are a property or a type alias
+// whose value is a union.
+func wrapLongUnions(src string, width int) string {
+	lines := strings.Split(src, "\n")
+	out := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		out = append(out, wrapUnionLine(line, width)...)
+	}
+
+	return strings.Join(out, "\n")
+}
+
+func wrapUnionLine(line string, width int) []string {
+	if len([]rune(line)) <= width || !strings.HasSuffix(line, ";") {
+		return []string{line}
+	}
+
+	trimmed := strings.TrimLeft(line, " ")
+	indent := line[:len(line)-len(trimmed)]
+
+	var head, value string
+
+	switch {
+	case strings.HasPrefix(trimmed, "export type "):
+		i := strings.Index(trimmed, " = ")
+		if i < 0 {
+			return []string{line}
+		}
+
+		head, value = trimmed[:i+2], trimmed[i+3:]
+	default:
+		i := strings.Index(trimmed, ": ")
+		if i < 0 {
+			return []string{line}
+		}
+
+		head, value = trimmed[:i+1], trimmed[i+2:]
+	}
+
+	members := splitTopLevelUnion(strings.TrimSuffix(value, ";"))
+	// Biome keeps "T | null" on one line, whatever its width.
+	if len(members) < 2 || (len(members) == 2 && slices.Contains(members, "null")) {
+		return []string{line}
+	}
+
+	out := []string{indent + head}
+	for _, m := range members {
+		out = append(out, indent+"  | "+m)
+	}
+
+	out[len(out)-1] += ";"
+
+	return out
+}
+
+// splitTopLevelUnion splits s at " | " outside brackets, angle brackets,
+// parentheses and string literals.
+func splitTopLevelUnion(s string) []string {
+	var (
+		parts   []string
+		depth   int
+		quote   rune
+		escaped bool
+		start   int
+	)
+
+	rs := []rune(s)
+	for i, r := range rs {
+		switch {
+		case quote != 0:
+			switch {
+			case escaped:
+				escaped = false
+			case r == '\\':
+				escaped = true
+			case r == quote:
+				quote = 0
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case strings.ContainsRune("{[(<", r):
+			depth++
+		case strings.ContainsRune("}])>", r):
+			depth--
+		case depth == 0 && r == '|' && i > 0 && rs[i-1] == ' ' && i+1 < len(rs) && rs[i+1] == ' ':
+			parts = append(parts, string(rs[start:i-1]))
+			start = i + 2
+		}
+	}
+
+	return append(parts, string(rs[start:]))
 }
 
 var (

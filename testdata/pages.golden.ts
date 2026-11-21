@@ -26,7 +26,7 @@ export type SharedProps = {
 
 /** PageProps maps every typed page component to its props. */
 export interface PageProps {
-  "Home": HomeProps;
+  Home: HomeProps;
   "Projects/Index": ProjectsIndexProps;
   "Projects/Show": ProjectsShowProps;
 }
