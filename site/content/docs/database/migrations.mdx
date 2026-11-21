@@ -384,6 +384,7 @@ Inside `s.Table` the statements run in a fixed order, whatever order you wrote t
 
 | Method | What it does |
 | --- | --- |
+| `s.VirtualTable(name, module, args...)` | SQLite only: `CREATE VIRTUAL TABLE name USING module(args...)`, such as an FTS5 index (`s.VirtualTable("asset_search", "fts5", "name", "tags")`). The arguments are written as given. A virtual table has no foreign keys, so `ON DELETE CASCADE` does not reach its rows: delete them with the parent. Catalog inspection (`schema.Inspect`, `db:pull`) lists the virtual table and leaves out its shadow tables |
 | `s.Drop(table)` / `s.DropIfExists(table)` | Drops a table (the second ignores a missing one) |
 | `s.Rename(from, to)` | Renames a table |
 | `s.HasTable(table)` | `(bool, error)`: whether the table exists |
