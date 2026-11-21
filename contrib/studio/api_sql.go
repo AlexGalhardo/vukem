@@ -64,7 +64,9 @@ func orEmpty(s []string) []string {
 }
 
 func (s *Studio) apiSQLRoutes() {
+	s.mux.HandleFunc("GET /api/v1/sources/{source}/schema", s.apiSchema)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables", s.apiTables)
+	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/create", s.apiCreate)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}", s.apiTable)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/rows", s.apiRows)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/count", s.apiCount)
@@ -109,6 +111,76 @@ func (s *Studio) apiTables(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"tables": out})
+}
+
+type apiIndex struct {
+	Name       string   `json:"name"`
+	Columns    []string `json:"columns"`
+	Unique     bool     `json:"unique"`
+	Primary    bool     `json:"primary"`
+	Expression bool     `json:"expression,omitempty"`
+}
+
+type apiSchemaTable struct {
+	Name        string          `json:"name"`
+	Columns     []apiColumn     `json:"columns"`
+	PrimaryKey  []string        `json:"primaryKey"`
+	ForeignKeys []apiForeignKey `json:"foreignKeys"`
+	Indexes     []apiIndex      `json:"indexes"`
+}
+
+// apiSchema answers the schema view: the introspected catalog and nothing
+// the request typed. canShowCreate says whether /tables/{table}/create exists
+// for this database.
+func (s *Studio) apiSchema(w http.ResponseWriter, r *http.Request) {
+	src := s.apiSQL(w, r)
+	if src == nil {
+		return
+	}
+
+	ts, err := src.Schema(r.Context())
+	if err != nil {
+		s.apiFail(w, r, err)
+		return
+	}
+
+	out := make([]apiSchemaTable, len(ts))
+
+	for i, t := range ts {
+		idx := make([]apiIndex, len(t.Indexes))
+		for k, ix := range t.Indexes {
+			idx[k] = apiIndex{Name: ix.Name, Columns: orEmpty(ix.Columns), Unique: ix.Unique, Primary: ix.Primary, Expression: ix.Expression}
+		}
+
+		out[i] = apiSchemaTable{
+			Name: t.Name, Columns: apiColumns(t.Columns), PrimaryKey: orEmpty(t.PrimaryKey),
+			ForeignKeys: apiForeignKeys(t.ForeignKeys), Indexes: idx,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"tables": out, "canShowCreate": src.CanShowCreate()})
+}
+
+// apiCreate answers the CREATE statement the database reports for a table,
+// or 404 where it reports none.
+func (s *Studio) apiCreate(w http.ResponseWriter, r *http.Request) {
+	src := s.apiSQL(w, r)
+	if src == nil {
+		return
+	}
+
+	text, ok, err := src.CreateStatement(r.Context(), r.PathValue("table"))
+	if err != nil {
+		s.apiFail(w, r, err)
+		return
+	}
+
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, "not_found", "Not found.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"statement": text})
 }
 
 func (s *Studio) apiTable(w http.ResponseWriter, r *http.Request) {

@@ -6,13 +6,15 @@ import "context"
 // are Studio's own: the only code that reads the database catalog fills them
 // (the implementation of Introspector, which converts schema.Inspect once
 // plan 074 lands), so a change to schema.TableInfo or schema.IndexInfo touches
-// that one converter and nothing else. Indexes are not mapped on purpose: the
-// grid and the console need no more than names, types and keys.
+// that one converter and nothing else. Indexes are mapped for the schema view
+// only (names, columns in order and the unique and primary flags); the grid
+// and the console still need no more than names, types and keys.
 type Table struct {
 	Name        string
 	Columns     []Column
 	PrimaryKey  []string
 	ForeignKeys []ForeignKey
+	Indexes     []Index
 	// RowEstimate is set by SQLSource.Tables only: the row count when it was
 	// cheap to get, -1 when it was not. A catalog leaves it zero.
 	RowEstimate int64
@@ -31,6 +33,19 @@ type ForeignKey struct {
 	Columns    []string
 	RefTable   string
 	RefColumns []string
+}
+
+// Index is one index of a Table. The primary key appears once, first, with
+// Primary set (the catalog does not list its index; the converter adds it).
+type Index struct {
+	// Name is "" for the index a database creates itself for a UNIQUE column.
+	Name    string
+	Columns []string
+	Unique  bool
+	Primary bool
+	// Expression is true when a part of the index is an expression, so Columns
+	// lists only its plain columns.
+	Expression bool
 }
 
 // Introspector lists the tables the SQL browser may touch. Every table, column

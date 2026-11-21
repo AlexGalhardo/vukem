@@ -10,7 +10,7 @@ import (
 
 // schemaCatalog is the Introspector over schema.Inspect: the only code of the
 // module that reads the schema package, so a change to its types lands here.
-// Only names, types, defaults, primary keys and foreign keys are copied.
+// Names, types, defaults, primary keys, foreign keys and indexes are copied.
 type schemaCatalog struct{ ex database.Executor }
 
 // Tables implements Introspector.
@@ -56,6 +56,14 @@ func tableOf(t schema.TableInfo) Table {
 		}
 
 		out.Columns = append(out.Columns, col)
+	}
+
+	if len(t.PrimaryKey) > 0 {
+		out.Indexes = append(out.Indexes, Index{Columns: t.PrimaryKey, Unique: true, Primary: true})
+	}
+
+	for _, ix := range t.Indexes {
+		out.Indexes = append(out.Indexes, Index{Name: ix.Name, Columns: ix.Columns, Unique: ix.Unique, Expression: ix.Expression})
 	}
 
 	for _, fk := range t.ForeignKeys {
