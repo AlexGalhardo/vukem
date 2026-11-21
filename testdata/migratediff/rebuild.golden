@@ -11,7 +11,7 @@ func mTSSyncModels() schema.Migration {
 			if err := s.Rebuild("members", func(t *schema.Table) {
 				t.ID()
 				t.String("email", 255).Unique()
-			}, schema.DropColumns("nickname")); err != nil {
+			}, schema.DropColumns("nickname"), schema.DropIndexes("members_nickname_index")); err != nil {
 				return err
 			}
 
