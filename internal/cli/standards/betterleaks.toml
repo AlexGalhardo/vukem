@@ -42,3 +42,17 @@ regexes = [
 	'''_FAKE_|(?i)placeholder|changeme|example''',
 	'''(?i)x{8,}|\.\.\.$''',
 ]
+
+# generic-password reads a UI label ("Password", "Confirm password"), a
+# translation key or a test fixture as a leaked password. Only that rule is
+# silenced, and only for the paths that hold such strings: every other rule
+# still scans them, and generic-password still scans everything else.
+[[allowlists]]
+description = "UI strings, translations and test fixtures flagged by generic-password"
+targetRules = ["generic-password"]
+paths = [
+	'''(^|/)resources/js/.*\.(ts|tsx)$''',
+	'''(^|/)lang/.*\.json$''',
+	'''(^|/)tests?/''',
+	'''_test\.go$''',
+]
