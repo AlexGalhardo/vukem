@@ -68,6 +68,8 @@ func (s *Studio) apiSQLRoutes() {
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/rows", s.apiRows)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/rows/{key}", s.apiRow)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/tables/{table}/references", s.apiReferences)
+	s.mux.HandleFunc("POST /api/v1/sources/{source}/query", s.apiQuery)
+	s.mux.HandleFunc("POST /api/v1/sources/{source}/explain", s.apiExplain)
 }
 
 // apiSQL returns the SQL source of the path, answering 404 itself when the
@@ -213,3 +215,101 @@ func (s *Studio) apiReferences(w http.ResponseWriter, r *http.Request) {
 // pathKey is the {key} path segment of a row: the key parts packed as the
 // keyset cursor is (see encodeCursor).
 func pathKey(r *http.Request) []string { return decodeCursor(r.PathValue("key")) }
+
+// maxSQLBytes bounds one console statement; the body cap alone would let 1 MiB through.
+const maxSQLBytes = 64 << 10
+
+type queryBody struct {
+	SQL   string `json:"sql"`
+	Write bool   `json:"write"`
+}
+
+type explainBody struct {
+	SQL string `json:"sql"`
+}
+
+// apiQuery runs one console statement: read-only unless Studio runs with
+// --write and the body asks for write mode.
+func (s *Studio) apiQuery(w http.ResponseWriter, r *http.Request) {
+	if !requireJSON(w, r) {
+		return
+	}
+
+	src := s.apiSQL(w, r)
+	if src == nil {
+		return
+	}
+
+	var body queryBody
+	if err := decodeBody(w, r, &body); err != nil {
+		s.apiBodyFail(w, r, err)
+		return
+	}
+
+	if body.Write && !s.cfg.Write {
+		writeAPIError(w, http.StatusForbidden, "write_disabled", "Studio runs read-only: start it with --write.")
+		return
+	}
+
+	s.apiRunSQL(w, r, src, body.SQL, body.SQL, body.Write)
+}
+
+// apiExplain returns the plan of a statement, always read-only.
+func (s *Studio) apiExplain(w http.ResponseWriter, r *http.Request) {
+	if !requireJSON(w, r) {
+		return
+	}
+
+	src := s.apiSQL(w, r)
+	if src == nil {
+		return
+	}
+
+	var body explainBody
+	if err := decodeBody(w, r, &body); err != nil {
+		s.apiBodyFail(w, r, err)
+		return
+	}
+
+	run := body.SQL
+	if len(body.SQL) <= maxSQLBytes {
+		run = src.Explain(body.SQL)
+	}
+
+	s.apiRunSQL(w, r, src, body.SQL, run, false)
+}
+
+// apiRunSQL checks the size of the statement text the person typed, then runs
+// run, which is that text or the statement that explains it.
+func (s *Studio) apiRunSQL(w http.ResponseWriter, r *http.Request, src SQLSource, text, run string, write bool) {
+	if len(text) > maxSQLBytes {
+		s.apiFail(w, r, inputError("the statement is over 64 KiB"))
+		return
+	}
+
+	rs, err := src.Query(r.Context(), run, write)
+	if write {
+		// The statement is not logged: it can carry values.
+		s.audit(r.Context(), src, "console", "sql", err, "bytes", len(text))
+	}
+
+	if err != nil {
+		s.apiFail(w, r, err)
+		return
+	}
+
+	rows := make([][]apiCell, len(rs.Rows))
+	for i, row := range rs.Rows {
+		rows[i] = apiCells(row)
+	}
+
+	out := map[string]any{
+		"columns": orEmpty(rs.Columns), "rows": rows, "truncated": rs.Truncate,
+		"elapsedMs": rs.Elapsed.Milliseconds(),
+	}
+	if rs.HasAffected {
+		out["affected"] = rs.Affected
+	}
+
+	writeJSON(w, http.StatusOK, out)
+}

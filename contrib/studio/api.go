@@ -3,6 +3,8 @@ package studio
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"mime"
 	"net/http"
 	"strings"
 )
@@ -10,6 +12,9 @@ import (
 // The JSON API is internal to Studio's own interface and experimental (see
 // docs/api.md). Every route is registered in routes(), so it sits behind the
 // same guards as the pages: loopback check, cross-origin protection, session.
+
+// maxAPIBody bounds a JSON request body.
+const maxAPIBody = 1 << 20
 
 var apiParams = params{filter: "filter", perPage: "perPage"} //nolint:gochecknoglobals // read-only
 
@@ -48,6 +53,24 @@ func (s *Studio) apiRoutes() {
 	s.mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "not_found", "No such API route.")
 	})
+}
+
+// requireJSON answers 415 and returns false unless the request says it sends
+// JSON, which a plain HTML form cannot do across origins. Routes that change
+// state call it first.
+func requireJSON(w http.ResponseWriter, r *http.Request) bool {
+	if isJSONRequest(r) {
+		return true
+	}
+
+	writeAPIError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "Send Content-Type: application/json.")
+
+	return false
+}
+
+func isJSONRequest(r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mt == "application/json"
 }
 
 func (s *Studio) apiBootstrap(w http.ResponseWriter, _ *http.Request) {
@@ -101,4 +124,38 @@ func (s *Studio) apiFail(w http.ResponseWriter, r *http.Request, err error) {
 		"path", r.URL.Path, "status", status, "cause", errors.Unwrap(err))
 
 	writeAPIError(w, status, code, msg)
+}
+
+// decodeBody reads a JSON body into v: at most 1 MiB, no unknown field, one
+// value and nothing after it.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAPIBody))
+	dec.DisallowUnknownFields()
+
+	if err := dec.Decode(v); err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			return errBodyTooLarge
+		}
+
+		return inputError("the request body is not valid JSON for this route")
+	}
+
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return inputError("the request body must hold one JSON value")
+	}
+
+	return nil
+}
+
+var errBodyTooLarge = errors.New("request body too large")
+
+// apiBodyFail answers a body that could not be read: 413 when it was too
+// large, 422 otherwise.
+func (s *Studio) apiBodyFail(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errBodyTooLarge) {
+		writeAPIError(w, http.StatusRequestEntityTooLarge, "body_too_large", "The request body is over 1 MiB.")
+		return
+	}
+
+	s.apiFail(w, r, err)
 }
