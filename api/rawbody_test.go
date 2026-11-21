@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/api"
+	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
@@ -102,6 +103,24 @@ func serveTo(t *testing.T, h http.Handler, target, contentType, body string, chu
 	h.ServeHTTP(rec, req)
 
 	return rec
+}
+
+func TestRawBodyRefusesAFormAlreadyParsed(t *testing.T) {
+	t.Parallel()
+
+	var called bool
+
+	h := middleware.MethodOverride()(rawRouter(api.Op{Status: http.StatusOK}, &called))
+
+	rec := serveTo(t, h, "/import?format=png&scale=1", "application/x-www-form-urlencoded", "a=1", false)
+	if rec.Code != http.StatusUnsupportedMediaType || called {
+		t.Fatalf("POST = %d (handler called: %v), want 415 and no call", rec.Code, called)
+	}
+
+	rec = serveTo(t, h, "/import?format=png&scale=1", "application/octet-stream", "a=1", false)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"bytes":3`) {
+		t.Fatalf("POST binary = %d %s, want 200 with 3 bytes", rec.Code, rec.Body)
+	}
 }
 
 func TestSecurity_RawBodyFailsClosedOverTheLimit(t *testing.T) {

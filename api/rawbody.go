@@ -71,6 +71,12 @@ func rawBodyField(who, pattern string, t reflect.Type) ([]int, bool) {
 func openRawBody(c *web.Ctx) (io.Reader, error) {
 	r := c.Request()
 
+	// MethodOverride already drained an urlencoded body: the handler would
+	// read nothing and take it for an empty file.
+	if formParsed(r) {
+		return nil, errs.New(http.StatusUnsupportedMediaType, "This route does not accept a form body.")
+	}
+
 	limit, ok := web.BodyLimitOf(r)
 	if !ok {
 		limit = web.DefaultMaxBody
