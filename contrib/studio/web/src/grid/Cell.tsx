@@ -1,10 +1,19 @@
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import type { ApiCell } from "../api/types";
 import type { ColumnKind } from "./filters";
 import { cellView } from "./format";
 
+interface CellContentProps {
+  cell: ApiCell;
+  kind: ColumnKind;
+  /** Opens the whole value; offered on a cut cell. */
+  onExpand?: () => void;
+  /** A link to the row a foreign key points at, drawn after the value. */
+  link?: ReactNode;
+}
+
 /** CellContent draws the value of one cell; the cell element itself belongs to the grid. */
-export function CellContent({ cell, kind }: { cell: ApiCell; kind: ColumnKind }): ReactElement {
+export function CellContent({ cell, kind, onExpand, link }: CellContentProps): ReactElement {
   const view = cellView(cell, kind);
 
   if (view.tone === "null") {
@@ -18,14 +27,22 @@ export function CellContent({ cell, kind }: { cell: ApiCell; kind: ColumnKind })
   }
 
   return (
-    <span className={`cell-text cell-${view.tone}`}>
-      {view.text}
+    <>
+      <span className={`cell-text cell-${view.tone}`}>{view.text}</span>
       {cell.x ? (
-        <span className="cell-cut" title="The value is cut here. Open the row to read it all.">
+        <button
+          type="button"
+          tabIndex={-1}
+          className="cell-cut"
+          aria-label="Open the full value"
+          title="The value is cut here. Open the row to read it all."
+          onClick={onExpand}
+        >
           …
-        </span>
+        </button>
       ) : null}
-    </span>
+      {link}
+    </>
   );
 }
 

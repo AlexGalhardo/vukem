@@ -136,8 +136,11 @@ export function validateFilter(f: Filter, columns: readonly Column[]): string | 
   return null;
 }
 
-/** viewToSearch writes the state as a query string (with "?"), or "" for the default view. */
-export function viewToSearch(view: ViewState): string {
+/**
+ * viewToSearch writes the state as a query string (with "?"), or "" for the
+ * default view. open is the packed key of the row whose drawer is open.
+ */
+export function viewToSearch(view: ViewState, open?: string | null): string {
   const params = new URLSearchParams();
   for (const f of view.filters) {
     params.append("f", formatFilter(f));
@@ -148,8 +151,17 @@ export function viewToSearch(view: ViewState): string {
       params.set("desc", "1");
     }
   }
+  if (open) {
+    params.set("open", open);
+  }
   const s = params.toString();
   return s === "" ? "" : `?${s}`;
+}
+
+/** openFromSearch reads the packed key of the open row, or null. */
+export function openFromSearch(search: string): string | null {
+  const open = new URLSearchParams(search).get("open");
+  return open === null || open === "" ? null : open;
 }
 
 export interface ParsedView {

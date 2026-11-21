@@ -57,11 +57,14 @@ interface LinkProps {
   search?: string;
   className?: string;
   current?: boolean;
+  /** For a link inside a widget that has its own tab stop. */
+  tabIndex?: number;
+  ariaLabel?: string;
   children: ReactNode;
 }
 
 /** Link is an anchor that navigates in place and still works with new-tab clicks. */
-export function Link({ route, search, className, current, children }: LinkProps): ReactElement {
+export function Link({ route, search, className, current, tabIndex, ariaLabel, children }: LinkProps): ReactElement {
   const href = hrefFor(route) + (search ?? "");
 
   const onClick = (e: MouseEvent<HTMLAnchorElement>): void => {
@@ -72,7 +75,14 @@ export function Link({ route, search, className, current, children }: LinkProps)
   };
 
   return (
-    <a href={href} className={className} onClick={onClick} aria-current={current ? "page" : undefined}>
+    <a
+      href={href}
+      className={className}
+      onClick={onClick}
+      aria-current={current ? "page" : undefined}
+      tabIndex={tabIndex}
+      aria-label={ariaLabel}
+    >
       {children}
     </a>
   );
