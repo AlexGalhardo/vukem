@@ -200,6 +200,12 @@ func notedBodyError(r *http.Request) error {
 type bodyLimit struct {
 	n    int64
 	body io.ReadCloser
+	// installed is the body the framework put on the request (always a
+	// pointer type, so comparing it with an arbitrary r.Body cannot panic).
+	// A body that is not it was replaced since (a webhook middleware that
+	// verified the bytes and put them back): body is then drained and the
+	// next limit must wrap the replacement instead.
+	installed io.ReadCloser
 }
 
 // LimitBody caps the request body at n bytes and marks the request so
@@ -212,13 +218,14 @@ type bodyLimit struct {
 // bodies fail once they cross n.
 func LimitBody(w http.ResponseWriter, r *http.Request, n int64) *http.Request {
 	orig := r.Body
-	if prev, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit); ok {
+	if prev, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit); ok && r.Body == prev.installed {
 		orig = prev.body
 	}
 
-	r.Body = &limitedBody{ReadCloser: http.MaxBytesReader(w, orig, n), declared: r.ContentLength, n: n}
+	lb := &limitedBody{ReadCloser: http.MaxBytesReader(w, orig, n), declared: r.ContentLength, n: n}
+	r.Body = lb
 
-	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, &bodyLimit{n: n, body: orig}))
+	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, &bodyLimit{n: n, body: orig, installed: lb}))
 }
 
 // limitedBody refuses a declared Content-Length over the limit without

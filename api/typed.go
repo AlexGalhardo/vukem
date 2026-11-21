@@ -3,11 +3,13 @@ package api
 import (
 	"fmt"
 	"maps"
+	"mime"
 	"net/http"
 	"reflect"
 	"regexp"
 	"strings"
 
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
 	"github.com/AlexGalhardo/vukem/z"
@@ -210,6 +212,10 @@ func register[In, Out any](
 
 		if op.MaxBody > 0 {
 			c.SetRequest(web.LimitBody(c.Writer(), c.Request(), op.MaxBody))
+
+			if formParsedPastLimit(c.Request(), op.MaxBody) {
+				return errs.ErrRequestTooLarge
+			}
 		}
 
 		if schema != nil {
@@ -239,6 +245,24 @@ func register[In, Out any](
 	return rt.Doc(&Operation{
 		Op: op, Method: method, Path: rt.Path(), Params: params, In: inType, Out: outType, Schema: given,
 	})
+}
+
+// formParsedPastLimit reports an urlencoded body that middleware (MethodOverride)
+// already parsed under the router-wide limit: parsing is done, so the lower
+// limit would never be read against. A declared length over limit is refused,
+// and so is an undeclared one (chunked), whose size is unknown: fail closed.
+// A JSON request also has a non-nil PostForm after ParseForm, so the media
+// type decides.
+func formParsedPastLimit(r *http.Request, limit int64) bool {
+	if r.PostForm == nil {
+		return false
+	}
+
+	if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/x-www-form-urlencoded" {
+		return false
+	}
+
+	return r.ContentLength > limit || r.ContentLength < 0
 }
 
 func responseStatus(op Op, method string, noOutput bool) int {

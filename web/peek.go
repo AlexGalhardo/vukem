@@ -26,12 +26,15 @@ func PeekJSON(r *http.Request) (map[string]any, error) {
 	// The body is already wrapped by LimitBody when a limit is set; the extra
 	// byte only detects an unwrapped body over the default.
 	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
-	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+	peeked := &replayBody{Reader: io.MultiReader(bytes.NewReader(body), r.Body), Closer: r.Body}
+	r.Body = peeked
 
 	// A later LimitBody rebuilds the limit from the original body: put the
-	// bytes read here back in front of it too.
+	// bytes read here back in front of it too, and record the replay as the
+	// installed body so that LimitBody still recognizes it as ours.
 	if bl, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit); ok {
-		bl.body = replayBody{Reader: io.MultiReader(bytes.NewReader(body), bl.body), Closer: bl.body}
+		bl.body = &replayBody{Reader: io.MultiReader(bytes.NewReader(body), bl.body), Closer: bl.body}
+		bl.installed = peeked
 	}
 
 	if err != nil {
