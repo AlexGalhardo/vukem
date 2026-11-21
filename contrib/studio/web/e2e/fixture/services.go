@@ -75,13 +75,22 @@ func seedMongo(ctx context.Context, db *mongo.Database) error {
 			{Key: "name", Value: fmt.Sprintf("person-%03d", i)},
 			{Key: "age", Value: int32(i % 90)},
 			{Key: "active", Value: i%2 == 0},
-			{Key: "address", Value: bson.D{{Key: "city", Value: fmt.Sprintf("city-%d", i%5)}, {Key: "zip", Value: fmt.Sprintf("%05d", i)}}},
+			{
+				Key: "address",
+				Value: bson.D{
+					{Key: "city", Value: fmt.Sprintf("city-%d", i%5)},
+					{Key: "zip", Value: fmt.Sprintf("%05d", i)},
+				},
+			},
 			{Key: "tags", Value: bson.A{"a", "b", int32(i)}},
 		})
 	}
 
 	people[0] = bson.D{
-		{Key: "_id", Value: int32(1)}, {Key: "name", Value: "ada"}, {Key: "age", Value: int32(36)}, {Key: "active", Value: true},
+		{Key: "_id", Value: int32(1)},
+		{Key: "name", Value: "ada"},
+		{Key: "age", Value: int32(36)},
+		{Key: "active", Value: true},
 		{Key: "address", Value: bson.D{{Key: "city", Value: "london"}, {Key: "zip", Value: "00001"}}},
 		{Key: "tags", Value: bson.A{"math", "engines"}},
 	}
@@ -95,8 +104,16 @@ func seedMongo(ctx context.Context, db *mongo.Database) error {
 	oid3, _ := bson.ObjectIDFromHex("65a1b2c3d4e5f60718293a4d")
 
 	events := []any{
-		bson.D{{Key: "_id", Value: oid1}, {Key: "kind", Value: "login"}, {Key: "at", Value: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}},
-		bson.D{{Key: "_id", Value: oid2}, {Key: "kind", Value: "logout"}, {Key: "at", Value: time.Date(2026, 1, 2, 4, 4, 5, 0, time.UTC)}},
+		bson.D{
+			{Key: "_id", Value: oid1},
+			{Key: "kind", Value: "login"},
+			{Key: "at", Value: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)},
+		},
+		bson.D{
+			{Key: "_id", Value: oid2},
+			{Key: "kind", Value: "logout"},
+			{Key: "at", Value: time.Date(2026, 1, 2, 4, 4, 5, 0, time.UTC)},
+		},
 		bson.D{{Key: "_id", Value: oid3}, {Key: "kind", Value: "edit-me"}, {Key: "note", Value: "before"}},
 	}
 

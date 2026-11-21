@@ -47,7 +47,14 @@ func TestAPISQLWriteFlows(t *testing.T) {
 	}
 
 	rs, _ = h.src.Query(t.Context(), `SELECT qty, price, note FROM items WHERE id = 2`, false)
-	if got := []string{rs.Rows[0][0].Text, rs.Rows[0][1].Text, rs.Rows[0][2].Text}; !cmp.Equal(got, []string{"8", "9.5", "edited"}) {
+	if got := []string{
+		rs.Rows[0][0].Text,
+		rs.Rows[0][1].Text,
+		rs.Rows[0][2].Text,
+	}; !cmp.Equal(
+		got,
+		[]string{"8", "9.5", "edited"},
+	) {
 		t.Errorf("updated row = %v", got)
 	}
 
@@ -129,7 +136,13 @@ func TestSecurityAPISQLWriteRejectsUnknownColumnsAndBadValues(t *testing.T) {
 		t.Error("a refused write changed a table")
 	}
 
-	if rec := apiDo(s, c, "POST", users, `{"fields":{"id":{"text":"1"},"name":{"text":"x"}}}`); rec.Code == http.StatusCreated {
+	if rec := apiDo(
+		s,
+		c,
+		"POST",
+		users,
+		`{"fields":{"id":{"text":"1"},"name":{"text":"x"}}}`,
+	); rec.Code == http.StatusCreated {
 		t.Error("an insert with a duplicate key succeeded")
 	}
 }

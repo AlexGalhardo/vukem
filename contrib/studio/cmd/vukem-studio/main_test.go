@@ -387,7 +387,7 @@ func TestStartURLPointsToUI(t *testing.T) {
 	}
 
 	m := regexp.MustCompile(`open {2}http://127\.0\.0\.1:\d+(/\S*)\?token=\S+`).FindStringSubmatch(out)
-	if m == nil || m[1] != "/ui/" {
+	if len(m) < 2 || m[1] != "/ui/" {
 		t.Errorf("start URL path = %v in %q, want /ui/", m, out)
 	}
 }

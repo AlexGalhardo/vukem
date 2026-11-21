@@ -543,7 +543,9 @@ func schemaStudio(t *testing.T) (*Studio, *http.Cookie) {
 
 	src := NewSQL("db", "sqlite file", h.db, schemaCatalog{h.db})
 
-	s, err := New(Config{Sources: []Source{src}, Version: "t", Log: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))})
+	s, err := New(
+		Config{Sources: []Source{src}, Version: "t", Log: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,8 +566,8 @@ func TestAPISchema(t *testing.T) {
 	var got struct {
 		CanShowCreate bool `json:"canShowCreate"`
 		Tables        []struct {
-			Name        string `json:"name"`
-			PrimaryKey  []string
+			Name        string   `json:"name"`
+			PrimaryKey  []string `json:"primaryKey"`
 			ForeignKeys []struct {
 				Columns    []string `json:"columns"`
 				RefTable   string   `json:"refTable"`
@@ -594,7 +596,8 @@ func TestAPISchema(t *testing.T) {
 	}
 
 	pets := got.Tables[byName["pets"]]
-	if len(pets.ForeignKeys) != 1 || pets.ForeignKeys[0].RefTable != "owners" || pets.ForeignKeys[0].RefColumns[0] != "id" {
+	if len(pets.ForeignKeys) != 1 || pets.ForeignKeys[0].RefTable != "owners" ||
+		pets.ForeignKeys[0].RefColumns[0] != "id" {
 		t.Errorf("pets foreign keys = %+v", pets.ForeignKeys)
 	}
 
@@ -719,7 +722,13 @@ func TestSecurityConsoleRefusalsThroughTheAPI(t *testing.T) {
 	}
 
 	for name, body := range bodies {
-		if rec := apiDo(h.s, h.login, "POST", "/api/v1/sources/mongo/find", body); rec.Code != http.StatusUnprocessableEntity {
+		if rec := apiDo(
+			h.s,
+			h.login,
+			"POST",
+			"/api/v1/sources/mongo/find",
+			body,
+		); rec.Code != http.StatusUnprocessableEntity {
 			t.Errorf("%s = %d, want 422 (%s)", name, rec.Code, rec.Body)
 		}
 	}
@@ -734,7 +743,13 @@ func TestSecurityConsoleRefusalsThroughTheAPI(t *testing.T) {
 
 	for name, pipeline := range pipelines {
 		body := apiJSON(t, map[string]string{"collection": "users", "pipeline": pipeline})
-		if rec := apiDo(h.s, h.login, "POST", "/api/v1/sources/mongo/aggregate", body); rec.Code != http.StatusUnprocessableEntity {
+		if rec := apiDo(
+			h.s,
+			h.login,
+			"POST",
+			"/api/v1/sources/mongo/aggregate",
+			body,
+		); rec.Code != http.StatusUnprocessableEntity {
 			t.Errorf("aggregate with %s = %d, want 422 (%s)", name, rec.Code, rec.Body)
 		}
 	}
@@ -751,14 +766,33 @@ func TestSecurityConsoleRefusalsThroughTheAPI(t *testing.T) {
 		"OBJECT HELP", "MEMORY DOCTOR",
 	} {
 		body := apiJSON(t, map[string]string{"line": line})
-		if rec := apiDo(h.s, h.login, "POST", "/api/v1/sources/redis/command", body); rec.Code != http.StatusUnprocessableEntity {
+		if rec := apiDo(
+			h.s,
+			h.login,
+			"POST",
+			"/api/v1/sources/redis/command",
+			body,
+		); rec.Code != http.StatusUnprocessableEntity {
 			t.Errorf("redis %q = %d, want 422 (%s)", line, rec.Code, rec.Body)
 		}
 	}
 
 	for _, c := range h.rec.names() {
 		switch c {
-		case "EVAL", "EVALSHA", "FUNCTION", "FCALL", "SCRIPT", "CONFIG", "FLUSHALL", "FLUSHDB", "KEYS", "SHUTDOWN", "DEBUG", "ACL", "CLIENT", "MONITOR":
+		case "EVAL",
+			"EVALSHA",
+			"FUNCTION",
+			"FCALL",
+			"SCRIPT",
+			"CONFIG",
+			"FLUSHALL",
+			"FLUSHDB",
+			"KEYS",
+			"SHUTDOWN",
+			"DEBUG",
+			"ACL",
+			"CLIENT",
+			"MONITOR":
 			t.Errorf("a refused command reached Redis: %v", h.rec.names())
 		}
 	}

@@ -150,7 +150,13 @@ func (s *Studio) apiSchema(w http.ResponseWriter, r *http.Request) {
 	for i, t := range ts {
 		idx := make([]apiIndex, len(t.Indexes))
 		for k, ix := range t.Indexes {
-			idx[k] = apiIndex{Name: ix.Name, Columns: orEmpty(ix.Columns), Unique: ix.Unique, Primary: ix.Primary, Expression: ix.Expression}
+			idx[k] = apiIndex{
+				Name:       ix.Name,
+				Columns:    orEmpty(ix.Columns),
+				Unique:     ix.Unique,
+				Primary:    ix.Primary,
+				Expression: ix.Expression,
+			}
 		}
 
 		out[i] = apiSchemaTable{

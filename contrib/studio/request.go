@@ -12,8 +12,6 @@ type params struct {
 	filter, perPage string
 }
 
-var htmlParams = params{filter: "f", perPage: "per"} //nolint:gochecknoglobals // read-only
-
 // filtersFrom reads <name>=<column>:<op>:<value> (repeatable). A filter
 // without an operator is refused: dropping it would show every row as if it
 // matched. Column and operator are checked against the catalog later, where
