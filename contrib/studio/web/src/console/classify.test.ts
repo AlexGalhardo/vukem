@@ -53,6 +53,31 @@ describe("classify", () => {
     expect(classify("update t set a = 1").warning).toContain("no WHERE");
   });
 
+  test("a WHERE in a subquery or a CTE does not filter the write", () => {
+    for (const sql of [
+      "update t set a = (select b from u where id = 1)",
+      "delete from t using (select 1 where true) s",
+      "with x as (select 1 where 1 = 1) delete from t",
+      "with a as (delete from t where id = 1), b as (delete from u) select 1",
+    ]) {
+      expect(classify(sql).destructive).toBe(true);
+    }
+    expect(classify("update t set a = (select 1) where id = 1").destructive).toBe(false);
+    expect(classify("with x as (select 1) delete from t where id = 1").destructive).toBe(false);
+  });
+
+  test("REPLACE, INSERT and TRUNCATE called as functions are reads", () => {
+    for (const sql of [
+      "with x as (select 'a' v) select replace(v, 'a', 'b') from x",
+      "with x as (select 1.5 v) select truncate (v, 0) from x",
+    ]) {
+      const info = classify(sql);
+      expect(info.write).toBe(false);
+      expect(info.kind).toBe("WITH");
+    }
+    expect(classify("replace into t values (1)").write).toBe(true);
+  });
+
   test("a WHERE in a string or a comment does not count", () => {
     expect(classify("delete from t -- where id = 1").destructive).toBe(true);
     expect(classify("delete from t where_x = 'where'").destructive).toBe(true);

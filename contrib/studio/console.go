@@ -188,9 +188,9 @@ func readOnlyStatement(text, family string) bool {
 			first = w
 		case first == "explain" && (w == "analyze" || w == "analyse"):
 			analyze = true
-		case first == "explain" && (w == "into" || writeWords[w]):
+		case first == "explain" && (w == "into" || isWriteWord(w, call)):
 			writes = true
-		case w == "into", first == "with" && writeWords[w]:
+		case w == "into", first == "with" && isWriteWord(w, call):
 			ok = false
 		}
 	}) {
@@ -214,6 +214,16 @@ func readOnlyStatement(text, family string) bool {
 var writeWords = map[string]bool{ //nolint:gochecknoglobals // read-only
 	"insert": true, "update": true, "delete": true, "merge": true, "replace": true, "create": true,
 	"drop": true, "alter": true, "truncate": true,
+}
+
+// isWriteWord reports whether w is a write verb. REPLACE(), INSERT() and
+// TRUNCATE() are also scalar functions, and a call to one only reads.
+func isWriteWord(w string, call bool) bool {
+	if call && (w == "replace" || w == "insert" || w == "truncate") {
+		return false
+	}
+
+	return writeWords[w]
 }
 
 // pragmaRe matches "PRAGMA name" or "PRAGMA name(argument)" and nothing else:
@@ -253,12 +263,12 @@ func readPragma(text string) bool {
 func statementKind(text, family string) string {
 	first, carried := "", ""
 
-	lex(text, family == "mysql", func(w string, _, quoted bool) {
+	lex(text, family == "mysql", func(w string, call, quoted bool) {
 		switch {
 		case quoted:
 		case first == "":
 			first = w
-		case first == "with" && carried == "" && writeWords[w]:
+		case first == "with" && carried == "" && isWriteWord(w, call):
 			carried = w
 		}
 	})
