@@ -70,3 +70,51 @@ export function KeyboardIcon({ className }: IconProps): ReactElement {
     </Svg>
   );
 }
+
+export function SortIcon({ className, direction }: IconProps & { direction: "asc" | "desc" }): ReactElement {
+  return (
+    <Svg className={className}>
+      {direction === "asc" ? <path d="M8 13V3M4 7l4-4 4 4" /> : <path d="M8 3v10M4 9l4 4 4-4" />}
+    </Svg>
+  );
+}
+
+export function ExpandIcon({ className }: IconProps): ReactElement {
+  return (
+    <Svg className={className}>
+      <path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9" />
+    </Svg>
+  );
+}
+
+export function LinkIcon({ className }: IconProps): ReactElement {
+  return (
+    <Svg className={className}>
+      <path d="M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1" />
+    </Svg>
+  );
+}
+
+export function CloseIcon({ className }: IconProps): ReactElement {
+  return (
+    <Svg className={className}>
+      <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
+    </Svg>
+  );
+}
+
+export function PlusIcon({ className }: IconProps): ReactElement {
+  return (
+    <Svg className={className}>
+      <path d="M8 3v10M3 8h10" />
+    </Svg>
+  );
+}
+
+export function RefreshIcon({ className }: IconProps): ReactElement {
+  return (
+    <Svg className={className}>
+      <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" />
+    </Svg>
+  );
+}
