@@ -84,7 +84,9 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 // the JSON or form body and the path parameters (which win), and validated
 // with In's `validate` tags (422 with field errors). The output is written
 // as JSON, checked first when Op.ValidateResponse is set. GET, HEAD and
-// DELETE ignore the body. Pattern is "METHOD /path". It panics on a
+// DELETE ignore the body. A field of type [RawBody] receives the unread body
+// instead (a file upload), and `query:"name"` tags bind and document query
+// parameters. Pattern is "METHOD /path". It panics on a
 // malformed pattern or when Op.ValidateResponse is set for a non-struct
 // Out, so mistakes surface at boot.
 //
@@ -205,24 +207,17 @@ func register[In, Out any](
 	// GET, HEAD and DELETE read the query string only.
 	bodyless := method == http.MethodGet || method == http.MethodHead || method == http.MethodDelete
 
+	rawIndex, hasRaw := rawBodyField(who, pattern, inType)
+	if hasRaw && bodyless {
+		panic(fmt.Sprintf("api: %s %q: a RawBody needs a method with a body, not %s", who, pattern, method))
+	}
+
 	status := responseStatus(op, method, noOutput)
 
 	h := func(c *web.Ctx) error {
-		var in In
-
-		if op.MaxBody > 0 {
-			c.SetRequest(web.LimitBody(c.Writer(), c.Request(), op.MaxBody))
-
-			if formParsedPastLimit(c.Request(), op.MaxBody) {
-				return errs.ErrRequestTooLarge
-			}
-		}
-
-		if schema != nil {
-			var err error
-			if in, err = bindInput(c, schema, inType, bodyless, op.StrictBody, params); err != nil {
-				return err
-			}
+		in, err := bindRequest(c, schema, op, inType, bodyless, rawIndex, params)
+		if err != nil {
+			return err
 		}
 
 		out, err := fn(c, in)
@@ -263,6 +258,49 @@ func formParsedPastLimit(r *http.Request, limit int64) bool {
 	}
 
 	return r.ContentLength > limit || r.ContentLength < 0
+}
+
+// bindRequest applies the route's body limit, then binds and validates In;
+// a non-nil rawIndex (the RawBody field) gets the unread body instead of a
+// decoded one.
+func bindRequest[In any](
+	c *web.Ctx,
+	schema z.Schema[In],
+	op Op,
+	inType reflect.Type,
+	bodyless bool,
+	rawIndex []int,
+	params []string,
+) (In, error) {
+	var in In
+
+	if op.MaxBody > 0 {
+		c.SetRequest(web.LimitBody(c.Writer(), c.Request(), op.MaxBody))
+
+		if formParsedPastLimit(c.Request(), op.MaxBody) {
+			return in, errs.ErrRequestTooLarge
+		}
+	}
+
+	if schema == nil {
+		return in, nil
+	}
+
+	in, err := bindInput(c, schema, inType, bodyless || rawIndex != nil, op.StrictBody, params)
+	if err != nil {
+		return in, err
+	}
+
+	if rawIndex != nil {
+		body, err := openRawBody(c)
+		if err != nil {
+			return in, err
+		}
+
+		reflect.ValueOf(&in).Elem().FieldByIndex(rawIndex).Set(reflect.ValueOf(&body).Elem())
+	}
+
+	return in, nil
 }
 
 func responseStatus(op Op, method string, noOutput bool) int {
