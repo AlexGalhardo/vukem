@@ -194,8 +194,26 @@ func MapError[E error](s *Services, fn func(c *Ctx, e E) error) {
 	})
 }
 
-// mapError returns the error the registered mappers render err as, or err
-// itself when none matches.
+// MapErrorIf is MapError for errors that no type tells apart, such as a
+// sentinel or a condition on the request: when match reports true, fn returns
+// the error to render in its place. The same rules apply: first registered
+// match wins, a nil result leaves the error alone, the original is logged.
+func MapErrorIf(s *Services, match func(c *Ctx, err error) bool, fn func(c *Ctx, err error) error) {
+	s.ErrorMappers = append(s.ErrorMappers, func(c *Ctx, err error) (error, bool) {
+		if !match(c, err) {
+			return nil, false
+		}
+
+		return fn(c, err), true
+	})
+}
+
+// StatusClientClosedRequest is the nginx status for a client that went away
+// before the response; net/http has no constant for it.
+const StatusClientClosedRequest = 499
+
+// mapError returns the error the registered mappers render err as, or nil
+// when none did.
 func (c *Ctx) mapError(err error) error {
 	for _, m := range c.s.ErrorMappers {
 		if mapped, ok := m(c, err); ok && mapped != nil {
@@ -203,10 +221,42 @@ func (c *Ctx) mapError(err error) error {
 		}
 	}
 
-	return err
+	return nil
 }
 
-// DefaultErrorHandler renders err according to the client:
+// resolve returns the error to render for original: the mapped one, or
+// original itself. gone is true when no mapper matched and the client
+// abandoned the request.
+func (c *Ctx) resolve(original error) (gone bool, rendered error) {
+	if mapped := c.mapError(original); mapped != nil {
+		return false, mapped
+	}
+
+	return c.clientGone(original), original
+}
+
+// answerClientGone logs quietly and writes a bare 499: nobody is listening.
+func (c *Ctx) answerClientGone(err error) {
+	logError(c, StatusClientClosedRequest, err, slog.LevelInfo)
+
+	if !c.w.Written() {
+		c.w.WriteHeader(StatusClientClosedRequest)
+	}
+}
+
+// clientGone reports an error caused by the client abandoning the request:
+// context.Canceled while the request context is finished. A deadline is the
+// server's own timeout and a context error on a live request is a bug, so
+// neither counts.
+func (c *Ctx) clientGone(err error) bool {
+	return errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
+		errors.Is(c.Context().Err(), context.Canceled)
+}
+
+// DefaultErrorHandler renders err according to the client (an error caused by
+// the client abandoning the request, context.Canceled with the request
+// context finished, is answered 499 with no body and logged at Info unless a
+// mapper handles it):
 //   - JSON clients get RFC 9457 problem+json (422 includes field errors;
 //     z.Issues and z.FieldError errors count as validation errors);
 //   - classic form posts with a validation error go to the validation hook
@@ -222,7 +272,13 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	// What is rendered may be a mapped error; what is logged, and shown on
 	// the debug page, is the one that happened.
 	original := err
-	err = c.mapError(err)
+
+	gone, err := c.resolve(original)
+	if gone {
+		c.answerClientGone(original)
+
+		return
+	}
 
 	status := errs.Status(err)
 	he, _ := errors.AsType[*errs.HTTPError](err)

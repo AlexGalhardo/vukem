@@ -423,6 +423,8 @@ The function receives the first error of that type in the chain ([`errors.AsType
 - The log has the **original** error: the mapped one only decides what the client sees.
 - A mapper cannot expose a server fault: an error it returns with a 5xx status is rendered like any other 5xx, with no detail.
 - Errors that middleware writes with `web.Fail` are mapped too.
+- `web.MapErrorIf(s, match, fn)` registers the same mapping for a condition instead of a type (a sentinel, a property of the request).
+- With no mapper matching, `context.Canceled` on a request whose context is finished (the client left) is answered `499` with no body and logged at Info, not as a 500. A context error on a live request stays 500, `context.DeadlineExceeded` is never 499, and a mapper you register wins.
 - Register mappers while you build the app. The list is read on every request and is not locked, so registering one while the app serves is a data race.
 
 ## Replacing the error handler

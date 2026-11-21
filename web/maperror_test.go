@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/errs"
 )
@@ -256,6 +258,76 @@ func TestSecurity_A10_ErrorMaskingMatrix(t *testing.T) {
 			rec, _ := runError(t, errs.New(http.StatusForbidden, "visible"), f.setup, f.s())
 			if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "visible") {
 				t.Errorf("%d %q, want the 4xx text in the body", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestDefaultErrorHandlerClientGone(t *testing.T) {
+	t.Parallel()
+
+	canceled := func(r *http.Request) {
+		ctx, cancel := context.WithCancel(r.Context())
+		cancel()
+		*r = *r.WithContext(ctx)
+	}
+	expired := func(r *http.Request) {
+		ctx, cancel := context.WithDeadline(r.Context(), time.Unix(0, 0))
+		defer cancel()
+		*r = *r.WithContext(ctx)
+	}
+	asCanceled := func(_ *Ctx, err error) bool { return errors.Is(err, context.Canceled) }
+	teapot := func(*Ctx, error) error { return errs.New(http.StatusTeapot, "app decided") }
+
+	tests := []struct {
+		name       string
+		setup      func(*http.Request)
+		register   func(*Services)
+		err        error
+		wantStatus int
+		wantBody   bool
+		wantLevel  string
+	}{
+		{"canceled with a finished request", canceled, nil, context.Canceled, 499, false, "level=INFO"},
+		{"wrapped cancel", canceled, nil, fmt.Errorf("load: %w", context.Canceled), 499, false, "level=INFO"},
+		{"canceled on a live request", nil, nil, context.Canceled, 500, true, "level=ERROR"},
+		{"deadline exceeded stays 500", expired, nil, context.DeadlineExceeded, 500, true, "level=ERROR"},
+		{"deadline error on a canceled request", canceled, nil, context.DeadlineExceeded, 500, true, "level=ERROR"},
+		{
+			"an app mapper keeps precedence", canceled,
+			func(s *Services) { MapErrorIf(s, asCanceled, teapot) },
+			context.Canceled, http.StatusTeapot, true, "level=DEBUG",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := &Services{}
+			if tt.register != nil {
+				tt.register(s)
+			}
+
+			setup := func(r *http.Request) {
+				r.Header.Set("Accept", "application/json")
+
+				if tt.setup != nil {
+					tt.setup(r)
+				}
+			}
+
+			rec, logs := runError(t, tt.err, setup, s)
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+
+			if got := rec.Body.Len() > 0; got != tt.wantBody {
+				t.Errorf("has body = %v, want %v", got, tt.wantBody)
+			}
+
+			if !strings.Contains(logs, tt.wantLevel) {
+				t.Errorf("log %q lacks %q", logs, tt.wantLevel)
 			}
 		})
 	}

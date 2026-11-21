@@ -207,7 +207,7 @@ web.MapError(app.Router.Services(), func(c *web.Ctx, e *billing.InsufficientFund
 })
 ```
 
-The first registered mapper that matches wins (no chaining); a `nil` result leaves the error alone; the original error is the one logged; a mapped 5xx is masked like any other (`TestSecurity_A10_MappedErrorCannotExposeServerFaults`); `web.Fail` errors are mapped too. Register mappers while building the app: the slice is read on every request and is not locked.
+The first registered mapper that matches wins (no chaining); a `nil` result leaves the error alone; the original error is the one logged; a mapped 5xx is masked like any other (`TestSecurity_A10_MappedErrorCannotExposeServerFaults`); `web.Fail` errors are mapped too. Register mappers while building the app: the slice is read on every request and is not locked. `web.MapErrorIf(s, match, fn)` is the same for a condition no type tells apart (a sentinel, a request property). With no mapper matching, `DefaultErrorHandler` answers `context.Canceled` with the request context finished (the client went away) as `499` with no body, logged at Info; a context error on a live request stays 500 and `context.DeadlineExceeded` is never 499 (`TestDefaultErrorHandlerClientGone`). A mapper you register wins over this.
 
 ### Problem types
 
