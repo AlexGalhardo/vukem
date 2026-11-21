@@ -178,3 +178,32 @@ func TestStandardsComposeConfigServices(t *testing.T) {
 		)
 	}
 }
+
+// git-cliff calls the GitHub API unless told --offline, and panics in an empty
+// repository or without a network (VF-098), so the documented command and the
+// template must stay local.
+func TestStandardsCliffStaysOffline(t *testing.T) {
+	t.Parallel()
+
+	for _, f := range []string{"standards/cliff.toml", "standards/CHANGELOG.md.tmpl"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !strings.Contains(string(b), "git cliff --offline") {
+			t.Errorf("%s documents git cliff without --offline", f)
+		}
+	}
+
+	cfg, err := os.ReadFile("standards/cliff.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for line := range strings.SplitSeq(string(cfg), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "[remote.") {
+			t.Errorf("cliff.toml enables %q, which calls the GitHub API", line)
+		}
+	}
+}
