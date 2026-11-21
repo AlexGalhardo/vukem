@@ -39,8 +39,11 @@ function readTab(v: unknown): Tab | null {
   if (typeof id !== "string" || id === "" || typeof title !== "string" || typeof pinned !== "boolean") {
     return null;
   }
-  if (kind === "table") {
+  if (kind === "table" || kind === "collection" || kind === "key") {
     return typeof table === "string" && table !== "" ? { id, kind, title, pinned, text: "", savedText: "", table } : null;
+  }
+  if (kind === "schema") {
+    return { id, kind, title, pinned, text: "", savedText: "" };
   }
   if (kind === "query" && typeof text === "string" && typeof savedText === "string" && text.length <= maxTextBytes) {
     return { id, kind, title, pinned, text, savedText: savedText.length <= maxTextBytes ? savedText : "" };

@@ -107,3 +107,31 @@ describe("persistence", () => {
     expect(() => saveTabs(broken, "db", build({ type: "openQuery", id: "a" }))).not.toThrow();
   });
 });
+
+describe("persistence of the other tab kinds", () => {
+  test("schema, collection and key tabs come back after a reload", () => {
+    const state = build(
+      { type: "openSchema", id: "s" },
+      { type: "openCollection", id: "c", collection: "users" },
+      { type: "openKey", id: "k", key: "session:1" },
+      { type: "openQuery", id: "q" },
+    );
+    const storage = memory();
+    saveTabs(storage, "src", state);
+    expect(loadTabs(storage, "src")).toEqual(state);
+  });
+
+  test("a collection or key tab without a name is dropped", () => {
+    const raw = JSON.stringify({
+      v: 1,
+      active: null,
+      seq: 0,
+      tabs: [
+        { id: "c", kind: "collection", title: "x", pinned: false, text: "", savedText: "" },
+        { id: "k", kind: "key", title: "x", pinned: false, text: "", savedText: "", table: "" },
+        { id: "s", kind: "schema", title: "Schema", pinned: false, text: "", savedText: "" },
+      ],
+    });
+    expect(parseTabs(raw)?.tabs.map((t) => t.id)).toEqual(["s"]);
+  });
+});
