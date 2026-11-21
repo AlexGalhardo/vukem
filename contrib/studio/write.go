@@ -3,7 +3,6 @@ package studio
 import (
 	"context"
 	"slices"
-	"strings"
 )
 
 // audit logs one write attempt on stderr, before the response. Values never
@@ -36,9 +35,9 @@ func (s *Studio) auditRedisCommand(ctx context.Context, src RedisSource, line st
 		return
 	}
 
-	s.audit(ctx, src, "console", strings.ToUpper(args[0]), err, "args", len(args)-1)
+	s.audit(ctx, src, "console", asciiUpper(args[0]), err, "args", len(args)-1)
 }
 
 func isRedisWrite(cmd string) bool {
-	return slices.Contains(redisWriteCommands, strings.ToUpper(cmd))
+	return slices.Contains(redisWriteCommands, asciiUpper(cmd))
 }

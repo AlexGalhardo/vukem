@@ -137,7 +137,8 @@ func (s *Studio) apiFind(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := m.Find(ctx, body.Collection, body.Filter)
 	if err != nil {
-		s.apiFail(w, r, err)
+		// The class only: the decoder and the driver can quote the typed values.
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
@@ -169,7 +170,7 @@ func (s *Studio) apiAggregate(w http.ResponseWriter, r *http.Request) {
 	s.auditConsole(ctx, m, body.Collection, err)
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
