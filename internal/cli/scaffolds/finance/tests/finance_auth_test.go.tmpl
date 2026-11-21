@@ -112,3 +112,56 @@ func TestSecurity_FinanceLocalSeedPreservesCredentialsAndData(t *testing.T) {
 	}
 	vukemtest.AssertDatabaseHas(t, app, "accounts", map[string]any{"name": "My edited checking"})
 }
+
+// With the verification check off (development only), a sign-up is never
+// marked verified, so whoever registers an admin's address first gets neither
+// the panel nor the admin's invitations, and the real owner signing in with
+// Google ends the first registrant's password and sessions.
+func TestSecurity_A07_UnprovenAddressGetsNoPrivilege(t *testing.T) {
+	t.Parallel()
+	owner := social.User{ID: "google-boss", Email: "boss@example.com", EmailVerified: true, Name: "Boss"}
+	env := vukemtest.FakeSocial(owner)
+	env["AUTH_REQUIRE_EMAIL_VERIFICATION"] = "false"
+	app := newApp(t, env)
+
+	ana := signUp(t, app, "Ana", "ana@example.com")
+	makePro(t, app, ana)
+	ana.Client.PostForm("/workspace/invites", url.Values{"email": {"boss@example.com"}, "role": {"member"}}).
+		AssertRedirect("/workspace")
+	sent := app.Mails().SentTo("boss@example.com")
+	if len(sent) != 1 {
+		t.Fatalf("invite mails = %d, want 1", len(sent))
+	}
+	path := inviteRe.FindString(sent[0].HTML)
+
+	squatter := app.Client(t).WithHeader("Sec-Fetch-Site", "same-origin")
+	squatter.PostForm("/register", url.Values{
+		"name": {"Mallory"}, "email": {"boss@example.com"},
+		"password": {testPassword}, "password_confirmation": {testPassword},
+	}).AssertRedirect("/login")
+	squatter.PostForm("/login", url.Values{"email": {"boss@example.com"}, "password": {testPassword}})
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mallory, err := orm.QueryOf[models.User](db).Where("email", "boss@example.com").First(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mallory.EmailVerified() {
+		t.Fatal("the self-asserted address was marked verified")
+	}
+
+	if st := squatter.Get("/admin/revenue").Status(); st == 200 {
+		t.Fatal("an unverified address listed in ADMIN_EMAILS reached the admin page")
+	}
+	squatter.PostForm(path, nil)
+	vukemtest.AssertDatabaseMissing(t, app, "memberships", map[string]any{"user_id": mallory.ID})
+
+	financeGoogleSignIn(t, app.Client(t)).AssertRedirect("/dashboard")
+	squatter.Get("/dashboard").AssertRedirect("/login")
+	app.Client(t).WithHeader("Referer", "/login").PostForm("/login", url.Values{
+		"email": {"boss@example.com"}, "password": {testPassword},
+	}).AssertSessionHasErrors("email")
+}
