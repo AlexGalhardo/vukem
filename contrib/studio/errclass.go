@@ -21,6 +21,10 @@ func errorClass(err error) string {
 		return "not_found"
 	case errors.Is(err, errInput):
 		return "invalid_input"
+	case errors.As(err, new(*ConflictError)):
+		return "conflict"
+	case errors.Is(err, ErrCountTimeout):
+		return "timeout"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded):

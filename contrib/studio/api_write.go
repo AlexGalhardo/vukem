@@ -30,6 +30,12 @@ type rowBody struct {
 	Fields map[string]apiField `json:"fields"`
 }
 
+// updateBody is rowBody plus the values the row must still hold.
+type updateBody struct {
+	Fields map[string]apiField `json:"fields"`
+	Expect map[string]apiField `json:"expect"`
+}
+
 type confirmBody struct {
 	Confirm string `json:"confirm"`
 }
@@ -128,7 +134,7 @@ func (s *Studio) apiUpdateRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body rowBody
+	var body updateBody
 	if err := decodeBody(w, r, &body); err != nil {
 		s.apiBodyFail(w, r, err)
 		return
@@ -143,8 +149,14 @@ func (s *Studio) apiUpdateRow(w http.ResponseWriter, r *http.Request) {
 
 	fields, err := apiFields(t, body.Fields, false)
 	if err == nil {
-		err = src.Update(r.Context(), t.Name, key, fields)
-		s.audit(r.Context(), src, "update", t.Name, err, "key", confirmKey(key), "columns", fieldNames(fields))
+		expect := make(map[string]Field, len(body.Expect))
+		for name, f := range body.Expect {
+			expect[name] = Field(f)
+		}
+
+		err = src.Update(r.Context(), t.Name, key, fields, expect)
+		s.audit(r.Context(), src, "update", t.Name, err, "key", confirmKey(key), "columns", fieldNames(fields),
+			"guarded", len(expect))
 	}
 
 	if err != nil {

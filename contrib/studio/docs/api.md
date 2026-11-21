@@ -33,7 +33,8 @@ one-time start token is traded for. Without the cookie every route answers
   | 404 | `not_found` | Unknown route, source, table, collection, document or key |
   | 413 | `body_too_large` | Body over 1 MiB |
   | 415 | `unsupported_media_type` | Not `application/json` |
-  | 422 | `invalid_input` | The request is refused; the message says why |
+  | 409 | `conflict` | A guarded update found the row changed; `current` has its values |
+| 422 | `invalid_input` | The request is refused; the message says why |
   | 500 | `query_failed`, `internal` | The database or Studio failed; the cause is in Studio's log |
 
 ## Bootstrap
@@ -59,6 +60,7 @@ one-time start token is traded for. Without the cookie every route answers
 | `GET /sources/{source}/tables/{table}` | `{ name, columns: [{ name, type, nullable, default? }], primaryKey, foreignKeys }` |
 | `GET /sources/{source}/tables/{table}/rows` | `{ columns, rows, next?, hasMore }` |
 | `GET /sources/{source}/tables/{table}/rows/{key}` | `{ columns, cells }`, values in full |
+| `GET /sources/{source}/tables/{table}/count` | `{ count }` for the same `filter` parameters, or `{ timedOut: true }` when the bounded `COUNT(*)` (10 seconds) did not finish |
 | `GET /sources/{source}/tables/{table}/references` | `{ references: [{ table, columns, refColumns }] }` |
 | `POST /sources/{source}/query` | `{ columns, rows, truncated, elapsedMs, affected? }` for `{ sql, write? }` |
 | `POST /sources/{source}/explain` | the same shape, for `{ sql }` |
@@ -111,7 +113,7 @@ A missing or different `confirm` is `422` and nothing changes.
 | Route | Body |
 | --- | --- |
 | `POST /sources/{source}/tables/{table}/rows` | `{ fields: { <column>: { text, null } } }` |
-| `PATCH /sources/{source}/tables/{table}/rows/{key}` | the same |
+| `PATCH /sources/{source}/tables/{table}/rows/{key}` | `{ fields, expect? }`: `expect` has the same shape as `fields` and lists values the row must still hold |
 | `DELETE /sources/{source}/tables/{table}/rows/{key}` | `{ confirm }` |
 | `POST /sources/{source}/collections/{collection}/documents` | `{ doc }`, Extended JSON |
 | `PUT /sources/{source}/collections/{collection}/documents/{id}` | `{ doc }` |
@@ -119,5 +121,5 @@ A missing or different `confirm` is `422` and nothing changes.
 | `PATCH /sources/{source}/keys/{key...}` | `{ action: "set" \| "hset" \| "ttl", value?, field?, seconds? }` |
 | `DELETE /sources/{source}/keys/{key...}` | `{ confirm }` |
 
-Tables without a primary key refuse writes. The console routes (`query`, `command`, `aggregate`) also
+A `PATCH` whose `expect` differs from the stored row (compared as the grid shows the value, `NULL` included) changes nothing and answers `409` with `code: "conflict"` and `current`, the values of the guarded columns now. Tables without a primary key refuse writes. The console routes (`query`, `command`, `aggregate`) also
 write when `--write` is on and the statement or command is a write.
