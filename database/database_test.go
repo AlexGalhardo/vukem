@@ -524,6 +524,51 @@ func TestUniqueViolation(t *testing.T) {
 	}
 }
 
+func TestIsUnique(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"sqlstate 23505", stateError{"23505"}, true},
+		{"wrapped sqlstate", fmt.Errorf("insert: %w", stateError{"23505"}), true},
+		{"other sqlstate", stateError{"23503"}, false},
+		{"mysql", errors.New("Error 1062 (23000): Duplicate entry 'a' for key 'k'"), true},
+		{"wrapped mysql", fmt.Errorf("insert user: %w", errors.New("Error 1062 (23000): Duplicate entry")), true},
+		{"turso unique", fmt.Errorf("UNIQUE constraint failed: t.id: %w", errors.New("constraint")), true},
+		{"turso primary key", errors.New("PRIMARY KEY constraint failed: t.id"), true},
+		{"turso not null", errors.New("NOT NULL constraint failed: t.id"), false},
+		{"text inside a message", errors.New(`bad value "UNIQUE constraint failed"`), false},
+		{"nil", nil, false},
+	}
+
+	for _, tt := range tests {
+		if got := IsUnique(tt.err); got != tt.want {
+			t.Errorf("%s: IsUnique = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+
+	db, err := Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	for _, q := range []string{`CREATE TABLE u (id INTEGER PRIMARY KEY)`, `INSERT INTO u VALUES (1)`} {
+		if _, err := db.ExecContext(t.Context(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, dup := db.ExecContext(t.Context(), `INSERT INTO u VALUES (1)`)
+	if !IsUnique(dup) {
+		t.Errorf("IsUnique(sqlite duplicate) = false, want true")
+	}
+}
+
 func TestWriteRoutedQueries(t *testing.T) {
 	t.Parallel()
 

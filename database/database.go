@@ -477,8 +477,33 @@ func uniqueViolation(hook func(error) bool, err error) bool {
 		return c.Code() == 2067 || c.Code() == 1555
 	}
 
-	return strings.HasPrefix(err.Error(), "Error 1062 (")
+	return textUnique(err)
 }
+
+// textUnique looks for the leading text of a unique violation at every level
+// of the wrap chain: go-sql-driver/mysql's "Error 1062 (" and the SQLite
+// wording that drivers without an error code (turso) keep. Only a prefix
+// counts, so a column value that says "duplicate key" never matches.
+func textUnique(err error) bool {
+	for ; err != nil; err = errors.Unwrap(err) {
+		msg := err.Error()
+		if strings.HasPrefix(msg, "Error 1062 (") ||
+			strings.HasPrefix(msg, "UNIQUE constraint failed") ||
+			strings.HasPrefix(msg, "PRIMARY KEY constraint failed") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// IsUnique reports whether err is a unique or primary key violation from any
+// supported driver, without an executor: an app that wraps the Executor keeps
+// the check. It recognises PostgreSQL (SQLSTATE 23505), the built-in SQLite
+// driver (extended codes), MySQL and MariaDB (error 1062) and Turso (the
+// SQLite wording). Prefer DB.UniqueViolation when the *DB is at hand: it asks
+// the driver's own hook first.
+func IsUnique(err error) bool { return uniqueViolation(nil, err) }
 
 // Encrypter returns the encrypter set with WithEncrypter, or nil.
 func (db *DB) Encrypter() Encrypter { return db.enc }

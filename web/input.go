@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 // DefaultMaxBody is the request body limit applied by Input and BindJSON
@@ -35,26 +36,47 @@ const maxInputDepth = 16
 func (c *Ctx) Input() (map[string]any, error) {
 	out := FormToMap(c.r.URL.Query())
 
-	switch {
-	case c.r.Body == nil || c.r.Body == http.NoBody:
-		return out, nil
-	case c.IsJSON():
-		var body map[string]any
-		if err := c.decodeJSON(&body, false); err != nil {
-			return nil, err
-		}
-
-		maps.Copy(out, body)
-	case isForm(c.r):
-		if err := c.parseForm(); err != nil {
-			return nil, err
-		}
-
-		maps.Copy(out, FormToMap(c.r.PostForm))
-		maps.Copy(out, fileInput(c.r.MultipartForm))
+	body, _, err := c.BodyInput()
+	if err != nil {
+		return nil, err
 	}
 
+	maps.Copy(out, body)
+
 	return out, nil
+}
+
+// BodyInput returns only the request body as a generic map, shaped like
+// [Ctx.Input] but without the query string: a JSON object keeps its types,
+// form values and uploaded files follow Input. isJSON reports a JSON body.
+// The map is empty for a request without a body or with another content
+// type. A typed route that must tell the body's keys from the query's
+// (api.Op.StrictBody) reads it here.
+func (c *Ctx) BodyInput() (body map[string]any, isJSON bool, err error) {
+	body = map[string]any{}
+
+	switch {
+	case c.r.Body == nil || c.r.Body == http.NoBody:
+		return body, false, nil
+	case c.IsJSON():
+		var decoded map[string]any
+		if err := c.decodeJSON(&decoded, false); err != nil {
+			return nil, true, err
+		}
+
+		maps.Copy(body, decoded)
+
+		return body, true, nil
+	case isForm(c.r):
+		if err := c.parseForm(); err != nil {
+			return nil, false, err
+		}
+
+		maps.Copy(body, FormToMap(c.r.PostForm))
+		maps.Copy(body, fileInput(c.r.MultipartForm))
+	}
+
+	return body, false, nil
 }
 
 // fileInput exposes uploaded files to schemas (z.File): one file is a
@@ -85,6 +107,17 @@ func fileInput(f *multipart.Form) map[string]any {
 	}
 
 	return out
+}
+
+// IssuesError turns issues found outside a schema (z.Unrecognized) into the
+// 422 [ParseMap] would answer, localized like it; on names where the input
+// came from ("body", "query", "params").
+func IssuesError(c *Ctx, is z.Issues, on string) error {
+	if len(is) == 0 {
+		return nil
+	}
+
+	return issuesValidation(c.Context(), c.Log(), is, on)
 }
 
 // QueryInput returns the query string as a generic map (see Input).
@@ -167,6 +200,12 @@ func notedBodyError(r *http.Request) error {
 type bodyLimit struct {
 	n    int64
 	body io.ReadCloser
+	// installed is the body the framework put on the request (always a
+	// pointer type, so comparing it with an arbitrary r.Body cannot panic).
+	// A body that is not it was replaced since (a webhook middleware that
+	// verified the bytes and put them back): body is then drained and the
+	// next limit must wrap the replacement instead.
+	installed io.ReadCloser
 }
 
 // LimitBody caps the request body at n bytes and marks the request so
@@ -179,13 +218,14 @@ type bodyLimit struct {
 // bodies fail once they cross n.
 func LimitBody(w http.ResponseWriter, r *http.Request, n int64) *http.Request {
 	orig := r.Body
-	if prev, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit); ok {
+	if prev, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit); ok && r.Body == prev.installed {
 		orig = prev.body
 	}
 
-	r.Body = &limitedBody{ReadCloser: http.MaxBytesReader(w, orig, n), declared: r.ContentLength, n: n}
+	lb := &limitedBody{ReadCloser: http.MaxBytesReader(w, orig, n), declared: r.ContentLength, n: n}
+	r.Body = lb
 
-	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, &bodyLimit{n: n, body: orig}))
+	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, &bodyLimit{n: n, body: orig, installed: lb}))
 }
 
 // limitedBody refuses a declared Content-Length over the limit without

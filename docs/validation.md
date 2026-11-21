@@ -68,7 +68,7 @@ if errors.As(err, &issues) {
 
 | Constructor | Go type | Checks / transforms |
 | --- | --- | --- |
-| `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `HasLower`, `HasUpper`, `HasDigit`, `HasSymbol`, `OneOf`; formats `IP`, `IPv4`, `IPv6`, `CIDR`, `MAC`, `Hostname`, `E164`, `Slug`, `Hex`, `Base64`, `Base64URL`, `JWT`, `ISODate`, `ISOTime`, `ISODateTime`, `ISODuration`; `Trim`, `ToLower`, `ToUpper`, `NormalizeEmail`, `Escape`, `Preprocess(fn)` |
+| `z.String()` | `string` | `Min`, `Max`, `Len`, `Date`, `MinDate`, `Keyword`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `HasLower`, `HasUpper`, `HasDigit`, `HasSymbol`, `OneOf`; formats `IP`, `IPv4`, `IPv6`, `CIDR`, `MAC`, `Hostname`, `E164`, `Slug`, `Hex`, `Base64`, `Base64URL`, `JWT`, `ISODate`, `ISOTime`, `ISODateTime`, `ISODuration`; `Trim`, `ToLower`, `ToUpper`, `NormalizeEmail`, `Escape`, `Preprocess(fn)` |
 | `z.Int()`, `z.Int64()`, `z.Uint()`… | integer types | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf` (integer arithmetic, exact above 2^53; floats compare by quotient with a relative tolerance of 1e-9, so `MultipleOf(0.01)` accepts `0.07`) |
 | `z.Float()` | `float64` | `Min`, `Max`, `Positive`, `MultipleOf` (NaN and infinities are always rejected) |
 | `z.Bool()` | `bool` | — |
@@ -166,6 +166,7 @@ Rules that compare fields are methods of `StructSchema[T]`, or `validate` tags o
 
 - `Confirmed("password")` compares the input `password` with `password_confirmation`, which need not be in the shape; a missing confirmation counts as different.
 - `Strict()` does not reject the `<key>_confirmation` input of a `Confirmed` rule, and `Passthrough` does not hand it over.
+- `Check(v)` cannot tell a missing field from an empty one: a Go struct has no "absent" state, so an unset `string` is `""` and fails `Min` or `Email` like any empty value, without the `required` code. To tell them apart, validate the decoded input with `Parse(map)` (or `ParseJSON`): an absent key gives `required`, an empty value gives the rule's own code. Use pointer fields in the Go type only to carry the distinction after parsing.
 - On a typed value (`Check(v)`, or `Parse` given a `T`) there is no raw input to ask whether a key was *sent*, so the rules that depend on it are skipped: `Confirmed` and the `RequiredIf*`, `RequiredWhen`, `required_with*` and `required_without*` rules. The comparison rules (`SameAs`, `NotSameAs`, the `*Field` date rules) still apply, to the fields that hold a non-zero value. `RequiredIf` reads the parsed value of the field it watches, so a `Default` on it counts.
 - A tag cites the other field by its **input key** (`json`/`form` name), not the Go name. Tag values are separated by spaces, so a value with a space needs the method.
 - The `RequiredIf*` and `RequiredWhen` rules need the target to be optional in the shape (a required key could never be missing); a key that is not in the shape, or `SameAs` over two fields of different Go types, is a panic at boot.

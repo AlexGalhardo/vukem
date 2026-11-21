@@ -274,6 +274,9 @@ type Field struct {
 	Rules    []string
 	Required bool
 	Doc      string
+	// Query reports a `query` tag: on a typed route the field is a query
+	// parameter, not a body property.
+	Query bool
 	// Example is the raw `example` struct tag; ExampleValue decodes it.
 	Example string
 	// optional: a response may leave the key out or send null (a pointer,
@@ -344,6 +347,17 @@ func Fields(t reflect.Type) []Field {
 		key := f.Name
 		optional := f.Type.Kind() == reflect.Pointer
 
+		// A `query:"name"` tag names the input key when `json` does not (the
+		// validator reads json, then form, then query) and marks a query parameter.
+		queryName, _, _ := strings.Cut(f.Tag.Get("query"), ",")
+		if queryName == "-" {
+			continue
+		}
+
+		if queryName != "" {
+			key = queryName
+		}
+
 		if tag, ok := f.Tag.Lookup("json"); ok {
 			name, opts, _ := strings.Cut(tag, ",")
 			if name == "-" {
@@ -376,7 +390,7 @@ func Fields(t reflect.Type) []Field {
 		required = required || err != nil && slices.Contains(value, "required")
 
 		out = append(out, Field{
-			Key: key, Type: f.Type, Rules: rules, Required: required,
+			Key: key, Type: f.Type, Rules: rules, Required: required, Query: queryName != "",
 			Doc: f.Tag.Get("doc"), Example: f.Tag.Get("example"), optional: optional,
 		})
 	}

@@ -28,6 +28,12 @@ type Migration struct {
 	// half-way leaves the statements that ran, so keep such migrations to
 	// one statement, written to be re-run (IF NOT EXISTS).
 	NoTransaction bool
+	// AnyOrder exempts the migration from the out-of-order check, both as a
+	// pending migration and as the applied one others are compared to. It is
+	// for a migration a module ships under a fixed ID (queue, session, cache,
+	// webhook): an app can enable the module long after its own migrations
+	// ran, and the migration depends on none of them.
+	AnyOrder bool
 }
 
 // Status describes a migration's state.
@@ -45,9 +51,54 @@ type Status struct {
 
 // Migrator applies migrations to a database.
 type Migrator struct {
-	db         *database.DB
-	migrations []Migration
-	table      string
+	db              *database.DB
+	migrations      []Migration
+	table           string
+	allowOutOfOrder bool
+}
+
+// ErrOutOfOrder is returned (wrapped) by Up when a pending migration has an
+// ID that sorts before one already applied, which usually means it came from
+// another branch and may assume a schema that is no longer the one it runs
+// on, a table rebuild losing data for one. Review the migrations listed, then
+// run them with [Migrator.AllowOutOfOrder].
+var ErrOutOfOrder = errors.New("schema: out-of-order migrations")
+
+// AllowOutOfOrder lets Up run a pending migration whose ID sorts before an
+// applied one, instead of failing with [ErrOutOfOrder]. It returns m.
+func (m *Migrator) AllowOutOfOrder() *Migrator {
+	m.allowOutOfOrder = true
+	return m
+}
+
+// outOfOrder lists the pending migrations (not in done) that sort before the
+// latest applied migration, leaving out the AnyOrder ones on both sides.
+func (m *Migrator) outOfOrder(pending []string, done map[string]applied) []string {
+	anyOrder := map[string]bool{}
+
+	for _, mig := range m.migrations {
+		if mig.AnyOrder {
+			anyOrder[mig.ID] = true
+		}
+	}
+
+	last := ""
+
+	for id := range done {
+		if !anyOrder[id] {
+			last = max(last, id)
+		}
+	}
+
+	var out []string
+
+	for _, id := range pending {
+		if !anyOrder[id] && id < last {
+			out = append(out, id)
+		}
+	}
+
+	return out
 }
 
 // NewMigrator validates migrations (unique, non-empty IDs, Up present) and
@@ -162,6 +213,24 @@ func (m *Migrator) up(ctx context.Context) ([]string, error) {
 	batch := 1
 	for _, a := range done {
 		batch = max(batch, a.batch+1)
+	}
+
+	if !m.allowOutOfOrder {
+		var pending []string
+
+		for _, mig := range m.migrations {
+			if _, ok := done[mig.ID]; !ok {
+				pending = append(pending, mig.ID)
+			}
+		}
+
+		if late := m.outOfOrder(pending, done); len(late) > 0 {
+			return nil, fmt.Errorf(
+				"%w: %s sort before an applied migration; nothing ran. Review them, then run with --allow-out-of-order (Migrator.AllowOutOfOrder)",
+				ErrOutOfOrder,
+				strings.Join(late, ", "),
+			)
+		}
 	}
 
 	var ran []string
@@ -618,16 +687,18 @@ func (m *Migrator) Status(ctx context.Context) ([]Status, error) {
 
 	slices.SortFunc(out, func(a, b Status) int { return cmp.Compare(a.ID, b.ID) })
 
-	last := ""
+	var pending []string
 
 	for _, s := range out {
-		if s.Ran && s.ID > last {
-			last = s.ID
+		if !s.Ran {
+			pending = append(pending, s.ID)
 		}
 	}
 
+	late := m.outOfOrder(pending, done)
+
 	for i := range out {
-		out[i].OutOfOrder = !out[i].Ran && out[i].ID < last
+		out[i].OutOfOrder = slices.Contains(late, out[i].ID)
 	}
 
 	return out, nil

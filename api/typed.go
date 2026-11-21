@@ -3,11 +3,13 @@ package api
 import (
 	"fmt"
 	"maps"
+	"mime"
 	"net/http"
 	"reflect"
 	"regexp"
 	"strings"
 
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
 	"github.com/AlexGalhardo/vukem/z"
@@ -36,6 +38,21 @@ type Op struct {
 	// instead of sending data that breaks the documented contract. Out must
 	// be a struct; Register panics otherwise.
 	ValidateResponse bool
+	// MaxBody caps the request body of this route at that many bytes,
+	// replacing the router-wide limit in both directions: a route that
+	// takes a file raises it, one that takes a tiny command lowers it. Zero
+	// keeps the router's limit. An over-limit body answers 413. The OpenAPI
+	// document shows it as x-max-body-bytes. Register panics on a negative
+	// value.
+	MaxBody int64
+	// StrictBody refuses a JSON body key that In does not declare, at any
+	// depth (nested structs, lists of structs), with the usual 422 whose
+	// issue path names the key ("items.1.nmae"). Query parameters and path
+	// parameters stay free, and form bodies are not checked. Without it an
+	// unknown key is silently dropped. It has no effect on GET, HEAD and
+	// DELETE, which have no body. Keys are matched against In's field names
+	// and json, form and query tags, also under RegisterWith.
+	StrictBody bool
 }
 
 // Operation is attached to every typed route (router.RouteInfo.Doc) so
@@ -67,7 +84,9 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 // the JSON or form body and the path parameters (which win), and validated
 // with In's `validate` tags (422 with field errors). The output is written
 // as JSON, checked first when Op.ValidateResponse is set. GET, HEAD and
-// DELETE ignore the body. Pattern is "METHOD /path". It panics on a
+// DELETE ignore the body. A field of type [RawBody] receives the unread body
+// instead (a file upload), and `query:"name"` tags bind and document query
+// parameters. Pattern is "METHOD /path". It panics on a
 // malformed pattern or when Op.ValidateResponse is set for a non-struct
 // Out, so mistakes surface at boot.
 //
@@ -96,7 +115,8 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 //		return ProjectJSON{}, c.JSON(http.StatusOK, preview)
 //	}
 //
-// Op.Status is the only status Register writes.
+// Op.Status is the only status Register writes. Op.MaxBody sets the body
+// limit of the route before the handler runs.
 //
 // Use [RegisterWith] when the input needs a rule `validate` tags cannot
 // express.
@@ -180,19 +200,24 @@ func register[In, Out any](
 		outSchema = z.For[Out]() // panics at boot on bad tags
 	}
 
+	if op.MaxBody < 0 {
+		panic(fmt.Sprintf("api: %s %q: MaxBody must not be negative, got %d", who, pattern, op.MaxBody))
+	}
+
 	// GET, HEAD and DELETE read the query string only.
 	bodyless := method == http.MethodGet || method == http.MethodHead || method == http.MethodDelete
+
+	rawIndex, hasRaw := rawBodyField(who, pattern, inType)
+	if hasRaw && bodyless {
+		panic(fmt.Sprintf("api: %s %q: a RawBody needs a method with a body, not %s", who, pattern, method))
+	}
 
 	status := responseStatus(op, method, noOutput)
 
 	h := func(c *web.Ctx) error {
-		var in In
-
-		if schema != nil {
-			var err error
-			if in, err = bindInput(c, schema, bodyless, params); err != nil {
-				return err
-			}
+		in, err := bindRequest(c, schema, op, inType, bodyless, rawIndex, params)
+		if err != nil {
+			return err
 		}
 
 		out, err := fn(c, in)
@@ -217,6 +242,70 @@ func register[In, Out any](
 	})
 }
 
+// formParsedPastLimit reports an urlencoded body that middleware (MethodOverride)
+// already parsed under the router-wide limit: parsing is done, so the lower
+// limit would never be read against. A declared length over limit is refused,
+// and so is an undeclared one (chunked), whose size is unknown: fail closed.
+// A JSON request also has a non-nil PostForm after ParseForm, so the media
+// type decides.
+func formParsedPastLimit(r *http.Request, limit int64) bool {
+	return formParsed(r) && (r.ContentLength > limit || r.ContentLength < 0)
+}
+
+// formParsed reports an urlencoded body that middleware already consumed.
+func formParsed(r *http.Request) bool {
+	if r.PostForm == nil {
+		return false
+	}
+
+	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+
+	return ct == "application/x-www-form-urlencoded"
+}
+
+// bindRequest applies the route's body limit, then binds and validates In;
+// a non-nil rawIndex (the RawBody field) gets the unread body instead of a
+// decoded one.
+func bindRequest[In any](
+	c *web.Ctx,
+	schema z.Schema[In],
+	op Op,
+	inType reflect.Type,
+	bodyless bool,
+	rawIndex []int,
+	params []string,
+) (In, error) {
+	var in In
+
+	if op.MaxBody > 0 {
+		c.SetRequest(web.LimitBody(c.Writer(), c.Request(), op.MaxBody))
+
+		if formParsedPastLimit(c.Request(), op.MaxBody) {
+			return in, errs.ErrRequestTooLarge
+		}
+	}
+
+	if schema == nil {
+		return in, nil
+	}
+
+	in, err := bindInput(c, schema, inType, bodyless || rawIndex != nil, op.StrictBody, params)
+	if err != nil {
+		return in, err
+	}
+
+	if rawIndex != nil {
+		body, err := openRawBody(c)
+		if err != nil {
+			return in, err
+		}
+
+		reflect.ValueOf(&in).Elem().FieldByIndex(rawIndex).Set(reflect.ValueOf(&body).Elem())
+	}
+
+	return in, nil
+}
+
 func responseStatus(op Op, method string, noOutput bool) int {
 	switch {
 	case op.Status != 0:
@@ -231,18 +320,33 @@ func responseStatus(op Op, method string, noOutput bool) int {
 }
 
 // bindInput merges the query string, the body (unless bodyless) and the path
-// parameters, then validates the result against schema.
-func bindInput[In any](c *web.Ctx, schema z.Schema[In], bodyless bool, params []string) (In, error) {
+// parameters, then validates the result against schema. With strict, a JSON
+// body key that in does not declare is refused before the merge hides which
+// map it came from.
+func bindInput[In any](
+	c *web.Ctx,
+	schema z.Schema[In],
+	inType reflect.Type,
+	bodyless, strict bool,
+	params []string,
+) (In, error) {
 	var in In
 
 	input := c.QueryInput()
-	if bodyless {
-		input = maps.Clone(input)
-	} else {
-		var err error
-		if input, err = c.Input(); err != nil {
+
+	if !bodyless {
+		body, isJSON, err := c.BodyInput()
+		if err != nil {
 			return in, err
 		}
+
+		if strict && isJSON {
+			if err := web.IssuesError(c, z.Unrecognized(inType, body), "body"); err != nil {
+				return in, err
+			}
+		}
+
+		maps.Copy(input, body)
 	}
 
 	for _, p := range params {

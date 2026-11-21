@@ -160,9 +160,10 @@ func migrateCommands() []Command {
 
 // migrateRunCommand is "migrate": it runs the pending migrations. In
 // production it refuses a pending migration that drops a table or a column
-// unless --allow-destructive is given.
+// unless --allow-destructive is given, and a pending migration older than an
+// applied one unless --allow-out-of-order is given.
 func migrateRunCommand() Command {
-	var allow *bool
+	var allow, allowOrder *bool
 
 	return CommandFunc{
 		CommandName: "migrate",
@@ -172,6 +173,11 @@ func migrateRunCommand() Command {
 				"allow-destructive",
 				false,
 				"run pending migrations that drop tables or columns in production",
+			)
+			allowOrder = fs.Bool(
+				"allow-out-of-order",
+				false,
+				"run pending migrations whose ID sorts before an applied one",
 			)
 		},
 		Fn: func(ctx context.Context, app *App, _ []string) error {
@@ -184,6 +190,10 @@ func migrateRunCommand() Command {
 				if err := checkDestructive(ctx, app, m); err != nil {
 					return err
 				}
+			}
+
+			if *allowOrder {
+				m.AllowOutOfOrder()
 			}
 
 			ran, err := m.Up(ctx)
@@ -1522,6 +1532,7 @@ func tableBody(tbl schema.TableInfo, skip func(schema.ColumnInfo) bool) (lines, 
 		}
 
 		line := call + "(" + strings.Join(cols, ", ") + ")"
+
 		if ix.Where != "" {
 			line += ".Where(" + strconv.Quote(ix.Where) + ")"
 		}
@@ -2418,12 +2429,13 @@ func genRebuild(
 
 	plan := rebuildPlan{dropped: map[string]bool{}, added: map[string]bool{}, renamed: map[string]string{}}
 
-	var opts []string
+	var opts, drops []string
 
 	for _, c := range cs {
 		switch c.Kind {
 		case dropColumn:
 			plan.dropped[c.Column] = true
+			drops = append(drops, strconv.Quote(c.Column))
 		case addColumn:
 			plan.added[c.Column] = true
 		case renameColumn:
@@ -2433,8 +2445,12 @@ func genRebuild(
 		}
 	}
 
+	if len(drops) > 0 {
+		opts = append(opts, "schema.DropColumns("+strings.Join(drops, ", ")+")")
+	}
+
 	tbl, _ := snap.Table(table)
-	lines, losses := rebuildLines(*m, tbl, plan)
+	lines, losses, dropIdx := rebuildLines(*m, tbl, plan)
 
 	for _, l := range losses {
 		up.WriteString("\t\t\t// migrate:diff did not reproduce: " + l + "\n")
@@ -2442,6 +2458,15 @@ func genRebuild(
 
 	if len(losses) > 0 {
 		up.WriteString("\t\t\t// Add them to the definition below, or accept losing them.\n")
+	}
+
+	if len(dropIdx) > 0 {
+		quoted := make([]string, len(dropIdx))
+		for i, n := range dropIdx {
+			quoted[i] = strconv.Quote(n)
+		}
+
+		opts = append(opts, "schema.DropIndexes("+strings.Join(quoted, ", ")+")")
 	}
 
 	up.WriteString("\t\t\tif err := s.Rebuild(" + strconv.Quote(table) + ", func(t *schema.Table) {\n")
@@ -2572,8 +2597,10 @@ type rebuildPlan struct {
 // columns without the dropped ones, plus the indexes and unique constraints
 // of the database that do not cite a dropped column (a renamed column's
 // index follows the rename). losses lists what the database has that the
-// builder does not write, so the migration does not silently drop it.
-func rebuildLines(m orm.ModelInfo, tbl schema.TableInfo, p rebuildPlan) (lines, losses []string) {
+// builder does not write, so the migration does not silently drop it, and
+// dropIdx the named indexes the definition does not declare, which Rebuild
+// refuses to lose unless DropIndexes names them.
+func rebuildLines(m orm.ModelInfo, tbl schema.TableInfo, p rebuildPlan) (lines, losses, dropIdx []string) {
 	for _, f := range m.Fields {
 		if p.dropped[f.Column] {
 			continue
@@ -2592,19 +2619,37 @@ func rebuildLines(m orm.ModelInfo, tbl schema.TableInfo, p rebuildPlan) (lines, 
 		lines = append(lines, colLine(spec))
 	}
 
+	idxLines, idxLosses, dropIdx := rebuildIndexLines(tbl, p)
+	lines = append(lines, idxLines...)
+	losses = append(losses, idxLosses...)
+
+	return lines, append(losses, tableLosses(tbl, p)...), dropIdx
+}
+
+// rebuildIndexLines writes the indexes of tbl into a rebuilt definition.
+// dropIdx lists the named ones it leaves out, which Rebuild refuses to lose
+// unless DropIndexes names them.
+func rebuildIndexLines(tbl schema.TableInfo, p rebuildPlan) (lines, losses, dropIdx []string) {
 	for _, ix := range tbl.Indexes {
 		if ix.Expression {
 			losses = append(losses, "the expression index "+ix.Name)
+			dropIdx = append(dropIdx, ix.Name)
+
 			continue
 		}
 
 		if slices.ContainsFunc(ix.Columns, func(c string) bool { return p.dropped[c] }) {
+			dropIdx = append(dropIdx, ix.Name)
 			continue
 		}
 
 		if len(ix.Columns) == 1 && ix.Unique && ix.Where == "" &&
 			(ix.Name == "" || ix.Name == tbl.Name+"_"+ix.Columns[0]+"_key" ||
 				ix.Name == ix.Columns[0]) {
+			if ix.Name != "" {
+				dropIdx = append(dropIdx, ix.Name)
+			}
+
 			continue // already written as Unique() on its column
 		}
 
@@ -2623,6 +2668,11 @@ func rebuildLines(m orm.ModelInfo, tbl schema.TableInfo, p rebuildPlan) (lines, 
 		}
 
 		line := call + "(" + strings.Join(cols, ", ") + ")"
+
+		if ix.Name != "" && ix.Name != derivedIndexName(tbl.Name, ix, p.renamed) {
+			line += ".Name(" + strconv.Quote(ix.Name) + ")"
+		}
+
 		if ix.Where != "" {
 			line += ".Where(" + strconv.Quote(ix.Where) + ")"
 		}
@@ -2630,7 +2680,27 @@ func rebuildLines(m orm.ModelInfo, tbl schema.TableInfo, p rebuildPlan) (lines, 
 		lines = append(lines, line)
 	}
 
-	return lines, append(losses, tableLosses(tbl, p)...)
+	return lines, losses, dropIdx
+}
+
+// derivedIndexName is the name the builder gives t.Index or t.UniqueIndex
+// over the columns of ix after the renames.
+func derivedIndexName(table string, ix schema.IndexInfo, renamed map[string]string) string {
+	cols := make([]string, len(ix.Columns))
+	for i, c := range ix.Columns {
+		if to, ok := renamed[c]; ok {
+			c = to
+		}
+
+		cols[i] = c
+	}
+
+	suffix := "_index"
+	if ix.Unique {
+		suffix = "_unique"
+	}
+
+	return table + "_" + strings.Join(cols, "_") + suffix
 }
 
 // tableLosses lists the table-level definitions a rebuild from the models

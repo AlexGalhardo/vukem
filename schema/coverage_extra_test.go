@@ -71,8 +71,13 @@ func TestMarkAppliedRecordsWithoutRunning(t *testing.T) {
 		}
 	}
 
-	// Migrate then runs the others in the next batch.
-	if _, err := m.Up(ctx); err != nil {
+	// Marking one migration out of order is deliberate here: Up refuses the
+	// older ones unless told otherwise, then runs them in the next batch.
+	if _, err := m.Up(ctx); !errors.Is(err, ErrOutOfOrder) {
+		t.Fatalf("Up = %v, want ErrOutOfOrder", err)
+	}
+
+	if _, err := m.AllowOutOfOrder().Up(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,7 +217,7 @@ func TestRebuildRefusesBadInput(t *testing.T) {
 	if err := s.Rebuild("notes", func(t *Table) {
 		t.ID()
 		t.String("slug")
-	}); err != nil {
+	}, DropColumns("body")); err != nil {
 		t.Fatalf("Rebuild adding a NOT NULL column to an empty table = %v", err)
 	}
 

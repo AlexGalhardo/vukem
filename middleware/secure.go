@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -63,8 +64,25 @@ type SecureHeadersConfig struct {
 	// hash of a style a library injects. A "-src" directive missing from
 	// the policy starts from the default-src sources. Unsafe sources
 	// ('unsafe-*' keywords, "*", nonces, scheme-only sources in script
-	// directives) are refused: write a full CSP to opt into them.
+	// directives) are refused: write a full CSP to opt into them. The one
+	// exception is 'wasm-unsafe-eval', accepted in script-src,
+	// script-src-elem and worker-src for a page that compiles WebAssembly;
+	// it is never part of the default policy. Give it to the script of a
+	// worker alone with CSPPaths instead of to every page.
 	CSPSources map[string][]string
+	// CSPPaths gives the paths under a prefix their own full policy
+	// ("{nonce}" is replaced as in CSP), for responses whose policy differs
+	// from the pages', such as a worker script (a worker takes the policy of
+	// its script's response). The longest matching prefix wins; a prefix
+	// matches whole path segments, so "/worker" covers "/worker" and
+	// "/worker/a.js" but not "/workerfoo". The policy replaces CSP,
+	// CSPSources and ReportURI for those paths. Prefixes start with "/".
+	CSPPaths map[string]string
+	// CSPPathStrip lists first path segments that routing removes later,
+	// such as i18n locale prefixes: SecureHeaders runs before that, so
+	// CSPPaths would otherwise miss "/pt-br/worker/a.js". vukem's default
+	// stacks fill it from MiddlewareConfig.PathPrefixes.
+	CSPPathStrip []string
 	// ReportURI receives CSP violation reports: an absolute https URL or
 	// a path (plain http is refused at boot). It adds report-uri and report-to directives and a
 	// Reporting-Endpoints header naming the "csp-endpoint" group.
@@ -84,7 +102,11 @@ func (cfg SecureHeadersConfig) Validate() error {
 		return errors.New("middleware: HSTSForce needs HSTS (HSTSMaxAge is negative)")
 	}
 
-	_, err := cfg.policy()
+	if _, err := cfg.policy(); err != nil {
+		return err
+	}
+
+	_, err := cfg.pathPolicies()
 
 	return err
 }
@@ -99,13 +121,28 @@ const DefaultCSP = "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style
 // not run. Templates expose it as {{ cspNonce }}.
 func CSPNonce(ctx context.Context) string { return web.CSPNonce(ctx) }
 
-// SecureHeaders sets security headers on every response (A02).
-func SecureHeaders(cfg SecureHeadersConfig) Middleware {
-	csp, dropped := cfg.policy()
+// servedPolicies returns the page policy and the per-path ones, and what was
+// dropped. Invalid extras (CSPSources, ReportURI, CSPPaths) are removed from
+// cfg: the paths then get the page policy, which is stricter or equal.
+func (cfg *SecureHeadersConfig) servedPolicies() (csp string, paths []pathCSP, dropped error) {
+	csp, dropped = cfg.policy()
 	if dropped != nil {
 		cfg.CSPSources, cfg.ReportURI = nil, ""
 		csp, _ = cfg.policy()
 	}
+
+	paths, err := cfg.pathPolicies()
+	if err != nil {
+		paths = nil
+		dropped = errors.Join(dropped, err)
+	}
+
+	return csp, paths, dropped
+}
+
+// SecureHeaders sets security headers on every response (A02).
+func SecureHeaders(cfg SecureHeadersConfig) Middleware {
+	csp, paths, dropped := cfg.servedPolicies()
 
 	var warnOnce sync.Once
 
@@ -158,9 +195,14 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 				h.Set("Strict-Transport-Security", hsts)
 			}
 
-			if csp != "-" {
+			policy := csp
+			if p, ok := pathPolicy(paths, cfg.CSPPathStrip, r.URL.Path); ok {
+				policy = p
+			}
+
+			if policy != "-" {
 				nonce := newNonce()
-				policy := strings.ReplaceAll(csp, "{nonce}", nonce)
+				policy = strings.ReplaceAll(policy, "{nonce}", nonce)
 
 				if cfg.DevServer != nil {
 					policy = allowDevServer(policy, cfg.DevServer())
@@ -173,6 +215,63 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// pathCSP is one CSPPaths entry: a cleaned path prefix and its policy.
+type pathCSP struct{ prefix, policy string }
+
+// pathPolicies validates CSPPaths and orders it longest prefix first.
+func (cfg SecureHeadersConfig) pathPolicies() ([]pathCSP, error) {
+	out := make([]pathCSP, 0, len(cfg.CSPPaths))
+
+	for prefix, policy := range cfg.CSPPaths {
+		switch {
+		case !strings.HasPrefix(prefix, "/") || strings.HasPrefix(prefix, "//") || strings.ContainsAny(prefix, `\?#`) ||
+			strings.ContainsFunc(prefix, notPrintableASCII):
+			return nil, fmt.Errorf(
+				"middleware: invalid CSPPaths prefix %q: a path starting with a single \"/\"",
+				prefix,
+			)
+		case strings.TrimSpace(policy) == "" || policy == "-" || strings.ContainsFunc(policy, func(r rune) bool {
+			return r < ' ' || r > '~'
+		}):
+			return nil, fmt.Errorf("middleware: invalid CSPPaths policy for %q", prefix)
+		}
+
+		out = append(out, pathCSP{prefix: strings.TrimSuffix(path.Clean(prefix), "/"), policy: policy})
+	}
+
+	slices.SortFunc(out, func(a, b pathCSP) int {
+		return cmp.Or(cmp.Compare(len(b.prefix), len(a.prefix)), strings.Compare(a.prefix, b.prefix))
+	})
+
+	return out, nil
+}
+
+// pathPolicy returns the policy of the longest prefix that covers p. p is
+// cleaned first, so "/app/../worker/x" cannot borrow the policy of "/app". A
+// first segment in strip is removed before that, on the raw path, exactly as
+// i18n.StripPathPrefix does, so both see the same route.
+func pathPolicy(paths []pathCSP, strip []string, p string) (string, bool) {
+	if len(paths) == 0 {
+		return "", false
+	}
+
+	if rest, ok := strings.CutPrefix(p, "/"); ok {
+		if seg, after, _ := strings.Cut(rest, "/"); slices.Contains(strip, seg) {
+			p = "/" + after
+		}
+	}
+
+	p = path.Clean("/" + p)
+
+	for _, e := range paths {
+		if p == e.prefix || strings.HasPrefix(p, e.prefix+"/") {
+			return e.policy, true
+		}
+	}
+
+	return "", false
 }
 
 // AddCSPSources adds sources to directive in CSPSources, keeping the
@@ -373,6 +472,10 @@ var scriptDirectives = []string{
 	"default-src", "script-src", "script-src-elem", "script-src-attr", "object-src", "worker-src", "base-uri",
 }
 
+// wasmDirectives are the only places 'wasm-unsafe-eval' may be added: it
+// lets WebAssembly compile but not eval().
+var wasmDirectives = []string{"script-src", "script-src-elem", "worker-src"}
+
 func checkCSPSources(name string, sources []string) error {
 	if !cspDirectiveName.MatchString(name) || name == "report-uri" || name == "report-to" {
 		return fmt.Errorf("middleware: invalid CSP directive %q in CSPSources", name)
@@ -384,6 +487,14 @@ func checkCSPSources(name string, sources []string) error {
 		switch {
 		case src == "" || strings.ContainsAny(src, ";,\"\\") || strings.ContainsFunc(src, notPrintableASCII):
 			return fmt.Errorf("middleware: invalid CSP source %q for %s", src, name)
+		case lower == "'wasm-unsafe-eval'":
+			if !slices.Contains(wasmDirectives, name) {
+				return fmt.Errorf(
+					"middleware: CSP source %s is only allowed in %s",
+					src,
+					strings.Join(wasmDirectives, ", "),
+				)
+			}
 		case strings.Contains(lower, "unsafe"):
 			return fmt.Errorf("middleware: CSP source %s for %s is unsafe; set CSP to opt in", src, name)
 		case strings.HasPrefix(src, "'"):

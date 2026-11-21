@@ -78,7 +78,7 @@ The app binary runs `serve` when it gets no arguments; `vukem.WithDefaultCommand
 | app: `db [-force] [-print]` | Open `sqlite3` or `psql` for `DATABASE_URL`; the password goes in `PGPASSWORD`, never in argv; `-force` in production. `mysql://` and `mariadb://` are refused until their password handling is verified |
 | `vukem studio [--port 4984] [--no-open] [--allow-production] [--database-url url] [--write] [--refresh d] [--mongo-url u] [--mongo-database d] [--redis-url u] [--dir d] [--bin path]` | Open vukem-studio, the data browser of the project's databases (`contrib/studio`, experimental). It installs the pinned release into `.vukem/bin` with `go install` (or runs `--bin`) and starts it on `127.0.0.1:4984` (SQL from `DATABASE_URL`, MongoDB from `MONGO_URL`, Redis from `REDIS_URL`; pages refresh by themselves). SQL: a table list with row estimates, a filterable grid (`column:op:value`, the operators are listed on the page; a malformed filter is refused, not ignored) whose headers sort on click, with Previous and Next paging, a row page with the tables that reference it, JSON Lines (numbers stay numbers) and CSV export of the current view (capped at 100000 rows), and a one-statement console that is read-only. Everything is read-only by default: `--write` adds row insert, update and delete (primary key required, the key typed back to delete), a write switch in the SQL console, and edits of documents and keys, each logged on stderr without values. Loopback only, a session token in the printed URL that works once (open the address once; reload from the session, not from the URL), strict CSP. It refuses `APP_ENV=production` (and an unset `APP_ENV`) without `--allow-production`, never prints credentials, and keeps database errors in its own log, off the page. Exit codes: 0 stopped with Ctrl+C, 1 error, 2 bad usage or a refusal |
 | `vukem build [-o bin/app] [-ssr] [-ldflags ...]` | `go tool templ generate` (when `.templ` files exist), `vite build` (if present), then `go build -trimpath -ldflags "-s -w"` with embedded assets. `-ldflags "..."` appends to `-s -w` (e.g. `-X main.version=v1.2.3`, then `vukem.WithVersion(version)`); `-ssr` also runs `vite build --ssr` (error without a Vite config). Every build (`build`, `serve`, delegated app commands) adds `-tags` from the project's `.buildtags` file (one tag per line or comma-separated, `#` comments) |
-| app: `migrate [--allow-destructive]`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status` | Migrations; in production `migrate` refuses a pending migration that drops a table or column without `--allow-destructive` |
+| app: `migrate [--allow-destructive] [--allow-out-of-order]`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status` | Migrations; in production `migrate` refuses a pending migration that drops a table or column without `--allow-destructive`, and one whose ID sorts before an applied one without `--allow-out-of-order` |
 | app: `migrate:check [--json]` | Finds migrations that collide (a column added twice, a drop of a missing column...) without a database, and pending ones older than the last that ran; exits 1 on any finding ([database.md](database.md#migrations)) |
 | app: `migrate:diff [-name n] [-o dir] [--delete item]... [--rename t.old:t.new]... [-check]` | Writes a migration stub for the differences between the `vukem.WithModels` models and the database; a destructive item needs `--delete`; never applies anything |
 | app: `db:pull [-o dir] [-table name]... [-models] [-mark-applied]` | Writes a baseline migration (and with `-models` Go structs) from the existing database |
@@ -162,6 +162,23 @@ func SendReports() vukem.Command {
 ```
 
 Rename `CommandName` to the `namespace:action` form (`reports:send`) when the command belongs to a group. Commands run with the `console` environment (providers limited to `web` are skipped), after `Boot`. A command that only talks to another process can skip the boot (no database, queue or cache opened) by implementing `vukem.NoBootCommand`: add `NoBoot() bool { return true }`. The app is then shut down only if the command called `app.Boot` itself. A command that parses its own arguments (for example to forward flags it does not know) implements `vukem.RawArgsCommand` by adding a `RawArgs()` marker method: the framework flag parser is skipped and `Run` gets every argument as is.
+
+`vukem.CommandGroup` routes `app <group> <child>` to a child command, which keeps its own flags and boot behavior. Groups can nest, and `list` shows them as a tree. `CommandFunc.CommandAliases` (or the `vukem.AliasedCommand` interface) gives a command other names, so a command moved into a group keeps its old name. An alias never shadows the real name of another command, and a child's alias also works at the top level:
+
+```go
+app.AddCommand(vukem.CommandGroup{
+	GroupName: "image",
+	Desc:      "Image tools",
+	Commands: []vukem.Command{
+		vukem.CommandFunc{
+			CommandName:    "edit", // app image edit
+			CommandAliases: []string{"image:edit"}, // app image:edit
+			Desc:           "Edit an image",
+			Fn:             editImage,
+		},
+	},
+})
+```
 
 Commands print through `app.Stdout()` and `app.Stderr()` and read `app.Stdin()` instead of the `os` streams, so `vukem.WithStdout`, `WithStderr` and `WithStdin` (used by tests to capture or silence output) apply to them:
 

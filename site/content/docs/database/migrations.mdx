@@ -384,10 +384,12 @@ Inside `s.Table` the statements run in a fixed order, whatever order you wrote t
 
 | Method | What it does |
 | --- | --- |
+| `s.VirtualTable(name, module, args...)` | SQLite only: `CREATE VIRTUAL TABLE name USING module(args...)`, such as an FTS5 index (`s.VirtualTable("asset_search", "fts5", "name", "tags")`). The arguments are written as given. A virtual table has no foreign keys, so `ON DELETE CASCADE` does not reach its rows: delete them with the parent. Catalog inspection (`schema.Inspect`, `db:pull`) lists the virtual table and leaves out its shadow tables |
 | `s.Drop(table)` / `s.DropIfExists(table)` | Drops a table (the second ignores a missing one) |
 | `s.Rename(from, to)` | Renames a table |
 | `s.HasTable(table)` | `(bool, error)`: whether the table exists |
 | `s.HasColumn(table, column)` | `(bool, error)`: whether the column exists; `false` for a missing table |
+| `s.Inspect(table)` | `(schema.TableInfo, bool, error)`: the table's columns, primary key, indexes and foreign keys as the database has them now (on SQLite also the triggers and `SQLite.Checks`, the text of each `CHECK`); the bool is `false` for a missing table and while the checksum is computed |
 | `s.Raw(sql, args...)` | Runs any SQL: data fixes, views, triggers |
 | `s.Dialect()` | `"sqlite"`, `"postgres"` or `"mysql"`, for dialect-specific SQL |
 
@@ -416,7 +418,7 @@ A statement that mixes `?` with `$1`, or ends inside a string literal, fails wit
 
 ## Rebuilding a table on SQLite
 
-SQLite cannot drop a column that has an index, a `UNIQUE` or a foreign key, nor add or drop a check on an existing table. `s.Rebuild(table, fn, opts...)` replaces the table with the full definition `fn` builds, keeping the rows (`schema.RenamedFrom(from, to)` copies a renamed column). It turns foreign keys off, copies in one transaction, runs `PRAGMA foreign_key_check` before the commit and turns them back on, so the child tables of an `ON DELETE CASCADE` keep their rows. The migration must set `NoTransaction: true`, because Rebuild owns the transaction. Declare the indexes again; the `AUTOINCREMENT` counter is kept; views are not recreated, and a table with triggers is refused unless you pass `schema.DropTriggers()`. Back up first in production. On PostgreSQL and MySQL use `s.Table` and `Column.Change()`.
+SQLite cannot drop a column that has an index, a `UNIQUE` or a foreign key, nor add or drop a check on an existing table. `s.Rebuild(table, fn, opts...)` replaces the table with the full definition `fn` builds, keeping the rows (`schema.RenamedFrom(from, to)` copies a renamed column). It turns foreign keys off, copies in one transaction, runs `PRAGMA foreign_key_check` before the commit and turns them back on, so the child tables of an `ON DELETE CASCADE` keep their rows. The migration must set `NoTransaction: true`, because Rebuild owns the transaction. A stored column the new definition neither declares nor renames makes Rebuild fail: name it in `schema.DropColumns("legacy_code")` to accept losing it. Explicit indexes of the old table follow the same rule: declare them again, pass `schema.KeepIndexes()` to recreate the ones the definition does not declare by name with their original SQL text (partial ones included; an index over a column the new table lacks fails before anything changes), or accept losing named ones with `schema.DropIndexes("name")`. A declared index is written with quoted identifiers, so its SQL text differs from the original. The `AUTOINCREMENT` counter is kept; views are not recreated, and a table with triggers is refused unless you pass `schema.DropTriggers()`. Back up first in production. On PostgreSQL and MySQL use `s.Table` and `Column.Change()`.
 
 ```go
 Up: func(s *schema.Schema) error {
@@ -425,9 +427,11 @@ Up: func(s *schema.Schema) error {
 		t.String("name")
 		t.String("email").Unique()
 		t.Timestamps()
-	})
+	}, schema.DropColumns("legacy_code"))
 },
 ```
+
+`vukem migrate` refuses a pending migration whose ID sorts before one already applied (usually another branch's) and runs nothing: it fails with `schema.ErrOutOfOrder` and the list. Review them, then run `vukem migrate -allow-out-of-order` (`Migrator.AllowOutOfOrder()` in code). A migration with `AnyOrder: true`, which the modules that ship a fixed ID set (queue, session, cache, webhook), is exempt, so enabling a module later still works.
 
 `vukem migrate:check` finds colliding migrations, `vukem db:pull` writes a baseline from an existing database and `vukem migrate:diff` writes a migration stub from your models; see [the database guide](/docs/database/overview) and the [CLI reference](/docs/cli/reference-database). In production `vukem migrate` refuses a pending migration that drops a table or column unless you pass `--allow-destructive`.
 

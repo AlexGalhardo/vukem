@@ -27,7 +27,8 @@ func Migrations(table string) []schema.Migration {
 	}
 
 	return []schema.Migration{{
-		ID: MigrationID,
+		ID:       MigrationID,
+		AnyOrder: true,
 		Up: func(s *schema.Schema) error {
 			if err := checkLogTable(table); err != nil {
 				return err

@@ -18,6 +18,37 @@ type RebuildOption func(*rebuildOptions)
 type rebuildOptions struct {
 	renames      map[string]string // new column -> old column
 	dropTriggers bool
+	dropColumns  []string
+	dropIndexes  []string
+	keepIndexes  bool
+}
+
+// KeepIndexes recreates, with their original SQL text, the explicit indexes
+// of the old table that the new definition does not declare by name (partial
+// ones included), so a rebuild that only changes a column or a CHECK leaves
+// the indexes as they were. An index over a column the new table does not
+// have makes Rebuild fail before anything changes; name it in DropIndexes.
+// An index the definition declares under the same name is not kept: the
+// declared one wins.
+func KeepIndexes() RebuildOption {
+	return func(o *rebuildOptions) { o.keepIndexes = true }
+}
+
+// DropIndexes accepts losing the named indexes of the old table. Without
+// KeepIndexes or DropIndexes Rebuild refuses a table with an explicit index
+// the new definition does not declare by name, because the index would be
+// gone. Naming an index the table does not have, or one the definition
+// declares, is an error.
+func DropIndexes(names ...string) RebuildOption {
+	return func(o *rebuildOptions) { o.dropIndexes = append(o.dropIndexes, names...) }
+}
+
+// DropColumns accepts losing the named columns of the old table. Without it
+// Rebuild refuses a table holding a column the new definition neither
+// declares nor renames, because the rows of that column would be gone. Naming
+// a column the table does not have, or one the definition keeps, is an error.
+func DropColumns(names ...string) RebuildOption {
+	return func(o *rebuildOptions) { o.dropColumns = append(o.dropColumns, names...) }
 }
 
 // DropTriggers lets Rebuild proceed on a table that has triggers: dropping
@@ -47,8 +78,12 @@ const rebuildPrefix = "_vk_rebuild_"
 // foreign key, add or drop a CHECK, change a type or nullability.
 //
 // fn describes the whole new table, as Create does: only what it declares
-// survives, so indexes the old table had must be declared again. Views and
-// triggers that mention the table are not recreated.
+// survives, so the indexes the old table had must be declared again, kept
+// with KeepIndexes or accepted as lost with DropIndexes; Rebuild refuses to
+// lose one silently. Declared indexes are written with quoted identifiers,
+// so their SQL text differs from the original; KeepIndexes keeps the text.
+// Views and triggers that mention the table are not recreated. A stored column left out
+// of fn makes Rebuild fail unless DropColumns names it.
 //
 // SQLite only (on PostgreSQL and MySQL use Table and Column.Change). It
 // follows the procedure of https://www.sqlite.org/lang_altertable.html: with
@@ -93,6 +128,18 @@ func (s *Schema) Rebuild(table string, fn func(t *Table), opts ...RebuildOption)
 		}
 	}
 
+	for _, n := range o.dropColumns {
+		if err := checkIdent("column", n); err != nil {
+			return err
+		}
+	}
+
+	for _, n := range o.dropIndexes {
+		if err := checkIdent("index", n); err != nil {
+			return err
+		}
+	}
+
 	if s.model != nil {
 		s.model.rebuild(table, t)
 		return nil
@@ -101,7 +148,7 @@ func (s *Schema) Rebuild(table string, fn func(t *Table), opts ...RebuildOption)
 	if s.record != nil {
 		cols := rebuildCopy(t, o.renames, nil)
 		s.noteLostColumns(t, o.renames)
-		*s.record = append(*s.record, s.rebuildStatements(t, cols, true)...)
+		*s.record = append(*s.record, s.rebuildStatements(t, cols, nil, true)...)
 
 		return nil
 	}
@@ -135,11 +182,126 @@ func (s *Schema) Rebuild(table string, fn func(t *Table), opts ...RebuildOption)
 
 	cols := rebuildCopy(t, o.renames, have)
 
+	if err := checkLostColumns(table, cols, o.dropColumns, old); err != nil {
+		return err
+	}
+
 	if err := s.checkNewColumns(db, t, o.renames, have, table); err != nil {
 		return err
 	}
 
-	return s.rebuildRun(db, t, cols)
+	kept, err := s.checkIndexes(db, t, old, o)
+	if err != nil {
+		return err
+	}
+
+	return s.rebuildRun(db, t, cols, kept)
+}
+
+// storedIndex is an explicit index of the old table with its original SQL.
+type storedIndex struct{ name, sql string }
+
+// checkIndexes decides what happens to the explicit indexes of the old table
+// that the new definition does not declare by name: it returns the ones to
+// recreate (KeepIndexes) and refuses the rest unless DropIndexes names them.
+func (s *Schema) checkIndexes(db *database.DB, t *Table, old TableInfo, o rebuildOptions) ([]storedIndex, error) {
+	rows, err := db.QueryContext(
+		s.ctx,
+		"SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL ORDER BY name",
+		t.name,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("schema: rebuild %s: %w", t.name, err)
+	}
+	defer rows.Close()
+
+	var stored []storedIndex
+
+	for rows.Next() {
+		var ix storedIndex
+		if err := rows.Scan(&ix.name, &ix.sql); err != nil {
+			return nil, fmt.Errorf("schema: rebuild %s: %w", t.name, err)
+		}
+
+		stored = append(stored, ix)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("schema: rebuild %s: %w", t.name, err)
+	}
+
+	declared := func(name string) bool {
+		return slices.ContainsFunc(t.indexes, func(ix *index) bool { return ix.name == name })
+	}
+
+	for _, d := range o.dropIndexes {
+		switch {
+		case declared(d):
+			return nil, fmt.Errorf(
+				"schema: rebuild %s: DropIndexes names %s, which the new definition declares",
+				t.name,
+				d,
+			)
+		case !slices.ContainsFunc(stored, func(ix storedIndex) bool { return ix.name == d }):
+			return nil, fmt.Errorf("schema: rebuild %s: DropIndexes names %s, which the table does not have", t.name, d)
+		}
+	}
+
+	var (
+		kept []storedIndex
+		lost []string
+	)
+
+	for _, ix := range stored {
+		if declared(ix.name) || slices.Contains(o.dropIndexes, ix.name) {
+			continue
+		}
+
+		if !o.keepIndexes {
+			lost = append(lost, ix.name)
+			continue
+		}
+
+		if err := checkKeptColumns(t, old, ix.name); err != nil {
+			return nil, err
+		}
+
+		kept = append(kept, ix)
+	}
+
+	if len(lost) > 0 {
+		return nil, fmt.Errorf(
+			"schema: rebuild %s would lose index(es) %s; declare them, pass KeepIndexes or pass DropIndexes to accept",
+			t.name,
+			strings.Join(lost, ", "),
+		)
+	}
+
+	return kept, nil
+}
+
+// checkKeptColumns fails when a plain column of the index to keep is not in
+// the new definition, which would only surface as a SQL error at the end.
+func checkKeptColumns(t *Table, old TableInfo, index string) error {
+	for _, info := range old.Indexes {
+		if info.Name != index {
+			continue
+		}
+
+		for _, c := range info.Columns {
+			if !slices.ContainsFunc(t.cols, func(col *Column) bool { return col.name == c }) {
+				return fmt.Errorf(
+					"schema: rebuild %s: KeepIndexes: index %s uses column %s, which the new table does not have; pass DropIndexes(%q) to drop it",
+					t.name,
+					index,
+					c,
+					index,
+				)
+			}
+		}
+	}
+
+	return nil
 }
 
 // noteLostColumns records, for Destructive, the columns the table has today
@@ -229,6 +391,45 @@ func rebuildCopy(t *Table, renames map[string]string, have map[string]bool) []co
 	return out
 }
 
+// checkLostColumns refuses a rebuild that would lose a stored column of the
+// old table without DropColumns naming it. It compares against the columns
+// actually copied, so a column replaced by a rename or by a generated column
+// of the same name counts as lost. A generated column holds no data of its own.
+func checkLostColumns(table string, cols []copyCol, dropped []string, old TableInfo) error {
+	kept := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		kept[c.from] = true
+	}
+
+	for _, d := range dropped {
+		if kept[d] {
+			return fmt.Errorf("schema: rebuild %s: DropColumns names %s, which the new definition keeps", table, d)
+		}
+
+		if !slices.ContainsFunc(old.Columns, func(c ColumnInfo) bool { return c.Name == d }) {
+			return fmt.Errorf("schema: rebuild %s: DropColumns names %s, which the table does not have", table, d)
+		}
+	}
+
+	var lost []string
+
+	for _, c := range old.Columns {
+		if !c.Generated && !kept[c.Name] && !slices.Contains(dropped, c.Name) {
+			lost = append(lost, c.Name)
+		}
+	}
+
+	if len(lost) > 0 {
+		return fmt.Errorf(
+			"schema: rebuild %s would lose column(s) %s; declare them or pass DropColumns to accept",
+			table,
+			strings.Join(lost, ", "),
+		)
+	}
+
+	return nil
+}
+
 // checkNewColumns refuses a new NOT NULL column without a default when the
 // table has rows: the copy could not fill it.
 func (s *Schema) checkNewColumns(
@@ -271,7 +472,7 @@ func (s *Schema) checkNewColumns(
 // rebuildStatements is the statement sequence of the procedure; withPragmas
 // adds the foreign key pragmas and the transaction around it (the recorded
 // form).
-func (s *Schema) rebuildStatements(t *Table, cols []copyCol, withPragmas bool) []string {
+func (s *Schema) rebuildStatements(t *Table, cols []copyCol, kept []storedIndex, withPragmas bool) []string {
 	tmp := rebuildPrefix + t.name
 
 	var stmts []string
@@ -297,6 +498,10 @@ func (s *Schema) rebuildStatements(t *Table, cols []copyCol, withPragmas bool) [
 	stmts = append(stmts, "DROP TABLE "+s.q(t.name), "ALTER TABLE "+s.q(tmp)+" RENAME TO "+s.q(t.name))
 	stmts = append(stmts, s.indexStmts(t)...)
 
+	for _, ix := range kept {
+		stmts = append(stmts, ix.sql)
+	}
+
 	if withPragmas {
 		stmts = append(stmts, "PRAGMA foreign_key_check", "COMMIT", "PRAGMA foreign_keys = ON")
 	}
@@ -308,7 +513,7 @@ func (s *Schema) rebuildStatements(t *Table, cols []copyCol, withPragmas bool) [
 // off, one transaction, foreign_key_check before the commit. Whatever
 // happens, the transaction is rolled back unless committed and the foreign
 // keys are turned back on, with a context that outlives a cancelled one.
-func (s *Schema) rebuildRun(db *database.DB, t *Table, cols []copyCol) (err error) {
+func (s *Schema) rebuildRun(db *database.DB, t *Table, cols []copyCol, kept []storedIndex) (err error) {
 	ctx := s.ctx
 
 	conn, err := db.SQL().Conn(ctx)
@@ -356,7 +561,7 @@ func (s *Schema) rebuildRun(db *database.DB, t *Table, cols []copyCol) (err erro
 		return fmt.Errorf("schema: rebuild %s: %w", t.name, err)
 	}
 
-	for _, stmt := range s.rebuildStatements(t, cols, false) {
+	for _, stmt := range s.rebuildStatements(t, cols, kept, false) {
 		if err := run(stmt); err != nil {
 			return err
 		}

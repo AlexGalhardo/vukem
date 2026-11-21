@@ -139,6 +139,8 @@ type Operation struct {
 	RequestBody *RequestBody          `json:"requestBody,omitempty"`
 	Responses   map[string]Response   `json:"responses"`
 	Security    []map[string][]string `json:"security,omitempty"`
+	// MaxBodyBytes is the route's body limit (api.Op.MaxBody).
+	MaxBodyBytes int64 `json:"x-max-body-bytes,omitempty"`
 }
 
 // MarshalJSON writes a non-nil empty Security as "security": [], the
@@ -558,12 +560,13 @@ func pathParams(s *Schemas, path string, types map[string]Field) []Parameter {
 
 func typedOperation(s *Schemas, t *api.Operation) *Operation {
 	op := &Operation{
-		OperationID: t.Name,
-		Summary:     cmpOr(t.Summary, t.Name),
-		Description: t.Description,
-		Tags:        t.Tags,
-		Deprecated:  t.Deprecated,
-		Responses:   map[string]Response{"default": {Ref: "#/components/responses/Problem"}},
+		OperationID:  t.Name,
+		Summary:      cmpOr(t.Summary, t.Name),
+		Description:  t.Description,
+		Tags:         t.Tags,
+		Deprecated:   t.Deprecated,
+		MaxBodyBytes: t.MaxBody,
+		Responses:    map[string]Response{"default": {Ref: "#/components/responses/Problem"}},
 	}
 
 	for _, name := range t.Security {
@@ -590,21 +593,35 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 	bodyless := t.Method == http.MethodGet || t.Method == http.MethodHead || t.Method == http.MethodDelete
 
 	if hasInput {
-		if bodyless {
-			for _, f := range Fields(t.In) {
-				if inPath[f.Key] {
-					continue
-				}
-
-				op.Parameters = append(op.Parameters, Parameter{
-					Name: f.Key, In: "query", Required: f.Required, Description: f.Doc,
-					Schema: s.of(f.Type, f.Rules), Example: f.ExampleValue(),
-				})
-			}
-		} else {
+		switch {
+		case hasRawBody(t.In):
+			op.Parameters = append(op.Parameters, queryParams(s, t.In, inPath, true)...)
 			op.RequestBody = &RequestBody{Required: true, Content: map[string]MediaType{
-				"application/json": {Schema: s.Object(t.In, inPath)},
+				"application/octet-stream": {Schema: Schema{"type": "string", "format": "binary"}},
 			}}
+		case bodyless:
+			op.Parameters = append(op.Parameters, queryParams(s, t.In, inPath, true)...)
+		default:
+			// A `query` tag takes a field out of the body and into the query string.
+			op.Parameters = append(op.Parameters, queryParams(s, t.In, inPath, false)...)
+
+			skip, hasQuery := maps.Clone(inPath), false
+
+			for _, f := range Fields(t.In) {
+				if f.Query {
+					skip[f.Key], hasQuery = true, true
+				}
+			}
+
+			// Only a type whose body fields all moved to the query has no body.
+			body := s.Object(t.In, skip)
+			props, _ := body["properties"].(map[string]any)
+
+			if !hasQuery || len(props) > 0 {
+				op.RequestBody = &RequestBody{Required: true, Content: map[string]MediaType{
+					"application/json": {Schema: body},
+				}}
+			}
 		}
 
 		op.Responses["422"] = Response{Ref: "#/components/responses/ValidationError"}
@@ -645,6 +662,37 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 	})
 
 	return op
+}
+
+// queryParams documents the fields of in that are not path parameters as
+// query parameters: every field when all is set (a route without a JSON
+// body), else the ones with a `query` tag.
+func queryParams(s *Schemas, in reflect.Type, inPath map[string]bool, all bool) []Parameter {
+	var out []Parameter
+
+	for _, f := range Fields(in) {
+		if inPath[f.Key] || !all && !f.Query {
+			continue
+		}
+
+		out = append(out, Parameter{
+			Name: f.Key, In: "query", Required: f.Required, Description: f.Doc,
+			Schema: s.of(f.Type, f.Rules), Example: f.ExampleValue(),
+		})
+	}
+
+	return out
+}
+
+// hasRawBody reports whether struct t has an api.RawBody field.
+func hasRawBody(t reflect.Type) bool {
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+
+	return slices.ContainsFunc(reflect.VisibleFields(t), func(f reflect.StructField) bool {
+		return f.Type == reflect.TypeFor[api.RawBody]()
+	})
 }
 
 func underPrefix(path, prefix string) bool {

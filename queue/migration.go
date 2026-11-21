@@ -28,7 +28,8 @@ func Migrations(o DatabaseOptions) []schema.Migration {
 	jobs, failed := tableNames(o)
 
 	return []schema.Migration{{
-		ID: MigrationID,
+		ID:       MigrationID,
+		AnyOrder: true,
 		Up: func(s *schema.Schema) error {
 			if err := checkTables(jobs, failed); err != nil {
 				return err

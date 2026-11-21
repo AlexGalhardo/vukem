@@ -126,7 +126,8 @@ func TestSecurity_A02_CSPSourcesRefuseUnsafe(t *testing.T) {
 		"unsafe-inline":        {CSPSources: map[string][]string{"style-src": {"'unsafe-inline'"}}},
 		"unsafe-eval":          {CSPSources: map[string][]string{"script-src": {"'UNSAFE-EVAL'"}}},
 		"unsafe-hashes":        {CSPSources: map[string][]string{"style-src": {"'unsafe-hashes'"}}},
-		"wasm-unsafe-eval":     {CSPSources: map[string][]string{"script-src": {"'wasm-unsafe-eval'"}}},
+		"wasm in style-src":    {CSPSources: map[string][]string{"style-src": {"'wasm-unsafe-eval'"}}},
+		"wasm in default-src":  {CSPSources: map[string][]string{"default-src": {"'wasm-unsafe-eval'"}}},
 		"wildcard":             {CSPSources: map[string][]string{"img-src": {"*"}}},
 		"static nonce":         {CSPSources: map[string][]string{"script-src": {"'nonce-abc'"}}},
 		"scheme-only script":   {CSPSources: map[string][]string{"script-src": {"https:"}}},
@@ -316,5 +317,148 @@ func TestAddAndMissingCSPSources(t *testing.T) {
 
 	if m := (SecureHeadersConfig{CSP: "-"}).MissingCSPSources(analytics); m != nil {
 		t.Errorf("disabled CSP MissingCSPSources = %v, want nil", m)
+	}
+}
+
+func TestSecurity_A02_WasmUnsafeEvalIsOptIn(t *testing.T) {
+	t.Parallel()
+
+	dirs, _ := cspDirectives(t, SecureHeadersConfig{})
+	for name, v := range dirs {
+		if strings.Contains(v, "wasm-unsafe-eval") {
+			t.Errorf("default CSP has 'wasm-unsafe-eval' in %s", name)
+		}
+	}
+
+	for _, name := range []string{"script-src", "script-src-elem", "worker-src"} {
+		cfg := SecureHeadersConfig{CSPSources: map[string][]string{name: {"'wasm-unsafe-eval'"}}}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("%s: Validate() = %v, want nil", name, err)
+		}
+
+		dirs, _ := cspDirectives(t, cfg)
+		if !strings.Contains(dirs[name], "'wasm-unsafe-eval'") {
+			t.Errorf("%s = %q, want 'wasm-unsafe-eval'", name, dirs[name])
+		}
+	}
+}
+
+func TestSecurity_A02_CSPPathsSeeThroughLocalePrefixes(t *testing.T) {
+	t.Parallel()
+
+	const strict = "default-src 'none'"
+
+	h := SecureHeaders(SecureHeadersConfig{
+		CSPPaths:     map[string]string{"/worker/strict": strict},
+		CSPPathStrip: []string{"pt-br"},
+	})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/worker/strict/a.js", true},
+		{"/pt-br/worker/strict/a.js", true},
+		{"/pt-br/worker/../worker/strict", true},
+		{"/pt-br", false},
+		{"/PT-BR/worker/strict/a.js", false},
+		{"/es/worker/strict/a.js", false},
+		{"/pt-br/pt-br/worker/strict/a.js", false},
+	}
+
+	for _, tt := range tests {
+		req := get(t, "/")
+		req.URL.Path = tt.path
+
+		got := do(t, h, req).Header().Get("Content-Security-Policy")
+		if (got == strict) != tt.want {
+			t.Errorf("%s: CSP = %q, want the strict policy: %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestSecurity_A02_CSPPaths(t *testing.T) {
+	t.Parallel()
+
+	const worker = "script-src 'self' 'wasm-unsafe-eval'; default-src 'self'; nonce={nonce}"
+
+	cfg := SecureHeadersConfig{CSPPaths: map[string]string{
+		"/worker":        worker,
+		"/worker/strict": "default-src 'none'",
+	}}
+
+	tests := []struct {
+		path       string
+		wantWorker bool
+		want       string
+	}{
+		{path: "/", wantWorker: false},
+		{path: "/worker", wantWorker: true},
+		{path: "/worker/", wantWorker: true},
+		{path: "/worker/a.js", wantWorker: true},
+		{path: "/worker/strict/a.js", want: "default-src 'none'"},
+		{path: "/workerfoo", wantWorker: false},
+		{path: "/workers/a.js", wantWorker: false},
+		{path: "/Worker/a.js", wantWorker: false},
+		{path: "/app/../worker/a.js", wantWorker: true},
+		{path: "/worker/../app", wantWorker: false},
+		{path: "/worker/./strict", want: "default-src 'none'"},
+	}
+
+	h := SecureHeaders(cfg)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	for _, tt := range tests {
+		req := get(t, "/")
+		req.URL.Path = tt.path // a raw path, as a client could send it
+
+		got := do(t, h, req).Header().Get("Content-Security-Policy")
+
+		switch {
+		case tt.want != "":
+			if got != tt.want {
+				t.Errorf("%s: CSP = %q, want %q", tt.path, got, tt.want)
+			}
+		case tt.wantWorker:
+			if !strings.Contains(got, "'wasm-unsafe-eval'") || strings.Contains(got, "{nonce}") ||
+				!strings.Contains(got, "nonce=") {
+				t.Errorf("%s: CSP = %q, want the worker policy with a nonce", tt.path, got)
+			}
+		default:
+			if strings.Contains(got, "wasm-unsafe-eval") ||
+				!strings.HasPrefix(got, "default-src 'self'; script-src 'self' 'nonce-") {
+				t.Errorf("%s: CSP = %q, want the default policy", tt.path, got)
+			}
+		}
+	}
+}
+
+func TestSecurity_A02_CSPPathsInvalidIsDropped(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]map[string]string{
+		"no leading slash":    {"worker": "default-src 'self'"},
+		"protocol-relative":   {"//evil": "default-src 'self'"},
+		"backslash":           {`/a\b`: "default-src 'self'"},
+		"empty policy":        {"/w": " "},
+		"disabled policy":     {"/w": "-"},
+		"newline in policy":   {"/w": "default-src 'self'\r\nX-Evil: 1"},
+		"non-ASCII in policy": {"/w": "default-src 'self' é"},
+	}
+
+	for name, paths := range tests {
+		cfg := SecureHeadersConfig{CSPPaths: paths}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("%s: Validate() = nil, want an error", name)
+		}
+
+		// SecureHeaders never fails: it serves the stricter default.
+		req := get(t, "/")
+		req.URL.Path = "/w"
+
+		got := do(t, SecureHeaders(cfg)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})), req).
+			Header().Get("Content-Security-Policy")
+		if !strings.HasPrefix(got, "default-src 'self'; script-src 'self' 'nonce-") {
+			t.Errorf("%s: CSP = %q, want the default policy", name, got)
+		}
 	}
 }

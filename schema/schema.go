@@ -19,6 +19,7 @@ package schema
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -139,6 +140,51 @@ func (s *Schema) Create(table string, fn func(t *Table)) error {
 	}
 
 	return s.createIndexes(t)
+}
+
+// VirtualTable creates a SQLite virtual table of module, such as the FTS5
+// full-text index: CREATE VIRTUAL TABLE name USING module(args...). The
+// arguments are the module's own (for FTS5 the column names and options like
+// "tokenize='porter'") and are written as given, so they must not hold
+// untrusted text. Drop it with Drop or DropIfExists. SQLite only: the other
+// dialects return an error.
+//
+// A virtual table has no foreign keys, so ON DELETE CASCADE does not reach
+// its rows; delete them in the code that deletes the parent row.
+func (s *Schema) VirtualTable(name, module string, args ...string) error {
+	if err := checkIdent("table", name); err != nil {
+		return err
+	}
+
+	if err := checkIdent("module", module); err != nil {
+		return err
+	}
+
+	if s.caps().Family != "sqlite" {
+		return fmt.Errorf("schema: VirtualTable is sqlite only (%s has no virtual tables)", s.d.Name())
+	}
+
+	for _, a := range args {
+		if strings.TrimSpace(a) == "" {
+			return fmt.Errorf("schema: virtual table %s: empty module argument", name)
+		}
+	}
+
+	if s.model != nil {
+		t := &Table{name: name, s: s}
+
+		for _, a := range args {
+			if identRe.MatchString(a) {
+				t.cols = append(t.cols, &Column{t: t, name: a})
+			}
+		}
+
+		s.model.create(name, t)
+
+		return nil
+	}
+
+	return s.exec("CREATE VIRTUAL TABLE " + s.q(name) + " USING " + module + "(" + strings.Join(args, ", ") + ")")
 }
 
 // createTableSQL is the CREATE TABLE statement for the definition in t,
@@ -457,6 +503,39 @@ func hasTable(ctx context.Context, ex database.Executor, table string) (bool, er
 	}
 
 	return n > 0, nil
+}
+
+// Inspect reads the definition of table as the database has it now: columns,
+// primary key, indexes, foreign keys and, on SQLite, the triggers and the
+// text of each CHECK. The bool is false when the table does not exist, and
+// always while recording (queries are not run then, as in HasTable). On the
+// model FindConflicts builds it knows only the column names of the tables the
+// earlier migrations left.
+func (s *Schema) Inspect(table string) (TableInfo, bool, error) {
+	if err := checkIdent("table", table); err != nil {
+		return TableInfo{}, false, err
+	}
+
+	if s.model != nil {
+		mt, ok := s.model.tables[table]
+		if !ok {
+			return TableInfo{}, false, nil
+		}
+
+		info := TableInfo{Name: table}
+
+		for _, c := range slices.Sorted(maps.Keys(mt.cols)) {
+			info.Columns = append(info.Columns, ColumnInfo{Name: c})
+		}
+
+		return info, true, nil
+	}
+
+	if s.record != nil {
+		return TableInfo{}, false, nil
+	}
+
+	return InspectTable(s.ctx, s.ex, table)
 }
 
 // HasColumn reports whether table has column (false while recording, and
