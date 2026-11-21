@@ -178,6 +178,7 @@ slug := base.ToLower().Regex(slugRe)
 | `Hostname()`, `E164()`, `Slug()` | A DNS hostname; an international phone number (`+5511987654321`); lowercase words joined by dashes | `string.hostname`, `string.e164`, `string.slug` |
 | `Hex()`, `Base64()`, `Base64URL()` | Hexadecimal of even length; base64 with padding; URL-safe base64 | `string.hex`, `string.base64`, `string.base64url` |
 | `JWT()` | The **shape** of a token: three base64url segments and a JSON header with an `alg`. It never verifies a signature (a token with `alg: none` passes): use `auth/jwt` to accept a token. Like `Hex()`, `Base64()` and `Base64URL()` it reads the whole value, so put a `Max(n)` on it | `string.jwt` |
+| `Date()` (same as `ISODate()`; `MinDate(time.Now)` adds a lower bound, exported as the `x-minDate` keyword; `Keyword(k, v)` adds any keyword to the export) | `2026-02-28` | `string.iso_date`, `too_small.date_inclusive` |
 | `ISODate()`, `ISOTime()`, `ISODateTime()`, `ISODuration()` | `2026-02-28`, `10:30:00`, `2026-02-28T10:30:00Z`, `P1Y2M3DT4H5M6S` | `string.iso_date`, `string.iso_time`, `string.iso_datetime`, `string.iso_duration` |
 | `NormalizeEmail()` | Trims and lower-cases **before** the checks (put it before `Email()`) | — |
 | `Escape()` | Replaces `<`, `>`, `&`, `'`, `"` with HTML entities **before** the checks. It stores entities (`html/template` already escapes on output), escapes again a value posted back, and the checks after it count the escaped text | — |
@@ -614,7 +615,7 @@ On a number or a list, "empty" is the zero value, and skipping the rules for it 
 | Route parameters | `web.ParseParams(c, schema, "post")`: invalid parameters answer **404**, since a malformed id names no resource |
 | A map you assembled | `web.ParseMap(c, schema, m)` (`web.ParseInput(schema, m)` outside a request) |
 | Any `io.Reader` of JSON (an upstream API) | `z.ParseJSON(r, schema)`: invalid JSON is one `invalid_type` issue, "The value must be valid JSON." |
-| A value you already have | `schema.Parse(v)` or, for typed values, `schema.Check(v)` (validates only) or `schema.Normalize(v)` (also returns the value with `Trim`, defaults and `Transform` applied) |
+| A value you already have | `schema.Parse(v)` or, for typed values, `schema.Check(v)` (validates only) or `schema.Normalize(v)` (also returns the value with `Trim`, defaults and `Transform` applied). `Check` cannot tell a missing field from an empty one, because a Go struct has no absent state; `schema.Parse(map)` on the decoded input reports a missing key as `required` |
 | Outgoing JSON | `web.JSONWith(c, status, schema, v)` |
 
 `web.JSONWith` checks the value you are about to send when `Services.CheckResponses` is on, which the app does outside production. A mismatch is a server bug: it is answered with a 500 (and logged) instead of sending data that breaks your API contract. In production the check is skipped.

@@ -406,6 +406,13 @@ func (s StringSchema) Describe(text string) StringSchema {
 	return s
 }
 
+// Keyword adds a JSON Schema keyword to the exported schema, for what the
+// rules cannot say ("x-" vendor keywords, "contentMediaType", "examples").
+// It does not validate anything and replaces a keyword of the same name,
+// including one a rule set ("format"); it must not break the schema: use it
+// for annotations.
+func (s StringSchema) Keyword(k string, v any) StringSchema { return s.kw(k, v) }
+
 func (s StringSchema) kw(k string, v any) StringSchema {
 	s.o = s.o.clone()
 	s.o.setKW(k, v)
