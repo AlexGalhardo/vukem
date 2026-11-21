@@ -148,29 +148,6 @@ func (s *Studio) sourcePage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// filtersFrom reads f=<column>:<op>:<value> (repeatable). A filter without an
-// operator is refused: dropping it would show every row as if it matched.
-func filtersFrom(q url.Values) ([]Filter, error) {
-	var out []Filter
-
-	for _, raw := range q["f"] {
-		col, rest, ok := strings.Cut(raw, ":")
-		if !ok || col == "" {
-			return nil, inputError("a filter must look like column:op:value, for example qty:gt:5")
-		}
-
-		op, val, _ := strings.Cut(rest, ":")
-		out = append(out, Filter{Column: col, Op: op, Value: val})
-	}
-
-	return out, nil
-}
-
-func intParam(q url.Values, key string) int {
-	n, _ := strconv.Atoi(q.Get(key))
-	return n
-}
-
 func (s *Studio) documentsPage(w http.ResponseWriter, r *http.Request) {
 	m := s.mongo(r)
 	if m == nil {
@@ -180,15 +157,10 @@ func (s *Studio) documentsPage(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 
-	filters, err := filtersFrom(q)
+	query, err := docQueryFrom(r.PathValue("collection"), q, htmlParams)
 	if err != nil {
 		s.fail(w, r, err)
 		return
-	}
-
-	query := DocQuery{
-		Collection: r.PathValue("collection"), Filters: filters, Sort: q.Get("sort"), Desc: q.Get("desc") == "1",
-		After: q.Get("after"), Page: intParam(q, "page"), PerPage: intParam(q, "per"),
 	}
 
 	pg, err := m.Documents(r.Context(), query)
@@ -270,9 +242,7 @@ func (s *Studio) mongoConsole(w http.ResponseWriter, r *http.Request) {
 func (s *Studio) keysPage(w http.ResponseWriter, r *http.Request, src RedisSource) {
 	q := r.URL.Query()
 
-	cursor, _ := strconv.ParseUint(q.Get("cursor"), 10, 64)
-
-	pg, err := src.Keys(r.Context(), KeyQuery{Match: q.Get("match"), Cursor: cursor, Count: intParam(q, "count")})
+	pg, err := src.Keys(r.Context(), keyQueryFrom(q))
 	if err != nil {
 		s.fail(w, r, err)
 		return

@@ -28,7 +28,7 @@ func (s *Studio) exportRows(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 
-	filters, err := filtersFrom(q)
+	filters, err := filtersFrom(q, htmlParams.filter)
 	if err != nil {
 		s.fail(w, r, err)
 		return
