@@ -388,6 +388,7 @@ Inside `s.Table` the statements run in a fixed order, whatever order you wrote t
 | `s.Rename(from, to)` | Renames a table |
 | `s.HasTable(table)` | `(bool, error)`: whether the table exists |
 | `s.HasColumn(table, column)` | `(bool, error)`: whether the column exists; `false` for a missing table |
+| `s.Inspect(table)` | `(schema.TableInfo, bool, error)`: the table's columns, primary key, indexes and foreign keys as the database has them now (on SQLite also the triggers and `SQLite.Checks`, the text of each `CHECK`); the bool is `false` for a missing table and while the checksum is computed |
 | `s.Raw(sql, args...)` | Runs any SQL: data fixes, views, triggers |
 | `s.Dialect()` | `"sqlite"`, `"postgres"` or `"mysql"`, for dialect-specific SQL |
 
