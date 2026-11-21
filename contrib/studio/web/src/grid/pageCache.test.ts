@@ -183,6 +183,25 @@ describe("keyset mode", () => {
   });
 });
 
+describe("setRow", () => {
+  test("replaces a loaded row and tells the view", async () => {
+    const h = harness("offset");
+    h.cache.want(0, 10);
+    await h.settle(0);
+    const before = h.changes();
+    expect(h.cache.setRow(3, 333)).toBe(true);
+    expect(h.cache.row(3)).toBe(333);
+    expect(h.cache.row(4)).toBe(4);
+    expect(h.changes()).toBe(before + 1);
+  });
+
+  test("does nothing for a row that is not loaded", () => {
+    const h = harness("offset");
+    expect(h.cache.setRow(3, 1)).toBe(false);
+    expect(h.cache.setRow(-1, 1)).toBe(false);
+  });
+});
+
 describe("keys and refresh", () => {
   test("a new key drops pages, aborts requests and forgets the cursors", async () => {
     const h = harness("keyset");

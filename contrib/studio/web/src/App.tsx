@@ -34,7 +34,7 @@ function Page({ bootstrap, route }: { bootstrap: Bootstrap; route: Route }): Rea
     }
     case "table":
       return bootstrap.sources.some((s) => s.name === route.source && s.kind === "sql") ? (
-        <TablePage source={route.source} table={route.table} />
+        <TablePage source={route.source} table={route.table} write={bootstrap.write} />
       ) : (
         <NotFound />
       );

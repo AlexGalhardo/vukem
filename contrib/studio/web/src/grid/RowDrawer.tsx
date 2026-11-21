@@ -22,6 +22,8 @@ interface RowDrawerProps {
   tables: readonly TableSummary[];
   target: DrawerTarget | null;
   onClose: () => void;
+  /** Write mode only: asks to delete the row with this key. */
+  onDelete?: (key: string[]) => void;
 }
 
 function FieldValue({ cell, column }: { cell: ApiCell; column: Column }): ReactElement {
@@ -79,7 +81,7 @@ function Links({ source, title, links }: { source: string; title: string; links:
  * the foreign keys as links, and the tables that point at the row. It is a
  * native modal dialog, so the page behind it is inert and Escape closes it.
  */
-export function RowDrawer({ source, table, detail, tables, target, onClose }: RowDrawerProps): ReactElement {
+export function RowDrawer({ source, table, detail, tables, target, onClose, onDelete }: RowDrawerProps): ReactElement {
   const dialog = useRef<HTMLDialogElement>(null);
   const keyed = target?.kind === "key" ? target.key : null;
 
@@ -182,6 +184,13 @@ export function RowDrawer({ source, table, detail, tables, target, onClose }: Ro
 
           {refs.error ? <ErrorNotice error={refs.error} onRetry={refs.reload} /> : null}
           <Links source={source} title="Referenced by" links={refLinks} />
+          {onDelete && keyed ? (
+            <div className="drawer-section">
+              <button type="button" className="button button-danger" onClick={() => onDelete(keyed)}>
+                Delete this row…
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </dialog>

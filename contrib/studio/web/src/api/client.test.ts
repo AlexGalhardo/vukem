@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ApiError, apiGet, apiPath } from "./client";
+import { ApiError, apiGet, apiPath, apiSend } from "./client";
 
 const realFetch = globalThis.fetch;
 
@@ -62,5 +62,40 @@ describe("apiGet", () => {
 describe("apiPath", () => {
   test("escapes every segment", () => {
     expect(apiPath("sources", "my db", "tables", "a/b")).toBe("/sources/my%20db/tables/a%2Fb");
+  });
+});
+
+describe("apiSend", () => {
+  test("sends a JSON body with the method and the JSON content type", async () => {
+    const calls = mockFetch(() => Response.json({ ok: true }));
+
+    const got = await apiSend<{ ok: boolean }>("PATCH", "/sources/db/tables/t/rows/1", { fields: {} });
+
+    expect(got.ok).toBe(true);
+    expect(calls[0]?.url).toBe("/api/v1/sources/db/tables/t/rows/1");
+    expect(calls[0]?.init?.method).toBe("PATCH");
+    expect(calls[0]?.init?.body).toBe('{"fields":{}}');
+    expect(new Headers(calls[0]?.init?.headers).get("Content-Type")).toBe("application/json");
+  });
+
+  test("a 409 carries the current values of the guarded columns", async () => {
+    mockFetch(() =>
+      Response.json(
+        { error: { code: "conflict", message: "changed", current: { name: { t: "theirs" } } } },
+        { status: 409 },
+      ),
+    );
+
+    await expect(apiSend("PATCH", "/x", {})).rejects.toMatchObject({
+      status: 409,
+      code: "conflict",
+      current: { name: { t: "theirs" } },
+    });
+  });
+
+  test("a validation error keeps the message the server wrote", async () => {
+    mockFetch(() => Response.json({ error: { code: "invalid_input", message: "qty: expected a whole number" } }, { status: 422 }));
+
+    await expect(apiSend("POST", "/x", {})).rejects.toMatchObject({ status: 422, message: "qty: expected a whole number" });
   });
 });
