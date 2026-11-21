@@ -125,7 +125,7 @@ func TestSecurity_A09_SecretPathsCoverEveryFormOfThePath(t *testing.T) {
 		{http.MethodPost, "/hooks/s3cr3t-H00K/"},
 		{http.MethodPost, "/hooks/./s3cr3t-H00K"},
 	} {
-		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(tc.method, tc.target, nil))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(tc.method, tc.target, http.NoBody))
 	}
 
 	if out := buf.String(); strings.Contains(out, "s3cr3t") {
