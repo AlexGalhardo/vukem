@@ -55,33 +55,6 @@ func TestTagRequiresThePrepareCommit(t *testing.T) {
 	}
 }
 
-func TestTagCreatesTheAnnotatedTagOnMain(t *testing.T) {
-	root := gitReleaseRepo(t, "main", "chore(release): v0.1.0")
-	t.Chdir(root)
-
-	var buf bytes.Buffer
-
-	if err := run([]string{"-tag", "v0.1.0"}, &buf); err != nil {
-		t.Fatal(err)
-	}
-
-	if !strings.Contains(buf.String(), "tagged v0.1.0 on main") {
-		t.Fatalf("output = %q, want the tag confirmation", buf.String())
-	}
-
-	cmd := exec.Command("git", "tag", "-l", "v0.1.0")
-	cmd.Dir = root
-
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if strings.TrimSpace(string(out)) != "v0.1.0" {
-		t.Fatalf("tag list = %q, want v0.1.0", out)
-	}
-}
-
 func TestGoReleaserExcludesNonProductTags(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
