@@ -1,0 +1,12 @@
+{
+  "collections": [
+    {
+      "name": "posts",
+      "estimate": 7
+    },
+    {
+      "name": "users",
+      "estimate": 7
+    }
+  ]
+}

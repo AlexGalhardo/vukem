@@ -283,3 +283,101 @@ func TestAPIExplain(t *testing.T) {
 		t.Errorf("users has %d rows after explain, want 5", n)
 	}
 }
+
+func TestAPIMongoRead(t *testing.T) {
+	// Not parallel inside: the fake MongoDB sorts its collection list in place.
+	h := newHarness(t, false)
+
+	tests := []struct {
+		name, method, target, body string
+		status                     int
+	}{
+		{"mongo_collections", "GET", "/api/v1/sources/mongo/collections", "", 200},
+		{"mongo_documents", "GET", "/api/v1/sources/mongo/collections/users/documents?perPage=1", "", 200},
+		{
+			"mongo_document", "GET",
+			"/api/v1/sources/mongo/collections/users/documents/" + url.PathEscape(`{"$numberInt":"1"}`), "", 200,
+		},
+		{"mongo_find", "POST", "/api/v1/sources/mongo/find", `{"collection":"users","filter":"{}"}`, 200},
+		{
+			"mongo_aggregate",
+			"POST",
+			"/api/v1/sources/mongo/aggregate",
+			`{"collection":"users","pipeline":"[{\"$match\":{}}]"}`,
+			200,
+		},
+		{"mongo_error_collection", "GET", "/api/v1/sources/mongo/collections/missing/documents", "", 404},
+		{"mongo_error_filter", "GET", "/api/v1/sources/mongo/collections/users/documents?filter=name", "", 422},
+		{
+			"mongo_error_operator",
+			"GET",
+			"/api/v1/sources/mongo/collections/users/documents?filter=name:nope:x",
+			"",
+			422,
+		},
+		{
+			"mongo_error_pipeline",
+			"POST",
+			"/api/v1/sources/mongo/aggregate",
+			`{"collection":"users","pipeline":"[{\"$out\":\"x\"}]"}`,
+			422,
+		},
+		{"mongo_error_wrong_kind", "GET", "/api/v1/sources/redis/collections", "", 404},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			golden(t, tc.name, apiDo(h.s, h.login, tc.method, tc.target, tc.body), tc.status)
+		})
+	}
+
+	for _, c := range h.fm.calls {
+		if c != "find" && c != "findID" && c != "aggregate" {
+			t.Errorf("a read route called %q on MongoDB", c)
+		}
+	}
+}
+
+func TestAPIRedisRead(t *testing.T) {
+	h := newHarness(t, false)
+
+	tests := []struct {
+		name, method, target, body string
+		status                     int
+	}{
+		{"redis_keys", "GET", "/api/v1/sources/redis/keys?match=session:*", "", 200},
+		{"redis_key", "GET", "/api/v1/sources/redis/keys/session:abc", "", 200},
+		{"redis_command", "POST", "/api/v1/sources/redis/command", `{"line":"GET session:abc"}`, 200},
+		{"redis_error_command_not_allowed", "POST", "/api/v1/sources/redis/command", `{"line":"FLUSHALL"}`, 422},
+		{"redis_error_write_needs_flag", "POST", "/api/v1/sources/redis/command", `{"line":"SET a b"}`, 422},
+		{"redis_error_wrong_kind", "GET", "/api/v1/sources/mongo/keys", "", 404},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			golden(t, tc.name, apiDo(h.s, h.login, tc.method, tc.target, tc.body), tc.status)
+		})
+	}
+
+	for _, c := range h.rec.names() {
+		if c == "SET" || c == "DEL" || c == "KEYS" || c == "FLUSHALL" {
+			t.Errorf("a read route sent %s to Redis: %v", c, h.rec.names())
+		}
+	}
+}
+
+func TestAPIRedisMissingKeyIs404(t *testing.T) {
+	t.Parallel()
+
+	rdb, _ := fakeRedis(t, "none")
+
+	s, err := New(Config{Sources: []Source{rdb}, Version: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := apiGet(s, session(t, s), "/api/v1/sources/redis/keys/gone")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET a missing key = %d, want 404 (%s)", rec.Code, rec.Body)
+	}
+}

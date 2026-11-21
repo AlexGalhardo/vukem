@@ -136,7 +136,7 @@ func (r *RedisDB) Key(ctx context.Context, key string, page int) (KeyDetail, err
 	}
 
 	if typ == "none" {
-		return KeyDetail{}, errors.New("studio: the key does not exist")
+		return KeyDetail{}, fmt.Errorf("%w: the key does not exist", ErrNotFound)
 	}
 
 	ttl, err := r.client.TTL(ctx, key).Result()

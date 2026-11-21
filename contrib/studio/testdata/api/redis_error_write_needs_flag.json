@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "invalid_input",
+    "message": "command \"SET\" writes data and needs --write"
+  }
+}

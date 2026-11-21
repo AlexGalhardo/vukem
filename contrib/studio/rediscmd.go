@@ -88,7 +88,7 @@ func checkRedisArgs(args []string, write bool) error {
 
 		return nil
 	default:
-		return fmt.Errorf("command %q is not allowed in vukem-studio", args[0])
+		return fmt.Errorf("studio: command %q is not allowed in vukem-studio", args[0])
 	}
 }
 

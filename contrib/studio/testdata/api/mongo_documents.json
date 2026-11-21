@@ -1,0 +1,10 @@
+{
+  "docs": [
+    {
+      "id": "{\"$numberInt\":\"1\"}",
+      "json": "{\n  \"_id\": 1,\n  \"name\": \"ada\"\n}"
+    }
+  ],
+  "hasMore": true,
+  "next": "{\"$numberInt\":\"1\"}"
+}

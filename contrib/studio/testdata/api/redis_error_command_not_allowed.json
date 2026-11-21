@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "invalid_input",
+    "message": "command \"FLUSHALL\" is not allowed in vukem-studio"
+  }
+}

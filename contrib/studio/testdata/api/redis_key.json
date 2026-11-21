@@ -1,0 +1,13 @@
+{
+  "fields": [
+    [
+      "value",
+      "v"
+    ]
+  ],
+  "key": "session:abc",
+  "more": false,
+  "size": 1,
+  "ttlSeconds": 60,
+  "type": "string"
+}

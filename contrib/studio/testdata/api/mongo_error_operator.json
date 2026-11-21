@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "invalid_input",
+    "message": "unknown filter operator"
+  }
+}
