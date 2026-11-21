@@ -150,6 +150,7 @@ func New(cfg Config) (*Server, error) {
 	s.verifier = jwt.NewVerifier(jwt.StaticKeys(cfg.Keys...), jwt.VerifyOptions{
 		Algorithms: []string{jwt.AlgRS256, jwt.AlgES256, jwt.AlgEdDSA},
 		Issuer:     cfg.Issuer,
+		Types:      []string{"at+jwt"}, // RFC 9068: an ID token or any other JWT is not an access token
 		Now:        cfg.Now,
 	})
 
@@ -253,7 +254,7 @@ func (s *Server) issueAccessToken(
 		Extra: map[string]any{"scope": strings.Join(scopes, " "), "client_id": clientID, "gid": g.ID},
 	}
 
-	token, err = jwt.Sign(s.cfg.Keys[0], claims)
+	token, err = jwt.SignTyped(s.cfg.Keys[0], "at+jwt", claims)
 
 	return token, s.cfg.AccessTokenTTL, err
 }

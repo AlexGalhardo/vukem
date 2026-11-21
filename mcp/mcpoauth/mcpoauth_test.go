@@ -52,7 +52,7 @@ func TestVerifierAdaptsTheAuthorizationServer(t *testing.T) {
 	v := mcpoauth.Verifier(as)
 
 	sign := func(aud string) string {
-		tok, err := jwt.Sign(jwt.ES256("k1", key), jwt.Claims{
+		tok, err := atSign(jwt.ES256("k1", key), jwt.Claims{
 			Issuer: issuer, Subject: "u1", Audience: []string{aud}, ExpiresAt: time.Now().Add(time.Minute),
 			Extra: map[string]any{"scope": "read write", "client_id": "app", "gid": "g1"},
 		})
@@ -84,3 +84,6 @@ func TestVerifierAdaptsTheAuthorizationServer(t *testing.T) {
 		t.Errorf("revoked grant: err = %v, want mcp.ErrInvalidToken", err)
 	}
 }
+
+// atSign signs like the server does: an RFC 9068 access token.
+func atSign(k jwt.Key, c jwt.Claims) (string, error) { return jwt.SignTyped(k, "at+jwt", c) }

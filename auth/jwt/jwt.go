@@ -241,13 +241,24 @@ type header struct {
 
 var b64 = base64.RawURLEncoding
 
-// Sign returns a compact JWS of claims signed with k.
-func Sign(k Key, c Claims) (string, error) {
+// Sign returns a compact JWS of claims signed with k, with the "typ" header
+// "JWT".
+func Sign(k Key, c Claims) (string, error) { return SignTyped(k, "JWT", c) }
+
+// SignTyped is Sign with another "typ" header, such as "at+jwt" for an OAuth
+// access token (RFC 9068). Pair it with VerifyOptions.Types so a token of one
+// kind cannot pass as another. typ must be a plain token: letters, digits and
+// the characters "-", ".", "_", "+" and "/".
+func SignTyped(k Key, typ string, c Claims) (string, error) {
 	if err := k.check(true); err != nil {
 		return "", err
 	}
 
-	h, err := json.Marshal(header{Alg: k.Alg, Typ: "JWT", Kid: k.ID})
+	if typ == "" || strings.Trim(typ, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._+/") != "" {
+		return "", fmt.Errorf("jwt: invalid typ %q", typ)
+	}
+
+	h, err := json.Marshal(header{Alg: k.Alg, Typ: typ, Kid: k.ID})
 	if err != nil {
 		return "", err
 	}
