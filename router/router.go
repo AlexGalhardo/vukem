@@ -25,6 +25,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"reflect"
 	"regexp"
 	"runtime"
@@ -731,7 +732,18 @@ func compileSecretPaths(patterns []string) ([]secretPath, error) {
 				web.RedactLogPath(req.Context(), n, req.PathValue(n))
 			}
 		})
-		if err := register(sp.mux, pattern, handler); err != nil {
+		if err := register(http.NewServeMux(), pattern, handler); err != nil {
+			return nil, fmt.Errorf("router: SecretPaths %q: %w", pattern, err)
+		}
+
+		// Without the method: a GET to the secret URL of a POST webhook logs
+		// the same path, and the secret must stay out of that line too.
+		matchAny := pattern
+		if _, rest, ok := strings.Cut(strings.TrimSpace(pattern), " "); ok {
+			matchAny = strings.TrimSpace(rest)
+		}
+
+		if err := register(sp.mux, matchAny, handler); err != nil {
 			return nil, fmt.Errorf("router: SecretPaths %q: %w", pattern, err)
 		}
 
@@ -747,6 +759,12 @@ func compileSecretPaths(patterns []string) ([]secretPath, error) {
 func redactPaths(ctx context.Context, req *http.Request, secret []secretPath) context.Context {
 	ctx, _ = web.WithLogAttrs(ctx)
 	probe := req.WithContext(ctx)
+
+	// On the clean path: "/hooks//s3cret/" names the same secret, and the mux
+	// would answer it with a redirect instead of reading the wildcard.
+	clean := *req.URL
+	clean.Path, clean.RawPath = pathpkg.Clean("/"+req.URL.Path), ""
+	probe.URL = &clean
 
 	for _, sp := range secret {
 		if _, pattern := sp.mux.Handler(probe); pattern != "" {
