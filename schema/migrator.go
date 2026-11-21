@@ -28,6 +28,12 @@ type Migration struct {
 	// half-way leaves the statements that ran, so keep such migrations to
 	// one statement, written to be re-run (IF NOT EXISTS).
 	NoTransaction bool
+	// AnyOrder exempts the migration from the out-of-order check, both as a
+	// pending migration and as the applied one others are compared to. It is
+	// for a migration a module ships under a fixed ID (queue, session, cache,
+	// webhook): an app can enable the module long after its own migrations
+	// ran, and the migration depends on none of them.
+	AnyOrder bool
 }
 
 // Status describes a migration's state.
@@ -58,14 +64,6 @@ type Migrator struct {
 // run them with [Migrator.AllowOutOfOrder].
 var ErrOutOfOrder = errors.New("schema: out-of-order migrations")
 
-// frameworkMarker in a migration ID marks a migration a vukem module ships
-// under a fixed ID (queue, session, cache, webhook). An app can enable such a
-// module long after its own migrations ran, so these never count as out of
-// order, neither as the pending one nor as the applied one it is compared to.
-const frameworkMarker = "_vukem_"
-
-func isFrameworkID(id string) bool { return strings.Contains(id, frameworkMarker) }
-
 // AllowOutOfOrder lets Up run a pending migration whose ID sorts before an
 // applied one, instead of failing with [ErrOutOfOrder]. It returns m.
 func (m *Migrator) AllowOutOfOrder() *Migrator {
@@ -74,12 +72,20 @@ func (m *Migrator) AllowOutOfOrder() *Migrator {
 }
 
 // outOfOrder lists the pending migrations (not in done) that sort before the
-// latest applied migration of the app.
-func outOfOrder(pending []string, done map[string]applied) []string {
+// latest applied migration, leaving out the AnyOrder ones on both sides.
+func (m *Migrator) outOfOrder(pending []string, done map[string]applied) []string {
+	anyOrder := map[string]bool{}
+
+	for _, mig := range m.migrations {
+		if mig.AnyOrder {
+			anyOrder[mig.ID] = true
+		}
+	}
+
 	last := ""
 
 	for id := range done {
-		if !isFrameworkID(id) {
+		if !anyOrder[id] {
 			last = max(last, id)
 		}
 	}
@@ -87,7 +93,7 @@ func outOfOrder(pending []string, done map[string]applied) []string {
 	var out []string
 
 	for _, id := range pending {
-		if !isFrameworkID(id) && id < last {
+		if !anyOrder[id] && id < last {
 			out = append(out, id)
 		}
 	}
@@ -218,7 +224,7 @@ func (m *Migrator) up(ctx context.Context) ([]string, error) {
 			}
 		}
 
-		if late := outOfOrder(pending, done); len(late) > 0 {
+		if late := m.outOfOrder(pending, done); len(late) > 0 {
 			return nil, fmt.Errorf(
 				"%w: %s sort before an applied migration; nothing ran. Review them, then run with --allow-out-of-order (Migrator.AllowOutOfOrder)",
 				ErrOutOfOrder,
@@ -689,7 +695,7 @@ func (m *Migrator) Status(ctx context.Context) ([]Status, error) {
 		}
 	}
 
-	late := outOfOrder(pending, done)
+	late := m.outOfOrder(pending, done)
 
 	for i := range out {
 		out[i].OutOfOrder = slices.Contains(late, out[i].ID)
