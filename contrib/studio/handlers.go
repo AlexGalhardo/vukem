@@ -89,8 +89,13 @@ func (s *Studio) failWith(w http.ResponseWriter, r *http.Request, err error, ext
 		status = http.StatusUnprocessableEntity
 	}
 
-	s.cfg.Log.WarnContext(r.Context(), "studio request failed", "path", r.URL.Path, "status", status,
-		"cause", errors.Unwrap(err))
+	// Only writes are POSTed here, and a driver's text can quote what was written.
+	var cause any = errors.Unwrap(err)
+	if r.Method != http.MethodGet {
+		cause = errorClass(err)
+	}
+
+	s.cfg.Log.WarnContext(r.Context(), "studio request failed", "path", r.URL.Path, "status", status, "cause", cause)
 
 	data := map[string]any{"Message": err.Error()}
 	maps.Copy(data, extra)

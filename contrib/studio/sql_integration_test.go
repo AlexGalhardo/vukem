@@ -603,7 +603,7 @@ func TestIntegrationConsoleWriteIsAudited(t *testing.T) {
 		}
 
 		log := logs.String()
-		for _, want := range []string{`msg="studio write"`, "action=console", "target=sql", "ok=true", "statement="} {
+		for _, want := range []string{`msg="studio write"`, "action=console", "target=sql", "ok=true", "bytes="} {
 			if !strings.Contains(log, want) {
 				t.Errorf("the audit line lacks %q: %s", want, log)
 			}

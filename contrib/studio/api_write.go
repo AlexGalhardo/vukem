@@ -76,7 +76,7 @@ func (s *Studio) apiWritable(w http.ResponseWriter, r *http.Request, src SQLSour
 	}
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return Table{}, false
 	}
 
@@ -111,7 +111,7 @@ func (s *Studio) apiInsertRow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
@@ -148,7 +148,7 @@ func (s *Studio) apiUpdateRow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
@@ -189,7 +189,7 @@ func (s *Studio) apiDeleteRow(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), src, "delete", t.Name, err, "key", confirmKey(key))
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
@@ -217,7 +217,7 @@ func (s *Studio) apiInsertDocument(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), m, "insert", coll, err)
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
@@ -245,7 +245,7 @@ func (s *Studio) apiReplaceDocument(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), m, "replace", coll, err, "id", id)
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
@@ -281,7 +281,7 @@ func (s *Studio) apiDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), m, "delete", coll, err, "id", id)
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
@@ -330,7 +330,7 @@ func (s *Studio) apiChangeKey(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), src, body.Action, key, err)
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return
 	}
 
@@ -366,7 +366,7 @@ func (s *Studio) apiDeleteKey(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), src, "del", key, err)
 
 	if err != nil {
-		s.apiFail(w, r, err)
+		s.apiWriteFail(w, r, err)
 		return
 	}
 

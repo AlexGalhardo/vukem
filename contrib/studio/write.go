@@ -30,7 +30,7 @@ func (s *Studio) audit(ctx context.Context, src Source, action, target string, e
 
 	args = append(args, "ok", err == nil)
 	if err != nil {
-		args = append(args, "error", err.Error())
+		args = append(args, "error", errorClass(err))
 	}
 
 	s.cfg.Log.WarnContext(ctx, "studio write", args...)

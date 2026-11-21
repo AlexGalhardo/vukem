@@ -366,7 +366,11 @@ func (m *MongoDB) Insert(ctx context.Context, coll, docJSON string) error {
 		return err
 	}
 
-	return m.api.insert(ctx, coll, doc)
+	if err := m.api.insert(ctx, coll, doc); err != nil {
+		return &queryError{err}
+	}
+
+	return nil
 }
 
 // Replace implements MongoSource (--write only): ReplaceOne by _id, which must
@@ -397,7 +401,7 @@ func (m *MongoDB) Replace(ctx context.Context, coll, id, docJSON string) error {
 
 	n, err := m.api.replace(ctx, coll, want, doc)
 	if err != nil {
-		return err
+		return &queryError{err}
 	}
 
 	if n != 1 {
@@ -436,7 +440,7 @@ func (m *MongoDB) Delete(ctx context.Context, coll, id string) error {
 
 	n, err := m.api.remove(ctx, coll, v)
 	if err != nil {
-		return err
+		return &queryError{err}
 	}
 
 	if n != 1 {
