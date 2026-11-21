@@ -28,8 +28,7 @@ test("opens the token URL and lists the sources", async ({ page, studio }) => {
 
   await page.goto(studio.startUrl);
 
-  await expect(page).toHaveURL(`${studio.origin}/`);
-  await page.goto(`${studio.origin}/ui/`);
+  await expect(page).toHaveURL(`${studio.origin}/ui/`);
 
   await expect(page.getByRole("heading", { name: "Sources" })).toBeVisible();
   await expect(page.getByRole("main").getByRole("link", { name: /^db/ })).toBeVisible();
@@ -89,6 +88,18 @@ test("no request leaves 127.0.0.1", async ({ page, studio }) => {
 
   expect([...seen.hosts]).toEqual(["127.0.0.1"]);
   expect(seen.errors).toEqual([]);
+});
+
+test("the root and the old pages lead to the interface or to 404", async ({ page, studio }) => {
+  await page.goto(studio.startUrl);
+  await page.goto(`${studio.origin}/`);
+  await expect(page).toHaveURL(`${studio.origin}/ui/`);
+  await expect(page.getByRole("heading", { name: "Sources" })).toBeVisible();
+
+  for (const path of ["/s/db/t/users", "/s/db/console", "/assets/htmx.min.js", "/events"]) {
+    const res = await page.request.get(`${studio.origin}${path}`);
+    expect(res.status()).toBe(404);
+  }
 });
 
 test("the start token works once", async ({ browser, studio }) => {
