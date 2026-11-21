@@ -50,6 +50,10 @@ func (s *Studio) apiRoutes() {
 	s.apiMongoRoutes()
 	s.apiRedisRoutes()
 
+	if s.cfg.Write {
+		s.apiWriteRoutes()
+	}
+
 	// Anything else under /api/v1/ is a JSON 404, so the interface never gets
 	// an HTML page where it expects JSON.
 	s.mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, _ *http.Request) {

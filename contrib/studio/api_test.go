@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -379,5 +381,143 @@ func TestAPIRedisMissingKeyIs404(t *testing.T) {
 	rec := apiGet(s, session(t, s), "/api/v1/sources/redis/keys/gone")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("GET a missing key = %d, want 404 (%s)", rec.Code, rec.Body)
+	}
+}
+
+// writeRoutes are every write route of the API with a valid body.
+func writeRoutes() []struct{ method, target, body string } {
+	return []struct{ method, target, body string }{
+		{"POST", "/api/v1/sources/db/tables/users/rows", `{"fields":{"id":{"text":"70"},"name":{"text":"x"}}}`},
+		{"PATCH", "/api/v1/sources/db/tables/users/rows/1", `{"fields":{"name":{"text":"x"}}}`},
+		{"DELETE", "/api/v1/sources/db/tables/users/rows/1", `{"confirm":"1"}`},
+		{"POST", "/api/v1/sources/mongo/collections/users/documents", `{"doc":"{}"}`},
+		{"PUT", "/api/v1/sources/mongo/collections/users/documents/1", `{"doc":"{}"}`},
+		{"DELETE", "/api/v1/sources/mongo/collections/users/documents/1", `{"confirm":"1"}`},
+		{"PATCH", "/api/v1/sources/redis/keys/session:abc", `{"action":"set","value":"x"}`},
+		{"DELETE", "/api/v1/sources/redis/keys/session:abc", `{"confirm":"session:abc"}`},
+	}
+}
+
+// mixedStudio is a Studio over the SQL harness plus the fake MongoDB and Redis.
+func mixedStudio(t *testing.T, write bool) (*sqlHarness, *harness) {
+	t.Helper()
+
+	sh := newSQLHarness(t)
+	m, fm := newMongo(t, write, rawDoc(t, int32(1), "ada"))
+	rdb, rec := fakeRedis(t, "string")
+	logs := &bytes.Buffer{}
+
+	s, err := New(Config{
+		Sources: []Source{sh.src, m, rdb}, Version: "t", Write: write, Log: slog.New(slog.NewTextHandler(logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return sh, &harness{s: s, mongo: m, fm: fm, redis: rdb, rec: rec, logs: logs, login: session(t, s)}
+}
+
+func TestAPIWriteRoutesAbsentWithoutFlag(t *testing.T) {
+	t.Parallel()
+
+	sh, h := mixedStudio(t, false)
+
+	for _, rt := range writeRoutes() {
+		rec := apiDo(h.s, h.login, rt.method, rt.target, rt.body)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s without --write = %d, want 404", rt.method, rt.target, rec.Code)
+		}
+	}
+
+	if n := sh.users(t); n != 5 {
+		t.Errorf("users has %d rows, want 5", n)
+	}
+
+	for _, c := range h.fm.calls {
+		if c != "find" && c != "findID" {
+			t.Errorf("a write reached MongoDB: %v", h.fm.calls)
+		}
+	}
+
+	for _, c := range h.rec.names() {
+		if c == "SET" || c == "DEL" {
+			t.Errorf("a write reached Redis: %v", h.rec.names())
+		}
+	}
+}
+
+func TestAPIWriteNeedsConfirm(t *testing.T) {
+	t.Parallel()
+
+	sh, h := mixedStudio(t, true)
+
+	for _, rt := range []struct{ target string }{
+		{"/api/v1/sources/db/tables/users/rows/1"},
+		{"/api/v1/sources/mongo/collections/users/documents/" + url.PathEscape(`{"$numberInt":"1"}`)},
+		{"/api/v1/sources/redis/keys/session:abc"},
+	} {
+		for name, body := range map[string]string{
+			"missing": `{}`, "empty": `{"confirm":""}`, "wrong": `{"confirm":"nope"}`,
+		} {
+			rec := apiDo(h.s, h.login, "DELETE", rt.target, body)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Errorf("DELETE %s with %s confirm = %d, want 422 (%s)", rt.target, name, rec.Code, rec.Body)
+			}
+		}
+	}
+
+	if n := sh.users(t); n != 5 {
+		t.Fatalf("a row was deleted without the confirmation: users = %d", n)
+	}
+
+	if slices.Contains(h.fm.calls, "remove") || slices.Contains(h.rec.names(), "DEL") {
+		t.Errorf("a delete reached MongoDB or Redis: %v %v", h.fm.calls, h.rec.names())
+	}
+
+	for _, rt := range []struct{ target, body string }{
+		{"/api/v1/sources/db/tables/users/rows/1", `{"confirm":"1"}`},
+		{"/api/v1/sources/mongo/collections/users/documents/" + url.PathEscape(`{"$numberInt":"1"}`), `{"confirm":"1"}`},
+		{"/api/v1/sources/redis/keys/session:abc", `{"confirm":"session:abc"}`},
+	} {
+		if rec := apiDo(h.s, h.login, "DELETE", rt.target, rt.body); rec.Code != http.StatusOK {
+			t.Errorf("confirmed DELETE %s = %d, want 200 (%s)", rt.target, rec.Code, rec.Body)
+		}
+	}
+
+	if n := sh.users(t); n != 4 {
+		t.Errorf("users = %d after the confirmed delete, want 4", n)
+	}
+}
+
+func TestAPIWriteAudited(t *testing.T) {
+	t.Parallel()
+
+	_, h := mixedStudio(t, true)
+
+	for _, rt := range []struct{ method, target, body string }{
+		{"POST", "/api/v1/sources/db/tables/users/rows", `{"fields":{"id":{"text":"70"},"name":{"text":"S3cretValue"}}}`},
+		{"PATCH", "/api/v1/sources/db/tables/users/rows/70", `{"fields":{"name":{"text":"Another-S3cret"}}}`},
+		{"DELETE", "/api/v1/sources/db/tables/users/rows/70", `{"confirm":"70"}`},
+		{"PATCH", "/api/v1/sources/redis/keys/session:abc", `{"action":"set","value":"S3cret-redis"}`},
+	} {
+		if rec := apiDo(h.s, h.login, rt.method, rt.target, rt.body); rec.Code >= 300 {
+			t.Fatalf("%s %s = %d (%s)", rt.method, rt.target, rec.Code, rec.Body)
+		}
+	}
+
+	out := h.logs.String()
+	for _, want := range []string{"action=insert", "action=update", "action=delete", "columns=id,name", "key=70", "ok=true"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the audit lacks %q: %s", want, out)
+		}
+	}
+
+	if strings.Contains(out, "S3cret") {
+		t.Errorf("a written value reached the log: %s", out)
+	}
+
+	rec := apiDo(h.s, h.login, "POST", "/api/v1/sources/db/tables/users/rows", `{"fields":{"nope":{"text":"x"}}}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("insert of an unknown column = %d, want 422", rec.Code)
 	}
 }
