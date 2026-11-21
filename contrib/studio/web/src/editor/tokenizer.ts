@@ -314,21 +314,43 @@ export class LineCache {
   /** update brings the cache to the text and returns the tokens of each line. */
   update(text: string): readonly (readonly Token[])[] {
     const next = text.split("\n");
-    const out = new Array<CachedLine>(next.length);
-    let state = startState;
+    const old = this.lines;
 
-    for (let i = 0; i < next.length; i++) {
+    // Lines that did not change at the top and at the bottom are kept as they are, so a line added or
+    // removed in the middle does not make the lines below it look different.
+    let head = 0;
+    while (head < old.length && head < next.length && (old[head] as CachedLine).text === next[head]) {
+      head++;
+    }
+    let oldTail = old.length;
+    let newTail = next.length;
+    while (oldTail > head && newTail > head && (old[oldTail - 1] as CachedLine).text === next[newTail - 1]) {
+      oldTail--;
+      newTail--;
+    }
+
+    const out: CachedLine[] = old.slice(0, head);
+    let state = head > 0 ? (out[head - 1] as CachedLine).end : startState;
+
+    for (let i = head; i < newTail; i++) {
       const line = next[i] as string;
-      const old = this.lines[i];
-      let cached: CachedLine;
-      if (old && old.text === line && sameState(old.start, state)) {
-        cached = old;
-      } else {
-        const { tokens, end } = scanLine(line, state);
-        cached = { text: line, start: state, tokens, end };
+      const { tokens, end } = scanLine(line, state);
+      out.push({ text: line, start: state, tokens, end });
+      state = end;
+    }
+
+    // The lines below the change keep their tokens as long as what is open when they start did not move.
+    for (let i = newTail; i < next.length; i++) {
+      const kept = old[oldTail + (i - newTail)] as CachedLine;
+      if (sameState(kept.start, state)) {
+        for (let j = oldTail + (i - newTail); j < old.length; j++) {
+          out.push(old[j] as CachedLine);
+        }
+        break;
       }
-      out[i] = cached;
-      state = cached.end;
+      const { tokens, end } = scanLine(kept.text, state);
+      out.push({ text: kept.text, start: state, tokens, end });
+      state = end;
     }
 
     this.lines = out;

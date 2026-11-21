@@ -144,8 +144,39 @@ function insideLiteral(text: string, cursor: number): boolean {
   return false;
 }
 
+/** How many lines around the cursor completion reads. A statement is rarely longer, and reading all of a long script on every key would not be cheap. */
+export const windowLines = 100;
+const windowFloor = 20_000;
+
+/** windowAround is the part of the text within windowLines lines of the cursor, and where it starts. */
+export function windowAround(text: string, cursor: number): { text: string; offset: number } {
+  if (text.length <= windowFloor) {
+    return { text, offset: 0 };
+  }
+  let start = cursor;
+  for (let n = 0; n < windowLines && start > 0; n++) {
+    const k = text.lastIndexOf("\n", start - 1);
+    start = k < 0 ? 0 : k;
+  }
+  if (start > 0) {
+    start++;
+  }
+  let end = cursor;
+  for (let n = 0; n < windowLines && end < text.length; n++) {
+    const k = text.indexOf("\n", n === 0 ? end : end + 1);
+    end = k < 0 ? text.length : k;
+  }
+  return { text: text.slice(start, end), offset: start };
+}
+
 /** complete returns the suggestions for the word at the cursor, or none when there is nothing to offer. */
 export function complete(text: string, cursor: number, source: CompletionSource, explicit = false): Completion {
+  const w = windowAround(text, cursor);
+  const result = completeIn(w.text, cursor - w.offset, source, explicit);
+  return { from: result.from + w.offset, items: result.items };
+}
+
+function completeIn(text: string, cursor: number, source: CompletionSource, explicit: boolean): Completion {
   const { from, word } = wordBefore(text, cursor);
   const none: Completion = { from, items: [] };
 
@@ -171,7 +202,7 @@ export function complete(text: string, cursor: number, source: CompletionSource,
     return none;
   }
 
-  const before = tokenize(text.slice(0, from))
+  const before = tokenize(text.slice(Math.max(0, from - 400), from))
     .filter((t) => t.kind !== "space" && t.kind !== "comment")
     .at(-1);
   const afterTableWord = before?.kind === "keyword" && ["from", "join", "update", "into", "table"].includes(before.text.toLowerCase());
