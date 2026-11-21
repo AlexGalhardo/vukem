@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { complete, tablesIn, wordBefore } from "./complete";
+import { complete, tablesIn, windowAround, windowLines, wordBefore } from "./complete";
 import type { CompletionSource } from "./complete";
 
 const columns: Record<string, string[]> = {
@@ -112,5 +112,39 @@ describe("a word typed in full", () => {
 
   test("an exact match with other candidates stays, first", () => {
     expect(at("or|").labels.slice(0, 2)).toEqual(["OR", "orders"]);
+  });
+});
+
+describe("long texts", () => {
+  const long = Array.from({ length: 3000 }, (_, i) => `select ${i} from users; -- line ${i}`).join("\n");
+
+  test("reads only the lines around the cursor", () => {
+    const cursor = long.indexOf("-- line 1500");
+    const w = windowAround(long, cursor);
+    expect(w.text.split("\n").length <= 2 * windowLines + 1).toBe(true);
+    expect(w.text.length < long.length / 10).toBe(true);
+    expect(long.slice(w.offset, w.offset + w.text.length)).toBe(w.text);
+    expect(w.offset <= cursor && cursor <= w.offset + w.text.length).toBe(true);
+  });
+
+  test("a short text is read whole", () => {
+    expect(windowAround("select 1", 3)).toEqual({ text: "select 1", offset: 0 });
+  });
+
+  test("completes in the middle of a long text, with offsets back in the whole text", () => {
+    const at = long.indexOf("-- line 1500");
+    const text = long.slice(0, at) + "sel" + long.slice(at);
+    const c = complete(text, at + 3, source);
+    expect(c.items.map((i) => i.label)).toContain("SELECT");
+    expect(c.from).toBe(at);
+  });
+
+  test("the ends of a long text work too", () => {
+    const c0 = complete("sel" + long, 3, source);
+    expect(c0.from).toBe(0);
+    expect(c0.items.length > 0).toBe(true);
+    const c1 = complete(long + "\nsel", long.length + 4, source);
+    expect(c1.from).toBe(long.length + 1);
+    expect(c1.items.length > 0).toBe(true);
   });
 });

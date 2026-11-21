@@ -141,3 +141,45 @@ describe("LineCache", () => {
     expect(after[1]?.[0]?.kind).toBe("string");
   });
 });
+
+describe("LineCache with lines added and removed", () => {
+  const lines = (text: string): ReturnType<LineCache["update"]> => new LineCache().update(text);
+
+  test("gives the same tokens as a fresh scan after every kind of edit", () => {
+    const steps = [
+      "select 1\nselect 2\nselect 3\nselect 4",
+      "select 1\nselect 2\nselect 2b\nselect 3\nselect 4",
+      "select 1\nselect 3\nselect 4",
+      "select 1\nselect '\nselect 3\nselect 4",
+      "select 1\nselect 3\nselect 4",
+      "/* open\nselect 3\nselect 4",
+      "select 4",
+      "",
+      "a\n\n\nb",
+    ];
+    const cache = new LineCache();
+    for (const text of steps) {
+      const got = cache.update(text).map((l) => l.map((t) => `${t.kind}:${t.text}`).join("|"));
+      const want = lines(text).map((l) => l.map((t) => `${t.kind}:${t.text}`).join("|"));
+      expect(got).toEqual(want);
+    }
+  });
+
+  test("a line inserted in the middle leaves the lines below untouched", () => {
+    const cache = new LineCache();
+    const before = cache.update("select 1\nselect 2\nselect 3\nselect 4");
+    const after = cache.update("select 1\nselect 2\nnew line\nselect 3\nselect 4");
+    expect(after.length).toBe(5);
+    expect(after[3]).toBe(before[2] as readonly unknown[]);
+    expect(after[4]).toBe(before[3] as readonly unknown[]);
+    expect(after[0]).toBe(before[0] as readonly unknown[]);
+  });
+
+  test("closing a quote redraws the lines it covered and keeps the ones after", () => {
+    const cache = new LineCache();
+    cache.update("select '\nselect 2\nselect 3");
+    const closed = cache.update("select ''\nselect 2\nselect 3");
+    expect(closed[1]?.[0]?.kind).toBe("keyword");
+    expect(closed[2]?.[0]?.kind).toBe("keyword");
+  });
+});
