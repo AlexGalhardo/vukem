@@ -130,3 +130,37 @@ func TestConsoleResultSizeLimit(t *testing.T) {
 		t.Errorf("rows = %d, truncate = %v, want the size limit to cut the result", len(rs.Rows), rs.Truncate)
 	}
 }
+
+func TestBootstrapSessionKey(t *testing.T) {
+	t.Parallel()
+
+	_, s1, _, c1 := writeStudio(t, false)
+	_, s2, _, c2 := writeStudio(t, false)
+
+	read := func(s *Studio, c *http.Cookie) string {
+		var got struct {
+			SessionKey string `json:"sessionKey"`
+		}
+
+		rec := apiGet(s, c, "/api/v1/bootstrap")
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+
+		return got.SessionKey
+	}
+
+	a, again, b := read(s1, c1), read(s1, c1), read(s2, c2)
+
+	if len(a) != 16 || a != again {
+		t.Errorf("session key = %q then %q, want 16 stable characters", a, again)
+	}
+
+	if a == b {
+		t.Error("two Studio runs share a session key")
+	}
+
+	if strings.Contains(a, c1.Value) || strings.Contains(c1.Value, a) {
+		t.Error("the session key shows the session cookie")
+	}
+}

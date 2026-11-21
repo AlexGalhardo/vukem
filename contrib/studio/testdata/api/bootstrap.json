@@ -2,6 +2,7 @@
   "version": "t",
   "write": false,
   "refreshSeconds": 2,
+  "sessionKey": "0000000000000000",
   "sources": [
     {
       "name": "db",

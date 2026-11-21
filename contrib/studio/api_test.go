@@ -18,8 +18,11 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-// elapsed is the one value of a response that changes between runs.
-var elapsed = regexp.MustCompile(`"elapsedMs": \d+`)
+// elapsed and sessionKey are the values of a response that change between runs.
+var (
+	elapsed    = regexp.MustCompile(`"elapsedMs": \d+`)
+	sessionKey = regexp.MustCompile(`"sessionKey": "[0-9a-f]{16}"`)
+)
 
 var update = flag.Bool("update", false, "rewrite the golden files in testdata/")
 
@@ -60,7 +63,7 @@ func golden(t *testing.T, name string, rec *httptest.ResponseRecorder, wantStatu
 		t.Fatalf("%s: body is not JSON: %v\n%s", name, err, rec.Body)
 	}
 
-	buf = *bytes.NewBuffer(elapsed.ReplaceAll(buf.Bytes(), []byte(`"elapsedMs": 0`)))
+	buf = *bytes.NewBuffer(sessionKey.ReplaceAll(elapsed.ReplaceAll(buf.Bytes(), []byte(`"elapsedMs": 0`)), []byte(`"sessionKey": "0000000000000000"`)))
 	buf.WriteByte('\n')
 
 	file := filepath.Join("testdata", "api", name+".json")
