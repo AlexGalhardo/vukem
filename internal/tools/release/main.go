@@ -7,7 +7,10 @@
 //
 // -prepare writes the changelog and the chore(release) commit on any branch
 // (including release/vX.Y.Z) and does not tag. -tag creates the annotated tag
-// only on main, and only when that commit is the tip. -image-tags prints the
+// only on main, and only when that commit is the tip and its changelog section
+// is what the commits on main generate (a rebase merge replaces the commit ids
+// -prepare linked: run -prepare again then). -publish-only refuses a section
+// that links a commit the tag does not contain. -image-tags prints the
 // registry tags for a version: X.Y and latest only when it is the highest
 // stable vX.Y.Z already published.
 //
@@ -204,15 +207,10 @@ func releaseBranch(prepare bool) (string, error) {
 	return branch, nil
 }
 
-func writeChangelog(ref, version string, bumpPlan bool) (string, error) {
-	previous := git(previousDescribeArgs(ref + "^")...)
-	rangeArg := ref
-
-	if previous != "" {
-		rangeArg = previous + ".." + ref
-	}
-
-	section, err := output(
+// generateSection renders the changelog section of version from a git range
+// with git-cliff. Tests replace it.
+var generateSection = func(rangeArg, version string) (string, error) {
+	return output(
 		"git",
 		"cliff",
 		"--config",
@@ -223,12 +221,34 @@ func writeChangelog(ref, version string, bumpPlan bool) (string, error) {
 		"--strip",
 		"all",
 	)
+}
+
+// buildSection generates version's section from the commits between the
+// previous release and ref, and returns it with that previous tag.
+func buildSection(ref, version string) (section, previous string, err error) {
+	previous = git(previousDescribeArgs(ref + "^")...)
+	rangeArg := ref
+
+	if previous != "" {
+		rangeArg = previous + ".." + ref
+	}
+
+	section, err = generateSection(rangeArg, version)
 	if err != nil {
-		return "", fmt.Errorf("git cliff: %w", err)
+		return "", "", fmt.Errorf("git cliff: %w", err)
 	}
 
 	if !strings.Contains(section, "### ") {
 		section = strings.TrimSpace(section) + "\n\n### Changed\n\n- Maintenance release (no user-facing changes).\n"
+	}
+
+	return section, previous, nil
+}
+
+func writeChangelog(ref, version string, bumpPlan bool) (string, error) {
+	section, previous, err := buildSection(ref, version)
+	if err != nil {
+		return "", err
 	}
 
 	current, err := os.ReadFile("CHANGELOG.md")
@@ -236,7 +256,19 @@ func writeChangelog(ref, version string, bumpPlan bool) (string, error) {
 		return "", err
 	}
 
-	updated, err := insertRelease(string(current), section, version, previous)
+	// A section that a previous -prepare wrote and that was never tagged is
+	// regenerated: after a rebase merge its commit links point at commits
+	// the tag will not contain.
+	text := string(current)
+	if strings.Contains(text, "## ["+strings.TrimPrefix(version, "v")+"]") {
+		if git("rev-parse", "--verify", "--quiet", "refs/tags/"+version) != "" {
+			return "", fmt.Errorf("%s is already tagged: its section is never regenerated", version)
+		}
+
+		text = dropSection(text, version)
+	}
+
+	updated, err := insertRelease(text, section, version, previous)
 	if err != nil {
 		return "", err
 	}
@@ -331,6 +363,15 @@ func tagOnMain(out io.Writer, version string, push bool) error {
 
 	if dirty := git("status", "--porcelain", "--untracked-files=no"); dirty != "" {
 		return fmt.Errorf("working tree is not clean:\n%s", dirty)
+	}
+
+	current, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		return err
+	}
+
+	if err := verifySectionCurrent(string(current), version, "HEAD"); err != nil {
+		return err
 	}
 
 	if _, err := output("git", "tag", "-a", version, "-m", version, "HEAD"); err != nil {
@@ -477,6 +518,10 @@ func publishExisting(version string) error {
 	notes := releaseNotes(string(current), version)
 	if notes == "" {
 		return fmt.Errorf("CHANGELOG.md has no section for %s", version)
+	}
+
+	if err := verifyLinkedCommits(string(current), version, version); err != nil {
+		return err
 	}
 
 	return publish(version, notes)
