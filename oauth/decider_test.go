@@ -170,9 +170,13 @@ func TestSecurity_A01_ConsentDeciderEmptyApprovesNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			e := deciderEnv(t, oauth.NewMemoryStore(), func(*http.Request, oauth.ConsentRequest) (oauth.Decision, error) {
-				return oauth.Decision{Scopes: scopes, Tenant: "7"}, nil
-			})
+			e := deciderEnv(
+				t,
+				oauth.NewMemoryStore(),
+				func(*http.Request, oauth.ConsentRequest) (oauth.Decision, error) {
+					return oauth.Decision{Scopes: scopes, Tenant: "7"}, nil
+				},
+			)
 
 			if rec := e.get(authQuery(rwQuery)); rec.Code != 200 {
 				t.Fatalf("GET = %d", rec.Code)
