@@ -546,7 +546,17 @@ func TestRebuildIndexes(t *testing.T) {
 		wantErr string
 		wantSQL []string // sqlite_master text of the explicit indexes afterwards
 	}{
-		{name: "a lost index is refused", fn: body, wantErr: "would lose index(es) jobs_active, jobs_kind_state_index"},
+		{
+			name: "a lost index is refused, naming the fix",
+			fn:   body,
+			wantErr: "would lose index(es) jobs_active, jobs_kind_state_index; declare them, pass schema.KeepIndexes() " +
+				`to recreate them or schema.DropIndexes("jobs_active", "jobs_kind_state_index") to accept the loss`,
+		},
+		{
+			name:    "a lost index points at the upgrade guide",
+			fn:      body,
+			wantErr: "docs/upgrade/1.0.md, section \"Schema.Rebuild refuses to lose a column or an index\"",
+		},
 		{
 			name:    "KeepIndexes keeps the original text",
 			fn:      body,
@@ -735,9 +745,20 @@ func TestRebuildInDownRefusesTheColumnItsUpAdded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := m.Rollback(t.Context(), 1); err == nil ||
-		!strings.Contains(err.Error(), "would lose column(s) rollover") {
-		t.Fatalf("Rollback() = %v, want the refusal naming rollover", err)
+	_, refused := m.Rollback(t.Context(), 1)
+	if refused == nil || !strings.Contains(refused.Error(), "would lose column(s) rollover") {
+		t.Fatalf("Rollback() = %v, want the refusal naming rollover", refused)
+	}
+
+	// The refusal names the exact fix and the guide, so the person who hits it in a Down finds both.
+	for _, want := range []string{
+		`schema.DropColumns("rollover")`,
+		"docs/upgrade/1.0.md",
+		"Schema.Rebuild refuses to lose a column or an index",
+	} {
+		if !strings.Contains(refused.Error(), want) {
+			t.Errorf("Rollback() error = %q, want it to contain %q", refused, want)
+		}
 	}
 
 	fixed, err := NewMigrator(db, build(DropColumns("rollover")))
