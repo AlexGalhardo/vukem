@@ -686,3 +686,73 @@ func indexSQL(t *testing.T, db *database.DB) []string {
 
 	return out
 }
+
+// VF-113: a Down written before Rebuild refused implicit drops leaves out the
+// column its Up added. It is refused by default, names the fix, and the fix
+// (DropColumns) neither changes the Up checksum nor reopens silent loss.
+func TestRebuildInDownRefusesTheColumnItsUpAdded(t *testing.T) {
+	t.Parallel()
+
+	down := func(opts ...RebuildOption) func(*Schema) error {
+		return func(s *Schema) error {
+			return s.Rebuild("budgets", func(t *Table) {
+				t.ID()
+				t.String("name")
+			}, opts...)
+		}
+	}
+
+	build := func(opts ...RebuildOption) []Migration {
+		return []Migration{
+			{
+				ID: "20261122130000_create_budgets",
+				Up: func(s *Schema) error {
+					return s.Create("budgets", func(t *Table) {
+						t.ID()
+						t.String("name")
+					})
+				},
+			},
+			{
+				ID:            "20261122140000_add_rollover",
+				NoTransaction: true,
+				Up: func(s *Schema) error {
+					return s.Table("budgets", func(t *Table) { t.Integer("rollover").Default(0) })
+				},
+				Down: down(opts...),
+			},
+		}
+	}
+
+	db := rebuildDB(t)
+
+	m, err := NewMigrator(db, build())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.Rollback(t.Context(), 1); err == nil ||
+		!strings.Contains(err.Error(), "would lose column(s) rollover") {
+		t.Fatalf("Rollback() = %v, want the refusal naming rollover", err)
+	}
+
+	fixed, err := NewMigrator(db, build(DropColumns("rollover")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if back, err := fixed.Rollback(t.Context(), 1); err != nil || len(back) != 1 {
+		t.Fatalf("Rollback() with DropColumns = %v, %v, want it to run", back, err)
+	}
+
+	before, _ := m.Checksum(build()[1])
+	after, _ := fixed.Checksum(build(DropColumns("rollover"))[1])
+
+	if before != after {
+		t.Errorf("checksum changed after editing Down: %s != %s", before, after)
+	}
+}
