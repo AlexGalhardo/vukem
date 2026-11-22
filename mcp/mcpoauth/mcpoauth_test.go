@@ -34,7 +34,7 @@ func TestVerifierAdaptsTheAuthorizationServer(t *testing.T) {
 
 	store := oauth.NewMemoryStore()
 	if err := store.CreateGrant(t.Context(), oauth.Grant{
-		ID: "g1", ClientID: "app", Subject: "u1", Scopes: []string{"read", "write"}, Resource: resource,
+		ID: "g1", ClientID: "app", Subject: "u1", Tenant: "ws1", Scopes: []string{"read", "write"}, Resource: resource,
 		CreatedAt: time.Now(),
 	}); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestVerifierAdaptsTheAuthorizationServer(t *testing.T) {
 
 	info, err := v.VerifyAccessToken(t.Context(), sign(resource), resource)
 	if err != nil || info.Subject != "u1" || info.ClientID != "app" || len(info.Scopes) != 2 ||
-		info.Resource != resource {
+		info.Resource != resource || info.Tenant != "ws1" || info.GrantID != "g1" {
 		t.Fatalf("VerifyAccessToken = %+v, %v", info, err)
 	}
 

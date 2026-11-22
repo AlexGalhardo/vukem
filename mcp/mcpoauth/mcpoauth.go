@@ -29,6 +29,12 @@ func (v verifier) VerifyAccessToken(ctx context.Context, token, resource string)
 	}
 
 	return &mcp.TokenInfo{
-		Subject: at.Subject, ClientID: at.ClientID, Scopes: at.Scopes, Resource: at.Resource, ExpiresAt: at.ExpiresAt,
+		Subject:   at.Subject,
+		Tenant:    at.Tenant,
+		GrantID:   at.GrantID,
+		ClientID:  at.ClientID,
+		Scopes:    at.Scopes,
+		Resource:  at.Resource,
+		ExpiresAt: at.ExpiresAt,
 	}, nil
 }
