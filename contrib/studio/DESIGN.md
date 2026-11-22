@@ -40,6 +40,26 @@ Light and dark palettes follow `prefers-color-scheme` and a manual toggle
 (`data-theme` on the root element). Motion is off under
 `prefers-reduced-motion`.
 
+**The dark palette is neutral.** Page, panels, grid, inputs, menus and dialogs
+use true black and neutral grays with no hue (equal red, green and blue
+channels); the teal appears only as the accent (buttons, focus ring, links,
+selection). Nothing in the dark theme is tinted green. The light palette is
+unchanged.
+
+| Dark token | Value | Contrast on `--surface` / `--surface-raised` |
+| --- | --- | --- |
+| `--surface` | `#000000` | |
+| `--surface-sunken` | `#0a0a0a` | |
+| `--surface-raised` | `#141414` | |
+| `--border` | `#333333` | decorative separator |
+| `--text` | `#ededed` | 17.9 / 15.7 |
+| `--text-muted` | `#a3a3a3` | 8.3 / 7.3 |
+| `--accent` | `#2dd4bf` | 11.3 / 9.9 |
+| `--text-on-accent` | `#000000` | 11.3 on `--accent` |
+| `--ok`, `--warn`, `--danger` | `#4ade80`, `#fbbf24`, `#f87171` | 12.1, 12.6, 7.6 on `--surface` |
+
+Every text pair holds WCAG AA (4.5:1) on the three surfaces.
+
 ## Constraints from the security model
 
 The Content Security Policy allows only same-origin scripts and styles. So the
