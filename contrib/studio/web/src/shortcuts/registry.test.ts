@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isTypingTarget, refusal, ShortcutRegistry } from "./registry";
+import { helpChordLabel, isApplePlatform, isHelpChord, isTypingTarget, refusal, ShortcutRegistry } from "./registry";
 import type { KeyEventLike } from "./registry";
 
 /** A stand-in for a DOM element: it knows its tag and whether it is editable. */
@@ -234,5 +234,34 @@ describe("chords", () => {
     for (const k of ["ctrl+t", "ctrl+w", "ctrl+n", "meta+t", "meta+w", "meta+n", "mod+t"]) {
       expect(refusal(k) === null).toBe(false);
     }
+  });
+});
+
+describe("the help chord", () => {
+  test("Ctrl+K opens the help off Apple platforms, Cmd+K on them, and no other combination does", () => {
+    expect(isHelpChord(key("k", { ctrlKey: true }), false)).toBe(true);
+    expect(isHelpChord(key("K", { ctrlKey: true }), false)).toBe(true);
+    expect(isHelpChord(key("k", { metaKey: true }), false)).toBe(false);
+    expect(isHelpChord(key("k", { metaKey: true }), true)).toBe(true);
+    expect(isHelpChord(key("k", { ctrlKey: true }), true)).toBe(false);
+    expect(isHelpChord(key("k"), false)).toBe(false);
+    expect(isHelpChord(key("k", { ctrlKey: true, shiftKey: true }), false)).toBe(false);
+    expect(isHelpChord(key("k", { ctrlKey: true, altKey: true }), false)).toBe(false);
+    expect(isHelpChord(key("j", { ctrlKey: true }), false)).toBe(false);
+  });
+
+  test("a held key, a composition or a handled event does not open it again", () => {
+    expect(isHelpChord(key("k", { ctrlKey: true, repeat: true }), false)).toBe(false);
+    expect(isHelpChord(key("k", { ctrlKey: true, isComposing: true }), false)).toBe(false);
+    expect(isHelpChord(key("k", { ctrlKey: true, defaultPrevented: true }), false)).toBe(false);
+  });
+
+  test("the label and the platform", () => {
+    expect(helpChordLabel(false)).toBe("Ctrl K");
+    expect(helpChordLabel(true)).toBe("⌘ K");
+    expect(isApplePlatform("MacIntel")).toBe(true);
+    expect(isApplePlatform("iPhone")).toBe(true);
+    expect(isApplePlatform("Win32")).toBe(false);
+    expect(isApplePlatform("")).toBe(false);
   });
 });

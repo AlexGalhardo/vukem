@@ -176,3 +176,26 @@ export class ShortcutRegistry {
     return false;
   }
 }
+
+/** The modifier of the help chord: Cmd on Apple platforms, Ctrl elsewhere (Ctrl+K is the kill-line key of macOS text fields). */
+export function isApplePlatform(platform: string): boolean {
+  return /^(Mac|iPhone|iPad|iPod)/i.test(platform);
+}
+
+/** The label of the help chord, as shown in the header and the help dialog. */
+export function helpChordLabel(apple: boolean): string {
+  return apple ? "⌘ K" : "Ctrl K";
+}
+
+/**
+ * isHelpChord says whether an event is the chord that opens the shortcut
+ * help: Ctrl+K (Cmd+K on Apple platforms), with no other modifier. It is the
+ * one combination Studio takes besides the plain keys, and it works inside a
+ * field too, because a modified key is never text.
+ */
+export function isHelpChord(event: KeyEventLike, apple: boolean): boolean {
+  if (event.key.toLowerCase() !== "k" || event.altKey || event.shiftKey || event.repeat || event.isComposing || event.defaultPrevented) {
+    return false;
+  }
+  return apple ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+}

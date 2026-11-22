@@ -3,7 +3,7 @@ import type { Bootstrap } from "../api/types";
 import { Link, navigate } from "../lib/history";
 import { hrefFor } from "../lib/router";
 import type { Route } from "../lib/router";
-import { useShortcutHelp } from "../shortcuts/ShortcutsProvider";
+import { helpChord, useShortcutHelp } from "../shortcuts/ShortcutsProvider";
 import { KeyboardIcon } from "./icons";
 import { ModeBadge } from "./ModeBadge";
 import { ThemeToggle } from "./ThemeToggle";
@@ -48,6 +48,15 @@ export function TopBar({ bootstrap, route }: { bootstrap: Bootstrap; route: Rout
           onClick={openHelp}
         >
           <KeyboardIcon />
+        </button>
+        <button
+          type="button"
+          className="shortcuts-link"
+          aria-keyshortcuts={helpChord.startsWith("Ctrl") ? "Control+K" : "Meta+K"}
+          onClick={openHelp}
+        >
+          Shortcuts
+          <kbd className="key-hint">{helpChord}</kbd>
         </button>
         <ThemeToggle />
         <span className="version muted">{bootstrap.version}</span>
