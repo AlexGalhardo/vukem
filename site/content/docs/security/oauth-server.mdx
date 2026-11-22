@@ -81,11 +81,12 @@ func (c consent) Decide(w http.ResponseWriter, r *http.Request, req oauth.Consen
 		return oauth.Decision{}, oauth.ErrConsentDenied // the client gets access_denied
 	}
 
-	return oauth.Decision{Scopes: r.PostForm["scope"], Tenant: ws}, nil
+	// "approved" is the screen's own checkbox field: "scope" is the signed request.
+	return oauth.Decision{Scopes: r.PostForm["approved"], Tenant: ws}, nil
 }
 ```
 
-`Decision.Scopes` must be a subset of `req.Scopes` (empty means all of them); a scope that was not requested ends the request with `server_error` and no code. The requested set is bound to the form by the `csrf` token, so a forged `scope` field fails before `Decide` runs. The approved set is what the grant stores, so the code, the refresh tokens and every access token carry it, and a refresh cannot ask for more. `VerifyAccessToken` returns `Tenant` and `GrantID` from the grant. With `SQLStore`, run `oauth.TenantMigration` after `oauth.Migration` and use `NewSQLStore(db).WithTenant()`; without it a grant with a tenant is refused instead of saved without it. A `Consent` without `Decide` keeps the old behavior: the requested scopes and no tenant.
+`Decision.Scopes` must be a subset of `req.Scopes`. To approve everything, return `req.Scopes`; an empty list approves nothing and the client gets `access_denied`. A scope that was not requested ends the request with `server_error` and no code. The requested set is bound to the form by the `csrf` token, so a forged `scope` field fails before `Decide` runs. The approved set is what the grant stores, so the code, the refresh tokens and every access token carry it, and a refresh cannot ask for more. `VerifyAccessToken` returns `Tenant` and `GrantID` from the grant. With `SQLStore`, run `oauth.TenantMigration` after `oauth.Migration` and use `NewSQLStore(db).WithTenant()`; without it a grant with a tenant is refused instead of saved without it. A `Consent` without `Decide` keeps the old behavior: the requested scopes and no tenant.
 
 ## What the server enforces
 
