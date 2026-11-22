@@ -52,6 +52,38 @@ type Result struct {
 	IsError    bool
 }
 
+// TextResult is a tool result with its own text next to the structured value:
+// Data becomes structuredContent and is checked against its own `validate`
+// tags and described by outputSchema, as a plain struct result is, while Text
+// replaces the JSON copy as the content block the model reads (a short
+// summary, a warning about untrusted data). An empty Text falls back to the
+// JSON of Data. Use it as the R of AddTool; it is not a Result, so
+// outputSchema is kept.
+type TextResult[T any] struct {
+	Text string
+	Data T
+}
+
+// textual lets AddTool read a TextResult without knowing its T.
+type textual interface {
+	text() string
+	data() any
+	dataType() reflect.Type
+	check() error
+}
+
+func (r TextResult[T]) text() string         { return r.Text }
+func (r TextResult[T]) data() any            { return r.Data }
+func (TextResult[T]) dataType() reflect.Type { return reflect.TypeFor[T]() }
+
+func (r TextResult[T]) check() error {
+	if reflect.TypeFor[T]().Kind() != reflect.Struct {
+		return nil
+	}
+
+	return z.For[T]().Check(r.Data)
+}
+
 type tool struct {
 	def    map[string]any
 	scopes []string
@@ -135,7 +167,8 @@ func rewriteRefs(v any) {
 // from its `validate` tags before fn runs. R is the structured result: it is
 // returned as structuredContent with its JSON as the text fallback, and
 // checked against its own `validate` tags. R may also be a Result for full
-// control. AddTool panics on a bad name, a duplicate or a non-struct P, like
+// control, or a TextResult to send its own text next to the structured value.
+// AddTool panics on a bad name, a duplicate or a non-struct P, like
 // http.ServeMux.
 func AddTool[P, R any](s *Server, t Tool, fn func(context.Context, P) (R, error)) {
 	if !nameRe.MatchString(t.Name) {
@@ -149,6 +182,10 @@ func AddTool[P, R any](s *Server, t Tool, fn func(context.Context, P) (R, error)
 	args := z.For[P]().Strict()
 	rt := reflect.TypeFor[R]()
 	_, custom := any(*new(R)).(Result)
+
+	if tx, ok := any(*new(R)).(textual); ok {
+		rt = tx.dataType()
+	}
 
 	def := map[string]any{"name": t.Name, "inputSchema": schemaOf(reflect.TypeFor[P](), true)}
 	setIf(def, "title", t.Title)
@@ -167,7 +204,7 @@ func AddTool[P, R any](s *Server, t Tool, fn func(context.Context, P) (R, error)
 	if !custom && (rt.Kind() == reflect.Struct || rt.Kind() == reflect.Map || rt.Kind() == reflect.Slice) {
 		def["outputSchema"] = schemaOf(rt, false)
 
-		if rt.Kind() == reflect.Struct {
+		if _, isText := any(*new(R)).(textual); !isText && rt.Kind() == reflect.Struct {
 			outCheck = z.For[R]().Check
 		}
 	}
@@ -208,25 +245,49 @@ func AddTool[P, R any](s *Server, t Tool, fn func(context.Context, P) (R, error)
 				}, nil
 			}
 
-			if outCheck != nil {
-				if err := outCheck(r); err != nil {
-					return nil, fmt.Errorf("tool %s output violates its schema: %w", t.Name, err)
-				}
-			}
-
-			text, err := json.Marshal(r)
-			if err != nil {
-				return nil, err
-			}
-
-			out := &callToolResult{Content: []Content{Text(string(text))}}
-			if def["outputSchema"] != nil {
-				out.StructuredContent = r
-			}
-
-			return out, nil
+			return toolOutput(t.Name, r, outCheck, def["outputSchema"] != nil)
 		},
 	}
+}
+
+// toolOutput builds the result of a tool whose R is not a Result: the value
+// (or a TextResult's data) as structuredContent when there is an outputSchema,
+// and its text, or the JSON of the value, as the content block.
+func toolOutput[R any](name string, r R, check func(R) error, structured bool) (*callToolResult, error) {
+	var (
+		value   any = r
+		summary string
+	)
+
+	if tx, ok := any(r).(textual); ok {
+		value, summary = tx.data(), tx.text()
+
+		if err := tx.check(); err != nil {
+			return nil, fmt.Errorf("tool %s output violates its schema: %w", name, err)
+		}
+	}
+
+	if check != nil {
+		if err := check(r); err != nil {
+			return nil, fmt.Errorf("tool %s output violates its schema: %w", name, err)
+		}
+	}
+
+	if summary == "" {
+		text, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+
+		summary = string(text)
+	}
+
+	out := &callToolResult{Content: []Content{Text(summary)}}
+	if structured {
+		out.StructuredContent = value
+	}
+
+	return out, nil
 }
 
 func setIf(m map[string]any, k, v string) {

@@ -538,3 +538,64 @@ func TestServerStateKeyCrossesInstances(t *testing.T) {
 		t.Error("a state signed with another key must be refused")
 	}
 }
+
+type summaryOut struct {
+	Total int `json:"total" validate:"min=0"`
+}
+
+// VF-112: TextResult sends its own text next to structuredContent, and the
+// outputSchema and the output check still come from the data type.
+func TestToolTextResult(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newServer(t, mcp.Config{})
+
+	mcp.AddTool(s, mcp.Tool{Name: "sum"}, func(_ context.Context, in echoIn) (mcp.TextResult[summaryOut], error) {
+		total := len(in.Text)
+		if in.Text == "bad" {
+			total = -1
+		}
+
+		return mcp.TextResult[summaryOut]{
+			Text: "Total is " + in.Text + " (untrusted data)",
+			Data: summaryOut{Total: total},
+		}, nil
+	})
+	mcp.AddTool(s, mcp.Tool{Name: "plain"}, func(_ context.Context, _ echoIn) (mcp.TextResult[summaryOut], error) {
+		return mcp.TextResult[summaryOut]{Data: summaryOut{Total: 2}}, nil
+	})
+
+	c := mcptest.NewClient(t, s)
+
+	var list struct {
+		Tools []struct {
+			Name         string         `json:"name"`
+			OutputSchema map[string]any `json:"outputSchema"`
+		} `json:"tools"`
+	}
+
+	if err := c.Call("tools/list", nil).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tl := range list.Tools {
+		props, _ := tl.OutputSchema["properties"].(map[string]any)
+		if _, ok := props["total"]; !ok {
+			t.Errorf("%s outputSchema = %v, want the schema of the data type", tl.Name, tl.OutputSchema)
+		}
+	}
+
+	res := c.CallTool("sum", map[string]any{"text": "ab"})
+	if res.IsError || res.Text() != "Total is ab (untrusted data)" || string(res.StructuredContent) != `{"total":2}` {
+		t.Errorf("sum = %+v, want the custom text and the structured data", res)
+	}
+
+	if res := c.CallTool("plain", map[string]any{"text": "x"}); res.Text() != `{"total":2}` ||
+		string(res.StructuredContent) != `{"total":2}` {
+		t.Errorf("plain = %+v, want the JSON as text when Text is empty", res)
+	}
+
+	if res := c.CallTool("sum", map[string]any{"text": "bad"}); res.Err == nil || res.Err.Code != mcp.CodeInternal {
+		t.Errorf("invalid data = %+v, want the output check to fail with -32603", res)
+	}
+}
