@@ -305,6 +305,20 @@ func TestSourceDefaultsRankBelowEnvFiles(t *testing.T) {
 	}
 }
 
+func TestSetDefaultsKeepsSeededKeysTheNewMapDoesNotName(t *testing.T) {
+	t.Parallel()
+
+	src := MapSource(map[string]string{"EXPLICIT": "map"})
+	src.SetDefaults(map[string]string{"A": "seed", "B": "seed", "EXPLICIT": "seed"})
+	src.SetDefaults(map[string]string{"B": "app"})
+
+	for key, want := range map[string]string{"A": "seed", "B": "app", "EXPLICIT": "map"} {
+		if got := src.Get(key); got != want {
+			t.Errorf("Get(%s) = %q, want %q", key, got, want)
+		}
+	}
+}
+
 func TestLoadSourceExpandsChainedReferences(t *testing.T) {
 	t.Parallel()
 
