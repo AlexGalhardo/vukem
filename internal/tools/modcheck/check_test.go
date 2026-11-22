@@ -55,6 +55,7 @@ func TestConstraintTags(t *testing.T) {
 			src:  "//go:build (integration || e2e) && cgo\n\npackage p\n",
 			want: []string{"integration", "e2e"},
 		},
+		"ignore":        {src: "//go:build ignore\n\npackage main\n", want: nil},
 		"negated":       {src: "//go:build !vukem_nosqlite\n\npackage p\n", want: nil},
 		"environment":   {src: "//go:build unix && amd64\n\npackage p\n", want: nil},
 		"go version":    {src: "//go:build go1.27\n\npackage p\n", want: nil},

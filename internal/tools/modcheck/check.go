@@ -129,9 +129,11 @@ func add(out map[string]bool, path string) {
 
 // notTags are build constraints that are not -tags values: the build
 // environment decides them, so passing them would describe a different
-// toolchain rather than a different configuration of this one.
+// toolchain rather than a different configuration of this one. "ignore" is
+// the convention for a file that is never built; passing it would also switch
+// on the generator files of every dependency.
 var notTags = []string{
-	"aix", "android", "cgo", "darwin", "dragonfly", "freebsd", "gc", "gccgo", "hurd", "illumos", "ios", "js",
+	"ignore", "aix", "android", "cgo", "darwin", "dragonfly", "freebsd", "gc", "gccgo", "hurd", "illumos", "ios", "js",
 	"linux", "netbsd", "openbsd", "plan9", "solaris", "unix", "wasip1", "windows",
 	"386", "amd64", "arm", "arm64", "loong64", "mips", "mips64", "mips64le", "mipsle", "ppc64", "ppc64le",
 	"riscv64", "s390x", "wasm", "race", "msan", "asan", "boringcrypto",
