@@ -292,6 +292,10 @@ func (s *Server) readResource(ctx context.Context, c *call) (any, *Error) {
 			}
 		}
 
+		if e, ok := errors.AsType[*Error](err); ok {
+			return nil, e
+		}
+
 		return s.failure(ctx, c, "resource "+p.URI, err)
 	}
 
