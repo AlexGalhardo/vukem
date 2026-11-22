@@ -48,7 +48,15 @@ type consent struct {
 	rendered atomic.Pointer[oauth.ConsentRequest]
 }
 
-func (c *consent) Subject(http.ResponseWriter, *http.Request) (string, bool) { return c.subject, true }
+func (c *consent) Subject(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if c.subject == "" {
+		http.Redirect(w, r, "/login", http.StatusFound)
+
+		return "", false
+	}
+
+	return c.subject, true
+}
 
 func (c *consent) Render(w http.ResponseWriter, _ *http.Request, req oauth.ConsentRequest) error {
 	c.rendered.Store(&req)
@@ -890,3 +898,84 @@ func TestRateLimitHook(t *testing.T) {
 
 // atSign signs like the server does: an RFC 9068 access token.
 func atSign(k jwt.Key, c jwt.Claims) (string, error) { return jwt.SignTyped(k, "at+jwt", c) }
+
+const metaID = "https://client.example.com/meta.json"
+
+func metaEnv(t *testing.T) *env {
+	t.Helper()
+
+	return newEnv(t, oauth.NewMemoryStore(), func(c *oauth.Config) {
+		c.Clients = oauth.Resolvers{c.Clients, docClient(reply(200, nil, goodDoc))}
+	})
+}
+
+func TestSecurity_A01_MetadataClientPreConsentErrorsDoNotRedirect(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(url.Values){
+		"unsupported_response_type": func(v url.Values) { v.Set("response_type", "token") },
+		"invalid_request":           func(v url.Values) { v.Del("code_challenge") },
+		"invalid_target":            func(v url.Values) { v.Set("resource", "https://other.example.com") },
+		"invalid_scope":             func(v url.Values) { v.Set("scope", "admin") },
+	}
+
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := func(v url.Values) { v.Set("client_id", metaID); mutate(v) }
+
+			e := metaEnv(t)
+			e.consent.subject = ""
+
+			rec := e.get(authQuery(meta))
+			if rec.Code != http.StatusBadRequest || rec.Header().Get("Location") != "" {
+				t.Errorf(
+					"metadata client = %d Location=%q, want a 400 without redirect",
+					rec.Code,
+					rec.Header().Get("Location"),
+				)
+			}
+
+			// A pre-registered client keeps the standard redirect.
+			rec = e.get(authQuery(mutate))
+			if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), redirect+"?error=") {
+				t.Errorf(
+					"registered client = %d Location=%q, want the error redirect",
+					rec.Code,
+					rec.Header().Get("Location"),
+				)
+			}
+		})
+	}
+}
+
+func TestMetadataClientConsentFlow(t *testing.T) {
+	t.Parallel()
+
+	e := metaEnv(t)
+	q := authQuery(func(v url.Values) { v.Set("client_id", metaID) })
+
+	if rec := e.get(q); rec.Code != http.StatusOK {
+		t.Fatalf("GET /authorize = %d %s", rec.Code, rec.Body.String())
+	}
+
+	form := e.consent.rendered.Load().Fields
+	form.Set("decision", "approve")
+
+	rec := e.post(e.srv.AuthorizeHandler(), "/authorize", form, nil)
+	if loc, _ := url.Parse(
+		rec.Header().Get("Location"),
+	); rec.Code != http.StatusFound ||
+		loc.Query().Get("code") == "" {
+		t.Fatalf("approve = %d Location=%q, want a code", rec.Code, rec.Header().Get("Location"))
+	}
+
+	form.Set("decision", "deny")
+
+	rec = e.post(e.srv.AuthorizeHandler(), "/authorize", form, nil)
+	if loc, _ := url.Parse(rec.Header().Get("Location")); rec.Code != http.StatusFound ||
+		loc.Query().Get("error") != "access_denied" {
+		t.Fatalf("deny = %d Location=%q, want access_denied", rec.Code, rec.Header().Get("Location"))
+	}
+}
