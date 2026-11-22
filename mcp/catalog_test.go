@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -505,5 +506,46 @@ func TestStdioWritesNothingButMessages(t *testing.T) {
 
 	if lines := strings.Count(out.String(), "\n"); lines != 1 || !json.Valid(bytes.TrimSpace(out.Bytes())) {
 		t.Errorf("stdout = %q, want exactly one JSON line", out.String())
+	}
+}
+
+// VF-111: a handler that returns an *mcp.Error, wrapped or not, answers
+// resources/read with that typed JSON-RPC error, as prompts already do. An
+// untyped error stays a bare -32603 and ErrNotFound a -32602.
+func TestResourceReadHonorsTypedError(t *testing.T) {
+	t.Parallel()
+
+	const codeLimit = -32001
+
+	s, _ := newServer(t, mcp.Config{})
+	limited := &mcp.Error{Code: codeLimit, Message: "usage limit reached", Data: map[string]any{"limit": 5}}
+
+	mcp.AddResource(s, mcp.Resource{URI: "app://limited", Name: "limited"},
+		func(context.Context) ([]mcp.ResourceContents, error) { return nil, limited })
+	mcp.AddResource(s, mcp.Resource{URI: "app://wrapped", Name: "wrapped"},
+		func(context.Context) ([]mcp.ResourceContents, error) { return nil, fmt.Errorf("read: %w", limited) })
+	mcp.AddResource(s, mcp.Resource{URI: "app://plain", Name: "plain"},
+		func(context.Context) ([]mcp.ResourceContents, error) { return nil, errors.New("pq: secret") })
+	mcp.AddResourceTemplate(s, mcp.ResourceTemplate{URITemplate: "app://t/{id}", Name: "t"},
+		func(context.Context, string, map[string]string) ([]mcp.ResourceContents, error) { return nil, limited },
+		nil)
+
+	c := mcptest.NewClient(t, s)
+
+	for _, uri := range []string{"app://limited", "app://wrapped", "app://t/1"} {
+		rep := c.Call("resources/read", map[string]any{"uri": uri})
+		if rep.Error == nil || rep.Error.Code != codeLimit || rep.Error.Message != "usage limit reached" {
+			t.Fatalf("%s = %+v, want the typed error", uri, rep)
+		}
+
+		data, _ := rep.Error.Data.(map[string]any)
+		if data["limit"] != float64(5) {
+			t.Errorf("%s data = %v, want the limit", uri, rep.Error.Data)
+		}
+	}
+
+	rep := c.Call("resources/read", map[string]any{"uri": "app://plain"})
+	if rep.Error == nil || rep.Error.Code != mcp.CodeInternal || strings.Contains(string(rep.Result), "secret") {
+		t.Errorf("untyped error = %+v, want a bare -32603", rep)
 	}
 }
