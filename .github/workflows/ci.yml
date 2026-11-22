@@ -504,7 +504,7 @@ jobs:
           bun install --frozen-lockfile
           bunx playwright install --with-deps chromium
       # The two perf specs assert frame times, which a shared runner cannot
-      # hold: they run on a developer machine (contrib/studio/DESIGN.md).
+      # hold: they run on a developer machine.
       - name: Browser specs
         working-directory: contrib/studio/web
         run: bunx playwright test $(ls e2e/*.spec.ts | grep -v 'perf\.spec\.ts$')
