@@ -59,7 +59,14 @@ export type ApiProblem = {
   request_id?: string;
   code?: string;
   errors?: Record<string, string[]>;
-  issues?: { path: string; code: string; key?: string; message: string; params?: Record<string, unknown>; on?: string }[];
+  issues?: {
+    path: string;
+    code: string;
+    key?: string;
+    message: string;
+    params?: Record<string, unknown>;
+    on?: string;
+  }[];
   [extension: string]: unknown;
 };
 
@@ -83,8 +90,31 @@ export class ApiError extends Error {
 
 /** HttpErrorStatus lists the error statuses the client narrows on. A status outside it is returned as it is: the type is an approximation. */
 export type HttpErrorStatus =
-  | 400 | 401 | 402 | 403 | 404 | 405 | 406 | 408 | 409 | 410 | 412 | 413 | 415
-  | 422 | 423 | 425 | 428 | 429 | 431 | 451 | 500 | 501 | 502 | 503 | 504;
+  | 400
+  | 401
+  | 402
+  | 403
+  | 404
+  | 405
+  | 406
+  | 408
+  | 409
+  | 410
+  | 412
+  | 413
+  | 415
+  | 422
+  | 423
+  | 425
+  | 428
+  | 429
+  | 431
+  | 451
+  | 500
+  | 501
+  | 502
+  | 503
+  | 504;
 
 /** ApiResult is what every client method resolves to: data on 2xx, error otherwise. A failed fetch (network, abort) is not a result: it rejects. */
 export type ApiResult<T, E> =
@@ -213,7 +243,6 @@ function requester(options: ClientOptions) {
 export type NumbersStoreError =
   | { status: 422; value: Problem }
   | { status: Exclude<HttpErrorStatus, 422>; value: ApiProblem | undefined };
-
 
 /** Client has one method per API operation. */
 export interface Client {

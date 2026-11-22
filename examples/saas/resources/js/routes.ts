@@ -4,10 +4,10 @@ export const routes = {
   "billing.checkout": { method: "POST", path: "/billing/checkout/{plan}" },
   "billing.portal": { method: "POST", path: "/billing/portal" },
   "billing.show": { method: "GET", path: "/billing" },
-  "dashboard": { method: "GET", path: "/dashboard" },
-  "home": { method: "GET", path: "/" },
-  "login": { method: "GET", path: "/login" },
-  "logout": { method: "POST", path: "/logout" },
+  dashboard: { method: "GET", path: "/dashboard" },
+  home: { method: "GET", path: "/" },
+  login: { method: "GET", path: "/login" },
+  logout: { method: "POST", path: "/logout" },
   "password.email": { method: "POST", path: "/forgot-password" },
   "password.request": { method: "GET", path: "/forgot-password" },
   "password.reset": { method: "GET", path: "/reset-password/{token}" },
@@ -19,7 +19,7 @@ export const routes = {
   "projects.show": { method: "GET", path: "/projects/{project}" },
   "projects.store": { method: "POST", path: "/projects" },
   "projects.update": { method: "PUT", path: "/projects/{project}" },
-  "register": { method: "GET", path: "/register" },
+  register: { method: "GET", path: "/register" },
   "two-factor.confirm": { method: "POST", path: "/user/two-factor/confirm" },
   "two-factor.disable": { method: "POST", path: "/user/two-factor/disable" },
   "two-factor.enable": { method: "POST", path: "/user/two-factor" },
@@ -39,25 +39,25 @@ export type RouteParam = string | number;
 export type RouteQuery = Record<string, string | number | boolean | null | undefined>;
 
 export interface RouteParams {
-  "billing.checkout": { "plan": RouteParam };
+  "billing.checkout": { plan: RouteParam };
   "billing.portal": Record<string, never>;
   "billing.show": Record<string, never>;
-  "dashboard": Record<string, never>;
-  "home": Record<string, never>;
-  "login": Record<string, never>;
-  "logout": Record<string, never>;
+  dashboard: Record<string, never>;
+  home: Record<string, never>;
+  login: Record<string, never>;
+  logout: Record<string, never>;
   "password.email": Record<string, never>;
   "password.request": Record<string, never>;
-  "password.reset": { "token": RouteParam };
+  "password.reset": { token: RouteParam };
   "password.update": Record<string, never>;
   "projects.create": Record<string, never>;
-  "projects.destroy": { "project": RouteParam };
-  "projects.edit": { "project": RouteParam };
+  "projects.destroy": { project: RouteParam };
+  "projects.edit": { project: RouteParam };
   "projects.index": Record<string, never>;
-  "projects.show": { "project": RouteParam };
+  "projects.show": { project: RouteParam };
   "projects.store": Record<string, never>;
-  "projects.update": { "project": RouteParam };
-  "register": Record<string, never>;
+  "projects.update": { project: RouteParam };
+  register: Record<string, never>;
   "two-factor.confirm": Record<string, never>;
   "two-factor.disable": Record<string, never>;
   "two-factor.enable": Record<string, never>;
@@ -66,13 +66,14 @@ export interface RouteParams {
   "two-factor.show": Record<string, never>;
   "verification.notice": Record<string, never>;
   "verification.send": Record<string, never>;
-  "verification.verify": { "id": RouteParam };
+  "verification.verify": { id: RouteParam };
   "vukem.health": Record<string, never>;
 }
 
-type RouteArgs<N extends RouteName> = RouteParams[N] extends Record<string, never>
-  ? [params?: RouteParams[N], query?: RouteQuery]
-  : [params: RouteParams[N], query?: RouteQuery];
+type RouteArgs<N extends RouteName> =
+  RouteParams[N] extends Record<string, never>
+    ? [params?: RouteParams[N], query?: RouteQuery]
+    : [params: RouteParams[N], query?: RouteQuery];
 
 /** route builds the URL of a named route, e.g. route("posts.show", { id: 7 }). */
 export function route<N extends RouteName>(name: N, ...args: RouteArgs<N>): string {

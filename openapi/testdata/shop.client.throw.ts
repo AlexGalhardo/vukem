@@ -94,7 +94,14 @@ export type ApiProblem = {
   request_id?: string;
   code?: string;
   errors?: Record<string, string[]>;
-  issues?: { path: string; code: string; key?: string; message: string; params?: Record<string, unknown>; on?: string }[];
+  issues?: {
+    path: string;
+    code: string;
+    key?: string;
+    message: string;
+    params?: Record<string, unknown>;
+    on?: string;
+  }[];
   [extension: string]: unknown;
 };
 

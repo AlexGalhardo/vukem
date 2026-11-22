@@ -4,8 +4,8 @@ export const routes = {
   "admin.users.edit": { method: "GET", path: "/admin/users/{id}" },
   "comments.show": { method: "GET", path: "/posts/{id}/comments/{comment}" },
   "files.show": { method: "GET", path: "/files/{path...}" },
-  "home": { method: "GET", path: "/" },
-  "hooks": { method: "ANY", path: "/hooks/{provider}" },
+  home: { method: "GET", path: "/" },
+  hooks: { method: "ANY", path: "/hooks/{provider}" },
   "posts.show": { method: "GET", path: "/posts/{id}" },
   "posts.store": { method: "POST", path: "/posts" },
   "vukem.health": { method: "GET", path: "/up" },
@@ -18,19 +18,20 @@ export type RouteParam = string | number;
 export type RouteQuery = Record<string, string | number | boolean | null | undefined>;
 
 export interface RouteParams {
-  "admin.users.edit": { "id": RouteParam };
-  "comments.show": { "id": RouteParam; "comment": RouteParam };
-  "files.show": { "path": RouteParam };
-  "home": Record<string, never>;
-  "hooks": { "provider": RouteParam };
-  "posts.show": { "id": RouteParam };
+  "admin.users.edit": { id: RouteParam };
+  "comments.show": { id: RouteParam; comment: RouteParam };
+  "files.show": { path: RouteParam };
+  home: Record<string, never>;
+  hooks: { provider: RouteParam };
+  "posts.show": { id: RouteParam };
   "posts.store": Record<string, never>;
   "vukem.health": Record<string, never>;
 }
 
-type RouteArgs<N extends RouteName> = RouteParams[N] extends Record<string, never>
-  ? [params?: RouteParams[N], query?: RouteQuery]
-  : [params: RouteParams[N], query?: RouteQuery];
+type RouteArgs<N extends RouteName> =
+  RouteParams[N] extends Record<string, never>
+    ? [params?: RouteParams[N], query?: RouteQuery]
+    : [params: RouteParams[N], query?: RouteQuery];
 
 /** route builds the URL of a named route, e.g. route("posts.show", { id: 7 }). */
 export function route<N extends RouteName>(name: N, ...args: RouteArgs<N>): string {

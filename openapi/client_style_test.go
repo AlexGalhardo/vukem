@@ -76,8 +76,8 @@ func TestTypeScriptClientErrorUnions(t *testing.T) {
 		// products.store declares 401 and 422.
 		"export type ProductsStoreError =\n  | { status: 401; value: Problem }\n  | { status: 422; value: Problem }\n" +
 			"  | { status: Exclude<HttpErrorStatus, 401 | 422>; value: ApiProblem | undefined };",
-		// products.destroy declares no error: only the generic member.
-		"export type ProductsDestroyError =\n  | { status: HttpErrorStatus; value: ApiProblem | undefined };",
+		// products.destroy declares no error: only the generic member, on one line because it fits (Biome).
+		"export type ProductsDestroyError = { status: HttpErrorStatus; value: ApiProblem | undefined };",
 		// A 204 has no data.
 		"Promise<ApiResult<ProductsDestroyResponse, ProductsDestroyError>>",
 		"throwHttpError?: boolean;",
