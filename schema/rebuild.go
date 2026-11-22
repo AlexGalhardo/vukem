@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/database"
@@ -271,9 +272,12 @@ func (s *Schema) checkIndexes(db *database.DB, t *Table, old TableInfo, o rebuil
 
 	if len(lost) > 0 {
 		return nil, fmt.Errorf(
-			"schema: rebuild %s would lose index(es) %s; declare them, pass KeepIndexes or pass DropIndexes to accept",
+			"schema: rebuild %s would lose index(es) %s; declare them, pass schema.KeepIndexes() to recreate them "+
+				"or schema.DropIndexes(%s) to accept the loss (%s)",
 			t.name,
 			strings.Join(lost, ", "),
+			quoteList(lost),
+			upgradeGuide,
 		)
 	}
 
@@ -391,6 +395,20 @@ func rebuildCopy(t *Table, renames map[string]string, have map[string]bool) []co
 	return out
 }
 
+// upgradeGuide is where the refusals of Rebuild are explained, with what to do
+// about an old migration (its Down in particular) that trips one.
+const upgradeGuide = "see docs/upgrade/1.0.md, section \"Schema.Rebuild refuses to lose a column or an index\""
+
+// quoteList writes names as Go string literals, ready to paste into DropColumns or DropIndexes.
+func quoteList(names []string) string {
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = strconv.Quote(n)
+	}
+
+	return strings.Join(q, ", ")
+}
+
 // checkLostColumns refuses a rebuild that would lose a stored column of the
 // old table without DropColumns naming it. It compares against the columns
 // actually copied, so a column replaced by a rename or by a generated column
@@ -421,9 +439,11 @@ func checkLostColumns(table string, cols []copyCol, dropped []string, old TableI
 
 	if len(lost) > 0 {
 		return fmt.Errorf(
-			"schema: rebuild %s would lose column(s) %s; declare them or pass DropColumns to accept",
+			"schema: rebuild %s would lose column(s) %s; declare them or pass schema.DropColumns(%s) to accept the loss (%s)",
 			table,
 			strings.Join(lost, ", "),
+			quoteList(lost),
+			upgradeGuide,
 		)
 	}
 
