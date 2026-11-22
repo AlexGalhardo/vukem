@@ -47,9 +47,10 @@ func write(path string) error {
 	return grid(db)
 }
 
-// grid adds the tables the data grid specs use: a large one for scrolling and
-// performance, one with every column type for editing, and one without a
-// primary key.
+// grid adds the tables the data grid specs use: a large one for paging and
+// performance, one with every column type for editing, one without a primary
+// key, and two small ones for the pager (27 rows, read only; 26 rows, whose last
+// page holds one row, for the write specs).
 func grid(db *sql.DB) error {
 	for _, q := range []string{
 		`CREATE TABLE events (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, amount REAL, active BOOLEAN, at DATETIME,
@@ -71,6 +72,12 @@ func grid(db *sql.DB) error {
 			(6, 'delete-me', 1, 'x', 2, 1, NULL, NULL, NULL),
 			(7, 'null-me', 1, 'has value', 2, 1, NULL, NULL, NULL),
 			(8, 'big', 1, printf('%070000d', 1), 2, 1, NULL, NULL, NULL)`,
+		`CREATE TABLE tickets (id INTEGER PRIMARY KEY, title TEXT NOT NULL)`,
+		`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 27)
+			INSERT INTO tickets (id, title) SELECT n, 'ticket ' || n FROM seq`,
+		`CREATE TABLE pager_rw (id INTEGER PRIMARY KEY, title TEXT NOT NULL)`,
+		`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 26)
+			INSERT INTO pager_rw (id, title) SELECT n, 'row ' || n FROM seq`,
 		`CREATE TABLE audit_lines (line TEXT, at TEXT)`,
 		`INSERT INTO audit_lines VALUES ('one', '2026-01-01'), ('two', '2026-01-02'), ('three', NULL)`,
 		`CREATE VIEW audit_view AS SELECT line FROM audit_lines`,

@@ -122,7 +122,7 @@ func (s *Studio) streamRows(
 			return true, nil // the last key could not be used as a cursor
 		case keyset:
 			q.After = pg.Next
-		case page >= maxGridPage:
+		case page >= maxGridPage(q.PerPage, false):
 			return true, nil
 		default:
 			page++

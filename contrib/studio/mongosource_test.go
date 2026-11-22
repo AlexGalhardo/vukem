@@ -20,16 +20,30 @@ type fakeMongo struct {
 		filter, sort bson.D
 		skip, limit  int64
 	}
-	calls    []string
-	matched  int64
-	deleted  int64
-	inserted bson.D
-	replaced bson.D
+	calls []string
+	// count answers counted and countErr, and records the filter it was asked with.
+	counted     int64
+	countErr    error
+	countFilter bson.D
+	matched     int64
+	deleted     int64
+	inserted    bson.D
+	replaced    bson.D
 }
 
 func (f *fakeMongo) listCollections(context.Context) ([]string, error) { return f.colls, nil }
 
 func (f *fakeMongo) estimate(context.Context, string) (int64, error) { return 7, nil }
+
+func (f *fakeMongo) count(_ context.Context, _ string, filter bson.D) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.calls = append(f.calls, "count")
+	f.countFilter = filter
+
+	return f.counted, f.countErr
+}
 
 func (f *fakeMongo) find(_ context.Context, _ string, filter, sort bson.D, skip, limit int64) ([]bson.Raw, error) {
 	f.mu.Lock()

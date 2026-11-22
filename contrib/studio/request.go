@@ -37,6 +37,23 @@ func intParam(q url.Values, key string) int {
 	return n
 }
 
+// perPageParam reads the page size of a browsing request. Absent means the
+// default; present, it must be a whole number from 1 to maxAPIPerPage: a client
+// cannot ask for more rows at once than the interface offers.
+func perPageParam(q url.Values, key string) (int, error) {
+	raw := q.Get(key)
+	if raw == "" {
+		return 0, nil
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > maxAPIPerPage {
+		return 0, inputError("perPage must be a whole number from 1 to " + strconv.Itoa(maxAPIPerPage))
+	}
+
+	return n, nil
+}
+
 func boolParam(q url.Values, key string) bool {
 	v := q.Get(key)
 	return v == "1" || v == "true"
@@ -51,9 +68,14 @@ func rowQueryFrom(table string, q url.Values, p params) (RowQuery, error) {
 		return RowQuery{}, err
 	}
 
+	n, err := perPageParam(q, p.perPage)
+	if err != nil {
+		return RowQuery{}, err
+	}
+
 	return RowQuery{
 		Table: table, Filters: filters, Sort: q.Get("sort"), Desc: boolParam(q, "desc"),
-		After: q["after"], Page: intParam(q, "page"), PerPage: intParam(q, p.perPage),
+		After: q["after"], Page: intParam(q, "page"), PerPage: n,
 	}, nil
 }
 
@@ -64,9 +86,14 @@ func docQueryFrom(collection string, q url.Values, p params) (DocQuery, error) {
 		return DocQuery{}, err
 	}
 
+	n, err := perPageParam(q, p.perPage)
+	if err != nil {
+		return DocQuery{}, err
+	}
+
 	return DocQuery{
 		Collection: collection, Filters: filters, Sort: q.Get("sort"), Desc: boolParam(q, "desc"),
-		After: q.Get("after"), Page: intParam(q, "page"), PerPage: intParam(q, p.perPage),
+		After: q.Get("after"), Page: intParam(q, "page"), PerPage: n,
 	}, nil
 }
 

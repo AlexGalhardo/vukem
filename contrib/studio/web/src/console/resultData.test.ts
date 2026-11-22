@@ -63,7 +63,8 @@ describe("staticGridData", () => {
     expect(data.rowCount).toBe(2);
     expect(data.row(1)).toEqual([cell("b")]);
     expect(data.row(2)).toBeUndefined();
-    expect(data.exact).toBe(2);
+    expect(data.total).toBe(2);
+    expect(data.paging).toBeUndefined();
     expect(data.loading).toBe(false);
   });
 

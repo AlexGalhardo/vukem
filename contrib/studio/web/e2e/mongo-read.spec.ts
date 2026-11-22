@@ -19,24 +19,56 @@ test("the collections page lists every collection with an estimated count", asyn
   await expect(page).toHaveURL(/\/ui\/s\/mongo\/c\/people$/);
 });
 
-test("documents load as you scroll and only a window of rows is in the DOM", async ({ page, serviceStudio }) => {
+test("documents are read a page at a time, with the exact count", async ({ page, serviceStudio }) => {
+  const requests: string[] = [];
+  page.on("request", (r) => {
+    if (/\/collections\/people\/documents\?/.test(r.url())) {
+      requests.push(r.url());
+    }
+  });
   await openCollection(page, serviceStudio, "people");
   const grid = page.getByRole("grid", { name: "people documents" });
+  const nav = page.getByRole("navigation", { name: "Pagination" });
+  const position = page.getByTestId("grid-position");
 
   await expect(grid.getByRole("gridcell", { name: "ada", exact: true })).toBeVisible();
-  const rendered = await grid.getByRole("row").count();
-  expect(rendered).toBeLessThanOrEqual(100);
+  await expect(position).toHaveText("Rows 1 to 25 of 230");
+  // One page of 25 documents and the header row are in the DOM.
+  await expect(grid.getByRole("row")).toHaveCount(26);
+  expect(requests).toHaveLength(1);
+  const first = new URL(requests[0] ?? "");
+  expect(first.searchParams.get("perPage")).toBe("25");
+  expect(first.searchParams.get("page")).toBe("1");
 
-  // The first page has 100 documents; scrolling to the end loads the rest.
-  await expect(page.getByRole("status").filter({ hasText: "loaded" })).toContainText("100 documents loaded");
-  const scroller = page.locator(".grid-scroll");
-  await expect(async () => {
-    await scroller.evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
-    await expect(page.getByRole("status").filter({ hasText: "loaded" })).toContainText("230 documents loaded", { timeout: 1500 });
-  }).toPass({ timeout: 20_000 });
-  expect(await grid.getByRole("row").count()).toBeLessThanOrEqual(100);
+  await nav.getByRole("button", { name: "Next page" }).click();
+  await expect(position).toHaveText("Rows 26 to 50 of 230");
+  await expect(nav.getByTestId("grid-page")).toHaveText("Page 2 of 10");
+
+  await nav.getByRole("button", { name: "Last page" }).click();
+  await expect(position).toHaveText("Rows 226 to 230 of 230");
+  await expect(nav.getByRole("button", { name: "Next page" })).toBeDisabled();
+
+  await nav.getByLabel("Rows per page").selectOption("100");
+  await expect(position).toHaveText("Rows 1 to 100 of 230");
+  await expect(nav.getByTestId("grid-page")).toHaveText("Page 1 of 3");
+  expect(Math.max(...requests.map((u) => Number(new URL(u).searchParams.get("perPage"))))).toBe(100);
+
+  // The server bounds the page size of the documents too.
+  const over = await page.request.get(`${serviceStudio.origin}/api/v1/sources/mongo/collections/people/documents?perPage=101`);
+  expect(over.status()).toBe(422);
+});
+
+test("sorting by a field returns to the first page, and the last page of a sorted view is reachable", async ({ page, serviceStudio }) => {
+  await openCollection(page, serviceStudio, "people");
+  const nav = page.getByRole("navigation", { name: "Pagination" });
+  const position = page.getByTestId("grid-position");
+  await nav.getByRole("button", { name: "Next page" }).click();
+  await expect(position).toHaveText("Rows 26 to 50 of 230");
+
+  await page.getByLabel("Sort by").selectOption("name");
+  await expect(position).toHaveText("Rows 1 to 25 of 230");
+  await nav.getByRole("button", { name: "Last page" }).click();
+  await expect(position).toHaveText("Rows 226 to 230 of 230");
 });
 
 test("the Table view has columns from the first documents and nested values as compact JSON", async ({ page, serviceStudio }) => {
@@ -70,10 +102,10 @@ test("a filter of field, operator and value is applied by the server and can be 
   await page.getByRole("button", { name: "Add filter" }).click();
 
   await expect(page.getByRole("list", { name: /Active filters/ })).toContainText('age is greater than "80"');
-  await expect(page.getByRole("status").filter({ hasText: "loaded" })).toContainText("18 documents loaded");
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 1 to 18 of 18");
 
   await page.getByRole("button", { name: /Remove filter/ }).click();
-  await expect(page.getByRole("status").filter({ hasText: "loaded" })).toContainText("100 documents loaded");
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 1 to 25 of 230");
 });
 
 test("a nested field path filters, and a field path with an operator is refused before it is sent", async ({ page, serviceStudio }) => {
@@ -83,7 +115,7 @@ test("a nested field path filters, and a field path with an operator is refused 
   await page.getByLabel("Value").fill("london");
   await page.getByLabel("Condition").selectOption("eq");
   await page.getByRole("button", { name: "Add filter" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "loaded" })).toContainText("1 document loaded");
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 1 to 1 of 1");
 
   await page.getByLabel("Field").fill("$where");
   await page.getByLabel("Value").fill("1");
@@ -97,7 +129,7 @@ test("sorting by a field explains the page limit and the server sorts", async ({
   await expect(page.getByRole("note")).toHaveCount(0);
   await page.getByLabel("Sort by").selectOption("name");
   await page.getByLabel("Direction").selectOption("desc");
-  await expect(page.getByRole("note")).toContainText("page 1000");
+  await expect(page.getByRole("note")).toContainText("first 100,000 documents");
 
   const grid = page.getByRole("grid", { name: "people documents" });
   await expect(grid.getByRole("gridcell", { name: "person-230", exact: true })).toBeVisible();
@@ -174,7 +206,7 @@ test("the export link downloads the documents of the current filter as JSON Line
   await page.getByLabel("Condition").selectOption("gt");
   await page.getByLabel("Value").fill("80");
   await page.getByRole("button", { name: "Add filter" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "loaded" })).toContainText("18 documents loaded");
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 1 to 18 of 18");
 
   const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Export JSON Lines" }).click()]);
   expect(download.suggestedFilename()).toBe("people.jsonl");

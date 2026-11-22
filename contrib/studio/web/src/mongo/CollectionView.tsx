@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { apiGet, apiPath } from "../api/client";
-import type { ApiCell, CollectionsResponse } from "../api/types";
+import type { ApiCell, CollectionsResponse, CountResponse } from "../api/types";
 import { useApi } from "../api/useApi";
 import { PlusIcon, RefreshIcon } from "../components/icons";
 import { ErrorNotice } from "../components/Notices";
@@ -9,9 +9,9 @@ import { LiveRegion, useAnnouncer } from "../grid/Announcer";
 import { emptyView, formatFilter, nextSort } from "../grid/filters";
 import type { ViewState } from "../grid/filters";
 import { Grid } from "../grid/Grid";
-import type { Chunk } from "../grid/stream";
-import { useStreamed } from "../grid/useStreamed";
-import { canUseField, columnsOf, compact, inferColumns, parseDoc, rowOf } from "./docs";
+import { orderedRowCap, sortedRowCap } from "../grid/paging";
+import { usePagedRows } from "../grid/usePagedRows";
+import { canUseField, columnsOf, compact, inferColumns, maxColumns, parseDoc, rowOf } from "./docs";
 import { DocFilterBar } from "./DocFilterBar";
 import { DocumentDrawer } from "./DocumentDrawer";
 import { InsertDialog } from "./InsertDialog";
@@ -29,8 +29,6 @@ interface Entry {
 
 type Mode = "table" | "json";
 
-const pageSize = 100;
-const maxSkipPages = 1000;
 const jsonColumns = columnsOf(["document"]);
 const cutAt = 300;
 
@@ -71,10 +69,10 @@ function queryFor(view: ViewState, extra: Record<string, string>): string {
 }
 
 /**
- * CollectionView browses one MongoDB collection: a virtualized list of
- * documents in a Table view (columns from the first 100 documents) or a JSON
- * view, a filter bar, a sort, and a drawer for one document. Documents load as
- * you scroll: by _id cursor in the default order, by page when sorted by a field.
+ * CollectionView browses one MongoDB collection: documents a page at a time in
+ * a Table view (columns from the documents seen so far) or a JSON view, a
+ * filter bar, a sort, and a drawer for one document. Only the current page is
+ * fetched; the exact count comes apart, so the last page is known.
  */
 export function CollectionView({ source, collection, write }: { source: string; collection: string; write: boolean }): ReactElement {
   const [view, setView] = useState<ViewState>(emptyView);
@@ -82,59 +80,64 @@ export function CollectionView({ source, collection, write }: { source: string; 
   const [columns, setColumns] = useState<string[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [insertOpen, setInsertOpen] = useState(false);
-  const [nonce, setNonce] = useState(0);
   const { message, announce } = useAnnouncer();
   const entries = useRef(new WeakMap<ApiCell[], Entry>());
-  const columnsRef = useRef<string[]>([]);
+  const columnsRef = useRef<{ key: string; names: string[] }>({ key: "", names: [] });
   const list = useApi<CollectionsResponse>(apiPath("sources", source, "collections"));
   const estimate = list.data?.collections.find((c) => c.name === collection)?.estimate ?? -1;
 
   const keyset = view.sort === null || view.sort === "_id";
+  const viewKey = `${source}|${collection}|${queryFor(view, {})}`;
 
-  const streamed = useStreamed({
-    resetKey: `${source}|${collection}|${queryFor(view, {})}|${nonce}`,
-    auto: true,
-    fetchChunk: async (cursor, step, signal): Promise<Chunk> => {
-      const extra: Record<string, string> = { perPage: String(pageSize) };
-      if (keyset && cursor !== null) {
-        extra.after = cursor;
-      }
-      if (!keyset) {
-        extra.page = String(step + 1);
-      }
+  const paged = usePagedRows({
+    resetKey: viewKey,
+    rowCap: keyset ? orderedRowCap : sortedRowCap,
+    estimate: view.filters.length === 0 ? estimate : -1,
+    fetchPage: async (page, size, signal) => {
       const res = await apiGet<DocsResponse>(
-        apiPath("sources", source, "collections", collection, "documents") + queryFor(view, extra),
+        apiPath("sources", source, "collections", collection, "documents") +
+          queryFor(view, { perPage: String(size), page: String(page) }),
         signal,
       );
       const docs = res.docs.map((d) => ({ ...d, doc: parseDoc(d.json) }));
-      if (step === 0) {
-        columnsRef.current = inferColumns(docs.map((d) => d.doc));
-        setColumns(columnsRef.current);
+
+      // The columns are the fields seen so far in this view: a later page can add some, never drop one.
+      const seen = columnsRef.current.key === viewKey ? columnsRef.current.names : [];
+      const names = [...seen, ...inferColumns(docs.map((d) => d.doc)).filter((c) => !seen.includes(c))].slice(0, maxColumns);
+      if (names.length !== seen.length || columnsRef.current.key !== viewKey) {
+        columnsRef.current = { key: viewKey, names };
+        setColumns(names);
       }
+
       const rows = docs.map((d) => {
-        const cells = rowOf(columnsRef.current, d.doc);
+        const cells = rowOf(names, d.doc);
         entries.current.set(cells, { id: d.id, summary: summaryOf(d.json) });
         return cells;
       });
-      const next = keyset ? (res.next ?? null) : res.hasMore && step + 2 <= maxSkipPages ? String(step + 2) : null;
-      return { rows, next, hasMore: res.hasMore && next !== null };
+      return { rows, hasMore: res.hasMore };
+    },
+    fetchTotal: async (signal) => {
+      const res = await apiGet<CountResponse>(
+        apiPath("sources", source, "collections", collection, "count") + queryFor(view, {}),
+        signal,
+      );
+      return res.count ?? null;
     },
   });
 
   const data = {
-    ...streamed.data,
+    ...paged,
     row: (index: number): ApiCell[] | undefined => {
-      const r = streamed.data.row(index);
+      const r = paged.row(index);
       return r && mode === "json" ? entries.current.get(r)?.summary : r;
     },
   };
 
   const tableColumns = useMemo(() => columnsOf(columns), [columns]);
   const sortable = columns.filter(canUseField);
-  const cappedByPages = !keyset && !streamed.hasMore && streamed.loaded >= maxSkipPages * pageSize;
 
   const open = (index: number): void => {
-    const r = streamed.data.row(index);
+    const r = paged.row(index);
     const entry = r ? entries.current.get(r) : undefined;
     if (entry) {
       setOpenId(entry.id);
@@ -143,10 +146,8 @@ export function CollectionView({ source, collection, write }: { source: string; 
     }
   };
 
-  const reload = (): void => setNonce((n) => n + 1);
-
   return (
-    <section className="table-page doc-view" aria-label={`Collection ${collection}`}>
+    <section className="table-page table-page-paged doc-view" aria-label={`Collection ${collection}`}>
       <div className="table-toolbar">
         <div role="group" aria-label="View" className="toggle-group">
           <button type="button" className="button button-small" aria-pressed={mode === "table"} onClick={() => setMode("table")}>
@@ -179,7 +180,7 @@ export function CollectionView({ source, collection, write }: { source: string; 
             <option value="desc">Descending</option>
           </select>
         </label>
-        <button type="button" className="button button-small button-with-icon" onClick={reload}>
+        <button type="button" className="button button-small button-with-icon" onClick={paged.refresh}>
           <RefreshIcon />
           Refresh
         </button>
@@ -196,19 +197,13 @@ export function CollectionView({ source, collection, write }: { source: string; 
 
       {!keyset ? (
         <p className="notice" role="note">
-          Sorted by {view.sort}: MongoDB reads page by page from the start of the sort, which gets slower the deeper you go, so Studio stops at page {maxSkipPages} ({(maxSkipPages * pageSize).toLocaleString("en-US")} documents). Sorting by _id has no such limit.
+          Sorted by {view.sort}: MongoDB reads page by page from the start of the sort, which gets slower the deeper you go, so Studio pages through the first {sortedRowCap.toLocaleString("en-US")} documents. Sorting by _id reaches {orderedRowCap.toLocaleString("en-US")}.
         </p>
       ) : null}
 
       <DocFilterBar fields={columns} view={view} onChange={setView} />
 
-      {streamed.data.error ? <ErrorNotice error={streamed.data.error} onRetry={streamed.data.retry} /> : null}
-      <p className="muted" role="status">
-        {streamed.loaded.toLocaleString("en-US")} {streamed.loaded === 1 ? "document" : "documents"} loaded
-        {streamed.hasMore ? "; more load as you scroll" : ""}
-        {estimate >= 0 ? `. The collection holds about ${estimate.toLocaleString("en-US")}.` : "."}
-        {cappedByPages ? " The page limit was reached." : ""}
-      </p>
+      {paged.error ? <ErrorNotice error={paged.error} onRetry={paged.retry} /> : null}
 
       <Grid
         source=""
@@ -219,7 +214,7 @@ export function CollectionView({ source, collection, write }: { source: string; 
         view={mode === "json" ? emptyView : view}
         density="normal"
         announce={announce}
-        resetKey={`${mode}|${queryFor(view, {})}|${nonce}`}
+        resetKey={`${mode}|${queryFor(view, {})}|${paged.paging?.page}|${paged.paging?.size}`}
         onOpenRow={open}
         onSort={(column) => {
           if (mode === "table" && canUseField(column)) {
@@ -243,7 +238,7 @@ export function CollectionView({ source, collection, write }: { source: string; 
         onClose={() => setOpenId(null)}
         onChanged={(what) => {
           announce(`Document ${what}.`);
-          reload();
+          paged.reload();
         }}
       />
       {write ? (
@@ -255,7 +250,7 @@ export function CollectionView({ source, collection, write }: { source: string; 
           onDone={() => {
             setInsertOpen(false);
             announce("Document inserted.");
-            reload();
+            paged.reload();
           }}
         />
       ) : null}

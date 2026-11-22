@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { ApiCell } from "../api/types";
 import { StreamStore } from "./stream";
 import type { FetchChunk } from "./stream";
-import type { GridData } from "./useGridData";
+import type { GridData } from "./gridData";
 
 export interface StreamedOptions {
   /** Changes when the list must start over (another collection, filter, sort or pattern). */
@@ -67,10 +67,9 @@ export function useStreamed(options: StreamedOptions): Streamed {
 
   const data: GridData = {
     rowCount,
+    offset: 0,
+    total: more ? null : rows.length,
     approx: more,
-    capped: false,
-    mode: "offset",
-    tail: false,
     row: (index) => rows[index],
     version: s.version,
     want,
@@ -81,11 +80,8 @@ export function useStreamed(options: StreamedOptions): Streamed {
       s.reset();
       void s.loadMore();
     },
-    countState: "idle",
-    exact: more ? null : rows.length,
-    askCount: () => undefined,
-    jumpToEnd: () => Promise.resolve(rows.length),
-    leaveTail: () => undefined,
+    jumpToEnd: () => Promise.resolve({ moved: false, last: rows.length }),
+    jumpToStart: () => undefined,
     patchCell: () => undefined,
     reload: () => {
       s.reset();

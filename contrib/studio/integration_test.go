@@ -4,6 +4,7 @@ package studio
 
 import (
 	"crypto/rand"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -77,6 +78,24 @@ func TestMongoAgainstARealServer(t *testing.T) {
 	byField, err := m.Documents(ctx, DocQuery{Collection: "people", Filters: []Filter{{"age", "gt", "50"}}})
 	if err != nil || len(byField.Docs) != 2 {
 		t.Errorf("age > 50 = %+v, %v", byField, err)
+	}
+
+	// A page is read by number as well, and the exact count matches the filter.
+	third, err := m.Documents(ctx, DocQuery{Collection: "people", PerPage: 2, Page: 2})
+	if err != nil || len(third.Docs) != 2 || third.HasMore {
+		t.Fatalf("page 2 by number = %+v, %v", third, err)
+	}
+
+	if n, err := m.Count(ctx, "people", nil); err != nil || n != 4 {
+		t.Errorf("Count(all) = %d, %v, want 4", n, err)
+	}
+
+	if n, err := m.Count(ctx, "people", []Filter{{"age", "gt", "50"}}); err != nil || n != 2 {
+		t.Errorf("Count(age > 50) = %d, %v, want 2", n, err)
+	}
+
+	if _, err := m.Count(ctx, "ghost", nil); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Count of an unknown collection error = %v, want ErrNotFound", err)
 	}
 
 	// A hostile filter value is data, not an operator.

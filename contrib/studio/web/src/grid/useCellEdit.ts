@@ -4,7 +4,7 @@ import type { ApiCell, RowResponse, TableDetail } from "../api/types";
 import { cellOfDraft, editReducer, patchFor, sameDraft } from "./editState";
 import type { At, EditState, Move } from "./editState";
 import { columnKind } from "./filters";
-import type { GridData } from "./useGridData";
+import type { GridData } from "./gridData";
 import { keyParts, packKey } from "./rowKey";
 
 export type CellStatus = "saving" | "saved" | "error";
@@ -102,7 +102,7 @@ export function useCellEdit({ source, table, detail, write, data, announce }: Op
       () => {
         dispatch({ type: "saved" });
         data.patchCell(at.row, at.col - 1, cellOfDraft(draft, at.kind));
-        announce(`Saved ${at.column} of row ${at.row + 1}.`);
+        announce(`Saved ${at.column} of row ${data.offset + at.row + 1}.`);
         setSaved({ row: at.row, col: at.col });
         if (next === "right") {
           requestMove(at.row, at.col + 1);
