@@ -77,7 +77,8 @@ test("rows show the type badge text and the time to live", async ({ page, servic
   const grid = page.getByRole("grid", { name: "Keys" });
   await expect(grid.getByRole("gridcell", { name: `${services.prefix}ttl`, exact: true })).toBeVisible();
   await expect(grid.getByRole("gridcell", { name: "string", exact: true })).toBeVisible();
-  await expect(grid.getByRole("gridcell", { name: /^(1h|59m)$/ })).toBeVisible();
+  // The key is seeded once with one hour to live, before the whole suite.
+  await expect(grid.getByRole("gridcell", { name: /^(1h|[3-5]\dm)$/ })).toBeVisible();
 
   await page.getByLabel("Pattern").fill(`${services.prefix}str`);
   await page.getByRole("button", { name: "Scan", exact: true }).click();
