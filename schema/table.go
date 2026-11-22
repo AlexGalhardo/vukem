@@ -298,7 +298,9 @@ func (t *Table) RenameColumn(from, to string) {
 	t.renames = append(t.renames, [2]string{from, to})
 }
 
-// DropColumn drops columns (alter only).
+// DropColumn drops columns (alter only). On SQLite a trigger that names the
+// column blocks the drop; the error names the trigger and points to
+// [DropTriggers].
 func (t *Table) DropColumn(names ...string) {
 	for _, n := range names {
 		if err := checkIdent("column", n); err != nil {
