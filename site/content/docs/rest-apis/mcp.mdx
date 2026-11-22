@@ -95,6 +95,7 @@ What a tool function returns decides what the client sees:
 | Return | The client gets |
 | --- | --- |
 | a value | `structuredContent` and the JSON text |
+| `mcp.TextResult[T]{Text, Data}` | `Data` as `structuredContent` (with `outputSchema` and the `validate` check of `T`) and `Text` as the text the model reads; an empty `Text` falls back to the JSON |
 | `mcp.Result` | exactly the content blocks you built |
 | `mcp.ToolErrorf(...)` | a tool error shown to the model |
 | a 4xx `*errs.HTTPError` | a tool error with its safe message |
