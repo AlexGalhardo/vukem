@@ -131,7 +131,9 @@ func TestSetSuppressionIsSafeWhileSending(t *testing.T) {
 			defer wg.Done()
 
 			for range 50 {
-				if err := m.Send(context.Background(), raw{Envelope{To: []string{"ok@example.com"}}, Text("x")}); err != nil {
+				msg := raw{Envelope{To: []string{"ok@example.com"}}, Text("x")}
+
+				if err := m.Send(context.Background(), msg); err != nil {
 					t.Error(err)
 
 					return
