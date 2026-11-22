@@ -191,7 +191,12 @@ func (s *Server) scopesWithin(scopes []string) bool {
 
 // AccessToken is a verified access token.
 type AccessToken struct {
-	Subject   string
+	Subject string
+	// Tenant is the tenant of the grant (Decision.Tenant), empty when the
+	// consent did not set one.
+	Tenant string
+	// GrantID identifies the grant the token belongs to.
+	GrantID   string
 	ClientID  string
 	Scopes    []string
 	Resource  string
@@ -236,8 +241,13 @@ func (s *Server) VerifyAccessToken(ctx context.Context, token, resource string) 
 		return nil, ErrInvalidToken
 	}
 
+	scopes := strings.Fields(scope)
+	if slices.ContainsFunc(scopes, func(sc string) bool { return !slices.Contains(grant.Scopes, sc) }) {
+		return nil, ErrInvalidToken
+	}
+
 	return &AccessToken{
-		Subject: claims.Subject, ClientID: clientID, Scopes: strings.Fields(scope),
+		Subject: claims.Subject, Tenant: grant.Tenant, GrantID: grant.ID, ClientID: clientID, Scopes: scopes,
 		Resource: resource, ExpiresAt: claims.ExpiresAt,
 	}, nil
 }

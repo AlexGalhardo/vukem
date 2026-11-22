@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"maps"
 	"net/http"
 	"net/url"
@@ -25,6 +26,35 @@ type Consent interface {
 	// "decision", whose value is "approve" or "deny". Serve it with the
 	// app's own CSRF and cache headers (Cache-Control: no-store).
 	Render(w http.ResponseWriter, r *http.Request, req ConsentRequest) error
+}
+
+// ErrConsentDenied is what a ConsentDecider returns to refuse the grant: the
+// client gets access_denied, as if the user had pressed deny.
+var ErrConsentDenied = errors.New("oauth: consent denied")
+
+// ConsentDecider is an optional extension of Consent. When the Consent of the
+// Config implements it, the server calls Decide on an approved consent POST,
+// after the method, same-site, CSRF and decision checks, so the app can tell
+// which of the requested scopes the user approved and in which tenant (for
+// example the workspace picked on the screen). Read the form of r with
+// r.PostForm; it is the user's input, so validate it.
+//
+// A Consent without Decide keeps the old behavior: the grant gets exactly the
+// requested scopes and no tenant.
+type ConsentDecider interface {
+	Decide(w http.ResponseWriter, r *http.Request, req ConsentRequest) (Decision, error)
+}
+
+// Decision is the outcome of ConsentDecider.Decide.
+type Decision struct {
+	// Scopes is the approved subset of ConsentRequest.Scopes. Empty means
+	// all of them. The server refuses a scope that was not requested (the
+	// requested set is bound to the form by the CSRF token, so the user
+	// cannot widen it) and the grant, its code, refresh and access tokens
+	// carry exactly this set.
+	Scopes []string
+	// Tenant is stored on the Grant and returned by VerifyAccessToken.
+	Tenant string
 }
 
 // ConsentRequest describes what the client is asking for.
@@ -206,16 +236,73 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, v url.Values,
 		return
 	}
 
-	s.approve(w, r, p, client, subject)
+	scopes, tenant := p.scopes, ""
+
+	if d, ok := s.cfg.Consent.(ConsentDecider); ok {
+		req := ConsentRequest{
+			Client: client, Subject: subject, Scopes: slices.Clone(p.scopes), Resource: p.resource, Action: r.URL.Path,
+		}
+
+		dec, err := d.Decide(w, r, req)
+
+		switch {
+		case errors.Is(err, ErrConsentDenied):
+			deny("access_denied")
+
+			return
+		case err != nil:
+			s.cfg.Logger.ErrorContext(r.Context(), "oauth: consent decision", "err", err)
+			deny("server_error")
+
+			return
+		}
+
+		if len(dec.Scopes) > 0 {
+			if scopes = narrow(p.scopes, dec.Scopes); scopes == nil {
+				s.cfg.Logger.ErrorContext(
+					r.Context(),
+					"oauth: consent decision approved a scope that was not requested",
+				)
+				deny("server_error")
+
+				return
+			}
+		}
+
+		tenant = dec.Tenant
+	}
+
+	s.approve(w, r, p, client, subject, scopes, tenant)
 }
 
-func (s *Server) approve(w http.ResponseWriter, r *http.Request, p authParams, client *Client, subject string) {
+// narrow returns the approved scopes without duplicates, in request order, or
+// nil when one of them was not requested.
+func narrow(requested, approved []string) []string {
+	for _, sc := range approved {
+		if !slices.Contains(requested, sc) {
+			return nil
+		}
+	}
+
+	return slices.DeleteFunc(slices.Clone(requested), func(sc string) bool { return !slices.Contains(approved, sc) })
+}
+
+func (s *Server) approve(
+	w http.ResponseWriter,
+	r *http.Request,
+	p authParams,
+	client *Client,
+	subject string,
+	scopes []string,
+	tenant string,
+) {
 	ctx, now := r.Context(), s.cfg.Now()
 	grant := Grant{
 		ID:        randomToken(),
 		ClientID:  client.ID,
 		Subject:   subject,
-		Scopes:    p.scopes,
+		Tenant:    tenant,
+		Scopes:    scopes,
 		Resource:  p.resource,
 		CreatedAt: now,
 	}

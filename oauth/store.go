@@ -27,6 +27,7 @@ type Grant struct {
 	ID        string
 	ClientID  string
 	Subject   string
+	Tenant    string // set by ConsentDecider; empty otherwise
 	Scopes    []string
 	Resource  string
 	CreatedAt time.Time

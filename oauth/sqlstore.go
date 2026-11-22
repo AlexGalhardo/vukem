@@ -16,11 +16,32 @@ import (
 // dialect placeholders, so it runs on SQLite, PostgreSQL and MySQL. Create
 // the tables with Migration.
 type SQLStore struct {
-	ex database.Executor
+	ex     database.Executor
+	tenant bool
 }
 
 // NewSQLStore returns a Store over ex.
 func NewSQLStore(ex database.Executor) *SQLStore { return &SQLStore{ex: ex} }
+
+// WithTenant returns a SQLStore that also stores Grant.Tenant, in the column
+// TenantMigration adds. Without it a Grant with a Tenant is refused rather
+// than saved without it, and Grant.Tenant is always empty.
+func (s *SQLStore) WithTenant() *SQLStore { return &SQLStore{ex: s.ex, tenant: true} }
+
+// TenantMigration adds the nullable tenant column to oauth_grants, for apps
+// that use ConsentDecider with Decision.Tenant. Run it after Migration, which
+// stays as it was so its checksum does not change.
+func TenantMigration(id string) schema.Migration {
+	return schema.Migration{
+		ID: id,
+		Up: func(s *schema.Schema) error {
+			return s.Table("oauth_grants", func(t *schema.Table) { t.String("tenant", 255).Nullable() })
+		},
+		Down: func(s *schema.Schema) error {
+			return s.Table("oauth_grants", func(t *schema.Table) { t.DropColumn("tenant") })
+		},
+	}
+}
 
 // Migration creates oauth_grants, oauth_codes and oauth_refresh_tokens.
 func Migration(id string) schema.Migration {
@@ -94,9 +115,23 @@ func (s *SQLStore) q(text string) string {
 
 // CreateGrant implements Store.
 func (s *SQLStore) CreateGrant(ctx context.Context, g Grant) error {
-	_, err := s.ex.ExecContext(ctx, s.q(
-		"INSERT INTO oauth_grants (id, client_id, subject, scopes, resource, created_at) VALUES (?, ?, ?, ?, ?, ?)"),
-		g.ID, g.ClientID, g.Subject, strings.Join(g.Scopes, " "), g.Resource, g.CreatedAt.UTC())
+	var err error
+
+	switch {
+	case s.tenant:
+		_, err = s.ex.ExecContext(ctx, s.q(
+			"INSERT INTO oauth_grants (id, client_id, subject, scopes, resource, created_at, tenant) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		),
+			g.ID, g.ClientID, g.Subject, strings.Join(g.Scopes, " "), g.Resource, g.CreatedAt.UTC(), g.Tenant)
+	case g.Tenant != "":
+		return errors.New("oauth: grant has a tenant; use SQLStore.WithTenant after TenantMigration")
+	default:
+		_, err = s.ex.ExecContext(ctx, s.q(
+			"INSERT INTO oauth_grants (id, client_id, subject, scopes, resource, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		),
+			g.ID, g.ClientID, g.Subject, strings.Join(g.Scopes, " "), g.Resource, g.CreatedAt.UTC())
+	}
+
 	if err != nil {
 		return fmt.Errorf("oauth: create grant: %w", err)
 	}
@@ -110,11 +145,18 @@ func (s *SQLStore) Grant(ctx context.Context, id string) (Grant, error) {
 		g       Grant
 		scopes  string
 		revoked sql.NullTime
+		tenant  sql.NullString
 	)
 
+	cols, dest := "", []any{&g.ID, &g.ClientID, &g.Subject, &scopes, &g.Resource, &g.CreatedAt, &revoked}
+	if s.tenant {
+		cols, dest = ", tenant", append(dest, &tenant)
+	}
+
 	err := s.ex.QueryRowContext(ctx, s.q(
-		"SELECT id, client_id, subject, scopes, resource, created_at, revoked_at FROM oauth_grants WHERE id = ?"), id).
-		Scan(&g.ID, &g.ClientID, &g.Subject, &scopes, &g.Resource, &g.CreatedAt, &revoked)
+		"SELECT id, client_id, subject, scopes, resource, created_at, revoked_at"+cols+" FROM oauth_grants WHERE id = ?",
+	),
+		id).Scan(dest...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Grant{}, ErrNotFound
 	}
@@ -123,7 +165,7 @@ func (s *SQLStore) Grant(ctx context.Context, id string) (Grant, error) {
 		return Grant{}, fmt.Errorf("oauth: load grant: %w", err)
 	}
 
-	g.Scopes, g.Revoked = strings.Fields(scopes), revoked.Valid
+	g.Scopes, g.Revoked, g.Tenant = strings.Fields(scopes), revoked.Valid, tenant.String
 
 	return g, nil
 }
