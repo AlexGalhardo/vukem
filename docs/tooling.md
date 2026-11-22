@@ -39,7 +39,46 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 - `go run ./internal/tools/starterdeps -check|-write` (`task deps:starters`, weekly `starter-deps.yml`) keeps the dependencies `vukem new` scaffolds on their latest stable release. Pre-releases never count; htmx stays on 4.x, and Vue and Svelte keep TypeScript 6.x until their type checkers list 7 ([maintenance](maintenance.md#dependency-routine)).
 - Multi-module: `task lint` loops over every module; CI runs one job per module with `GOWORK=off`.
 - `task fmt`, `task lint:go` and `task setup` give golangci-lint a cache per worktree (`GOLANGCI_LINT_CACHE=<repo>/.cache/golangci-lint`, git-ignored), unless the variable is already set in the environment (CI, or a path you prefer). A cache shared by several worktrees and by concurrent runs gets corrupted: gosec then stops reporting G703 and `nolintlint` calls the `//nolint:gosec` directives "unused" until `golangci-lint cache clean`. `task lint:go` also passes `--allow-parallel-runners`, so lints of two worktrees do not block each other (each has its own cache). Plain `golangci-lint run` outside `task` still uses the shared default cache.
-- gosec taint rules (G701 to G710) go quiet when a package has a closure that calls a handler-typed function value (`func(w http.ResponseWriter, r *http.Request)`) it received as a parameter, as in `mux.HandleFunc(p, func(w, r) { ...; h(w, r) })`. This is upstream gosec behaviour, not a cache or `.golangci.yml` problem: it is deterministic, survives a fresh `GOLANGCI_LINT_CACHE`, and a closure calling a `func(int)` value does not trigger it. Every `//nolint:gosec` on a taint finding in the package then fails `nolintlint` as "unused" (reproduced in `contrib/studio` on golangci-lint 2.15.0), and real findings are hidden too, so do not delete the directives. Workaround: do not wrap handlers in a closure that forwards to a function value; register the handler directly and run the shared check (for example `requireJSON(w, r)`) at the top of each handler. To tell this apart from a corrupted cache, run `golangci-lint cache clean` first; if the directives are still "unused", look for the new closure.
+- gosec taint rules (G701 to G710) go quiet for a whole package when it has a closure that takes an `http.ResponseWriter` and calls a function value of the handler type (`func(http.ResponseWriter, *http.Request)`), as in `mux.HandleFunc(p, func(w, r) { ...; h(w, r) })` with `h` a parameter or a local variable. Every `//nolint:gosec` on a taint finding in the package then fails `nolintlint` as "unused" (seen in `contrib/studio` on golangci-lint 2.15.0), and real findings are hidden too, so do not delete the directives. Workaround: do not wrap handlers in a closure that forwards to a function value; register the handler directly and run the shared check (for example `requireJSON(w, r)`) at the top of each handler. To tell this apart from a corrupted cache, run `golangci-lint cache clean` first; if the directives are still "unused", look for the new closure.
+  - Verdict (VF-103, 2026-11-22): an upstream gosec limitation, not a vukem or `.golangci.yml` problem. golangci-lint 2.15.0 (the latest) bundles gosec v2.29.0, and the standalone `gosec` v2.30.0 (the latest) reports the same, so the pinned version is not the cause and a newer one does not fix it; nothing to pin. It is deterministic, survives a fresh `GOLANGCI_LINT_CACHE` and does not need `contrib/studio`: a module of two files reproduces it. The cause is not found in gosec; the neighbouring reports (securego/gosec #1712 and #1814, about `maxCallerEdges`) are closed and were about nondeterminism, so this is probably a separate bug. No linter is disabled and no exclusion is added.
+  - Minimal case (module `go 1.27`, `.golangci.yml` with only `gosec` and `nolintlint` enabled). `a.go` has one finding, G705 on the `w.Write`; `golangci-lint run ./...` reports it. Adding `wrap.go` next to it makes the same command print `0 issues`. Replacing the handler-typed `h` with `func(http.ResponseWriter)`, `func(*http.Request)`, `func(int, int)` or a call outside a closure keeps the finding; so does calling `h` from a top-level function. A named type (`type H func(http.ResponseWriter, *http.Request)`) as the parameter type also hides it.
+
+    ```go
+    // a.go
+    package b
+
+    import (
+    	"io/fs"
+    	"net/http"
+    )
+
+    func Handler(files fs.FS) http.Handler {
+    	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    		serve(w, r, files, r.PathValue("path"))
+    	})
+    }
+
+    func serve(w http.ResponseWriter, r *http.Request, files fs.FS, name string) {
+    	data, err := fs.ReadFile(files, name)
+    	if err != nil {
+    		http.NotFound(w, r)
+    		return
+    	}
+
+    	_, _ = w.Write(data) // G705 expected
+    }
+
+    // wrap.go: adding this file hides the G705 above
+    package b
+
+    import "net/http"
+
+    func Wrap(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+    	return func(w http.ResponseWriter, r *http.Request) { h(w, r) }
+    }
+    ```
+
+  - Left to do outside this repository: file the case upstream at securego/gosec. Until it is fixed, a new handler wrapper must not land without checking `golangci-lint run` on the module with and without it.
 
 ## Markdown
 
