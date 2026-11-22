@@ -162,7 +162,22 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, v url.Values,
 
 	p.redirectURI = registered
 
-	deny := func(code string) { s.redirect(w, r, p, url.Values{"error": {code}}) }
+	// RFC 6749 section 4.1.2.1 redirects an error once the redirect URI is
+	// valid. For a client from a metadata document "valid" only means what the
+	// client's own document says, so redirecting before the person has signed in
+	// would let an anonymous link on this domain bounce to a page the attacker
+	// chose, carrying error, state and iss. Those clients get a 400 page until
+	// Subject succeeds; from then on (the consent screen, the CSRF-checked
+	// decision) every client keeps the standard redirect.
+	deny := func(code string) {
+		if client.fromDocument {
+			bad()
+
+			return
+		}
+
+		s.redirect(w, r, p, url.Values{"error": {code}})
+	}
 
 	switch {
 	case v.Get("response_type") != "code":
@@ -187,6 +202,8 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, v url.Values,
 	if !ok {
 		return
 	}
+
+	deny = func(code string) { s.redirect(w, r, p, url.Values{"error": {code}}) }
 
 	if !decision {
 		exp := s.cfg.Now().Add(s.cfg.ConsentTTL).Unix()

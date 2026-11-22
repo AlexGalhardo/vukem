@@ -113,6 +113,8 @@ Pre-register with `oauth.StaticClients`. A public client has no `SecretHash` and
 - no redirects, 5 seconds, 5 KiB
 - the document must name itself, list valid redirect URIs and use no secret
 
+For such a client the redirect URIs are whatever its own document says, so an error found before the person has signed in and reached the consent screen (`unsupported_response_type`, `invalid_request`, `invalid_target`, `invalid_scope`) is a plain 400 page, never a redirect: otherwise an anonymous link on your domain would bounce to a page the document's author chose. Pre-registered clients keep the standard RFC 6749 redirect, and after a real consent every client gets its redirects, `access_denied` included.
+
 ## Verifying tokens
 
 In your API, `as.VerifyAccessToken(ctx, token, resource)` checks the signature against the allow list of algorithms (never `none`, never a symmetric one), the issuer, the expiry and that the audience is exactly `resource`. For an MCP server use the adapter, which keeps both packages independent:

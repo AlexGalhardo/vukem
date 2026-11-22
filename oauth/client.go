@@ -27,6 +27,10 @@ type Client struct {
 	// SecretHash is the SHA-256 of the client secret of a confidential
 	// client; nil makes a public client, which relies on PKCE alone.
 	SecretHash []byte
+
+	// fromDocument marks a client resolved from a Client ID Metadata Document:
+	// its redirect URIs are whatever the client's own document says.
+	fromDocument bool
 }
 
 // SecretHash returns the value for Client.SecretHash of secret.
@@ -220,7 +224,7 @@ func (m *MetadataDocuments) Client(ctx context.Context, id string) (*Client, err
 		}
 	}
 
-	return &Client{ID: id, Name: doc.ClientName, RedirectURIs: slices.Clone(doc.RedirectURIs)}, nil
+	return &Client{ID: id, Name: doc.ClientName, RedirectURIs: slices.Clone(doc.RedirectURIs), fromDocument: true}, nil
 }
 
 // hasDotSegment finds "." and ".." in a decoded path: the draft forbids them in
