@@ -479,6 +479,15 @@ func TestMailtrapErrorStringSanitized(t *testing.T) {
 	}
 }
 
+func TestMailtrapDefaultClientOwnsItsTransport(t *testing.T) {
+	t.Parallel()
+
+	got := NewMailtrap(MailtrapConfig{APIToken: config.NewSecret("t")}).cfg.HTTP.Transport
+	if got == nil || got == http.DefaultTransport {
+		t.Fatalf("Transport = %v, want a copy of the default transport", got)
+	}
+}
+
 func TestMailtrapDoesNotFollowRedirects(t *testing.T) {
 	t.Parallel()
 
