@@ -52,7 +52,9 @@ type App struct {
 
 // Options tune New.
 type Options struct {
-	// Env adds or overrides configuration values.
+	// Env adds or overrides configuration values. It beats the test defaults
+	// and any default the app sets with vukem.WithEnvDefaults. SESSION_DRIVER
+	// is "cookie" unless one of them sets it.
 	Env map[string]string
 	// Clock replaces the app clock (see FakeClock).
 	Clock func() time.Time
@@ -100,13 +102,17 @@ func Build(tb testing.TB, build vukem.BuildFunc, opts ...Options) (*App, error) 
 			tb.Name(),
 			"_",
 		) + "_" + rand.Text()[:8] + "?mode=memory&cache=shared",
-		"SESSION_DRIVER": "cookie",
-		"MAIL_MAILER":    "array",
+		"MAIL_MAILER": "array",
 	}
 	maps.Copy(env, o.Env)
 
+	// A default, not a value: a default the app sets with WithEnvDefaults
+	// replaces it, and an explicit Options.Env entry beats both.
+	src := config.MapSource(env)
+	src.SetDefaults(map[string]string{"SESSION_DRIVER": "cookie"})
+
 	appOpts := []vukem.Option{
-		vukem.WithSource(config.MapSource(env)),
+		vukem.WithSource(src),
 		vukem.WithKind(vukem.KindTest),
 		vukem.WithoutHTTP(),
 		vukem.WithLogOutput(logs),

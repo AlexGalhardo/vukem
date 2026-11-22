@@ -430,6 +430,12 @@ func TestBuildReturnsErrors(t *testing.T) {
 			opts:  vukemtest.Options{Env: map[string]string{"DATABASE_URL": "nope://x"}},
 			want:  `no driver for "nope" URLs`,
 		},
+		"app default session driver": {
+			build: func(opts ...vukem.Option) (*vukem.App, error) {
+				return build(append(opts, vukem.WithEnvDefaults(map[string]string{"SESSION_DRIVER": "bogus"}))...)
+			},
+			want: `unknown SESSION_DRIVER "bogus"`,
+		},
 		"session driver": {
 			build: build,
 			opts:  vukemtest.Options{Env: map[string]string{"SESSION_DRIVER": "bogus"}},
@@ -633,5 +639,18 @@ func TestAppLogs(t *testing.T) {
 
 	if got := app.Logs(); !strings.Contains(got, "marker for the test") {
 		t.Fatalf("Logs() = %q, want the app's log output", got)
+	}
+}
+
+func TestExplicitEnvBeatsAppEnvDefault(t *testing.T) {
+	t.Parallel()
+
+	withDefault := func(opts ...vukem.Option) (*vukem.App, error) {
+		return build(append(opts, vukem.WithEnvDefaults(map[string]string{"SESSION_DRIVER": "bogus"}))...)
+	}
+
+	app, err := vukemtest.Build(t, withDefault, vukemtest.Options{Env: map[string]string{"SESSION_DRIVER": "cookie"}})
+	if err != nil || app == nil {
+		t.Fatalf("Build = %v, want the explicit cookie driver to win over the app default", err)
 	}
 }

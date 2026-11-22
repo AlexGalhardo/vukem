@@ -109,6 +109,8 @@ invoices := queue.Dispatched[jobs.SendInvoice](jobs)
 clock.Advance(24 * time.Hour)
 ```
 
+`vukemtest` runs on cookie sessions unless the app says otherwise: `SESSION_DRIVER=cookie` is a default, not a fixed value. A default the app sets with `vukem.WithEnvDefaults` (for example `SESSION_DRIVER=database`) replaces it, so the tests run on the driver the app ships with, and an explicit `Options.Env` entry beats both. Apps that set no default keep cookie sessions.
+
 | Subsystem | Fake | Notes |
 | --- | --- | --- |
 | Mail | `mail.NewArray()` | `Sent()`, `SentTo(addr)`, `Reset()` |

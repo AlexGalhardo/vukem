@@ -52,7 +52,15 @@ type fileRef struct {
 // SetDefaults sets values used when a key is unset or empty in both the
 // process environment and the .env files, so the precedence is process
 // environment > .env files > defaults. Call it before the Source is read.
-func (s *Source) SetDefaults(defaults map[string]string) { s.defaults = maps.Clone(defaults) }
+// Defaults already set stay unless defaults names the same key, so a
+// caller that seeded some (vukemtest) keeps them under the app's own.
+func (s *Source) SetDefaults(defaults map[string]string) {
+	if s.defaults == nil {
+		s.defaults = make(map[string]string, len(defaults))
+	}
+
+	maps.Copy(s.defaults, defaults)
+}
 
 // Lookup returns the value for key and whether it is set. The process
 // environment wins over .env files, which win over SetDefaults. A process variable set to
