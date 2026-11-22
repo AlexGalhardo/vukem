@@ -43,8 +43,10 @@ test("every run is kept in the history with its numbers and never its rows", asy
   expect(keys.length).toBe(1);
   const raw = await page.evaluate((k) => window.localStorage.getItem(k) ?? "", keys[0] as string);
   expect(raw).toContain("select name from users");
-  expect(raw).not.toContain("linus");
-  expect(raw).not.toContain("ada");
+  // A random entry id can hold the letters of a name ("a3ada3bd").
+  const withoutIds = raw.replace(/"id":"[^"]*"/g, '"id":""');
+  expect(withoutIds).not.toContain("linus");
+  expect(withoutIds).not.toContain("ada");
 });
 
 test("search narrows the list, delete removes one entry, clear history asks first", async ({ page, studio }) => {
