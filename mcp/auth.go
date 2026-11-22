@@ -23,6 +23,8 @@ type TokenVerifier interface {
 // TokenInfo describes a verified access token.
 type TokenInfo struct {
 	Subject   string
+	Tenant    string // from the grant, when the authorization server sets one
+	GrantID   string
 	ClientID  string
 	Scopes    []string
 	Resource  string
