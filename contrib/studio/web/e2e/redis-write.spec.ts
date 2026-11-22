@@ -22,7 +22,8 @@ test("editing a string asks for a confirmation and keeps the expiry", async ({ p
 
   await expect(edit).toBeHidden();
   await expect(page.getByLabel("Value", { exact: true })).toHaveText("later");
-  await expect(page.getByText(/^(1h|59m)$/)).toBeVisible();
+  // The key is seeded once with one hour to live, before the whole suite.
+  await expect(page.getByText(/^(1h|[3-5]\dm)$/)).toBeVisible();
 });
 
 test("cancelling the confirmation changes nothing", async ({ page, serviceWriteStudio, services }) => {
