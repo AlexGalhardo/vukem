@@ -534,7 +534,7 @@ func TestRoutesTypeScriptIncludesHost(t *testing.T) {
 
 	for _, want := range []string{
 		`"api.users": { method: "GET", path: "/users", host: "api.example.com" },`,
-		`"home": { method: "GET", path: "/" },`,
+		`home: { method: "GET", path: "/" },`,
 		`"//" + spec.host`,
 	} {
 		if !strings.Contains(got, want) {

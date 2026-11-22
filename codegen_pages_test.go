@@ -65,6 +65,15 @@ func pagesConfig() inertia.Config {
 	}
 }
 
+// pagesLongNames has names and generics wider than the 120 columns of the Biome
+// config: the object alias moves under the equals sign, a Record breaks its
+// arguments and a nullable array becomes a union (VF-107, Biome 2.6.7).
+type pagesLongNames struct {
+	ByName map[string]pagesAuthorWithAVeryLongTypeNameXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX `json:"byName"`
+	List   []pagesAuthorWithAVeryLongTypeNameXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX          `json:"list,omitempty"`
+	Plain  string                                                                                                              `json:"plain"`
+}
+
 func TestCodegenPagesCommand_Golden(t *testing.T) {
 	t.Parallel()
 
@@ -244,6 +253,7 @@ func TestCodegenPagesCommand_ErrorsTypeAdmitsBags(t *testing.T) {
 func TestWrapLongUnions(t *testing.T) {
 	t.Parallel()
 
+	name := strings.Repeat("N", 95)
 	long := `"aaaaaaaaaaaaaaa" | "bbbbbbbbbbbbbbb" | "ccccccccccccccc" | "ddddddddddddddd" | "eeeeeeeeeeeeeee" | "f | g"`
 
 	tests := []struct {
@@ -263,10 +273,37 @@ func TestWrapLongUnions(t *testing.T) {
 				`  | "ddddddddddddddd"` + "\n" + `  | "eeeeeeeeeeeeeee"` + "\n" + `  | "f | g";`,
 		},
 		{
-			"nested union stays whole",
+			// Biome 2.6.7: the arguments of Record go one per line, then the union that still does not fit.
+			"a long union inside Record breaks the arguments, then the union",
 			"  a: Record<string, " + strings.Repeat("string | ", 14) + "number>;",
-			"  a: Record<string, " + strings.Repeat("string | ", 14) + "number>;",
+			"  a: Record<\n    string,\n" + strings.Repeat("    | string\n", 14) + "    | number\n  >;",
 		},
+		{
+			"Record that does not fit breaks its arguments",
+			"  m: Record<string, " + name + ">;",
+			"  m: Record<\n    string,\n    " + name + "\n  >;",
+		},
+		{
+			"nested Record breaks at each level",
+			"  g: Record<string, Record<string, " + name + ">>;",
+			"  g: Record<\n    string,\n    Record<string, " + name + ">\n  >;",
+		},
+		{
+			"an alias that does not fit breaks after the equals sign",
+			"export type " + name + " = string[];",
+			"export type " + name + " =\n  string[];",
+		},
+		{
+			"a nullable array is a union to Biome, a nullable name is not",
+			"  h?: " + name + "[] | null;",
+			"  h?:\n    | " + name + "[]\n    | null;",
+		},
+		{
+			"a nullable name stays whole",
+			"  h?: " + name + "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX | null;",
+			"  h?: " + name + "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX | null;",
+		},
+		{"a name too long to break stays whole", "  k: " + name + name + ";", "  k: " + name + name + ";"},
 	}
 
 	for _, tt := range tests {
@@ -277,6 +314,20 @@ func TestWrapLongUnions(t *testing.T) {
 				t.Errorf("wrapLongUnions mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestWrapLongUnions_ObjectAlias(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("L", 110)
+	in := "export type " + long + " = {\n  a: string;\n  b: Record<string, string>;\n};\n\n" +
+		"export type Short = {\n  a: string;\n};"
+	want := "export type " + long + " =\n  {\n    a: string;\n    b: Record<string, string>;\n  };\n\n" +
+		"export type Short = {\n  a: string;\n};"
+
+	if diff := cmp.Diff(want, wrapLongUnions(in, 120)); diff != "" {
+		t.Errorf("wrapLongUnions mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -308,7 +359,7 @@ func TestCodegenPages_StableUnderBiome(t *testing.T) {
 	icfg := pagesConfig()
 	icfg.Pages = append(icfg.Pages, inertia.Define[struct {
 		Owner *pagesAuthorWithAVeryLongTypeNameXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX `json:"owner"`
-	}]("Long/Enum").Info())
+	}]("Long/Enum").Info(), inertia.Define[pagesLongNames]("Long/Names/"+strings.Repeat("C", 120)).Info())
 
 	dir := t.TempDir()
 	// The config's "vcs" block needs a git repository; the check does not.
@@ -331,10 +382,47 @@ func TestCodegenPages_StableUnderBiome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.CommandContext(t.Context(), biome, "format", "resources/js/page-props.ts")
+	routes, err := runPagesApp(t, icfg, "codegen:routes", "-o", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "resources", "js", "routes.ts"), []byte(routes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.CommandContext(t.Context(), biome, "format", "resources/js")
 	cmd.Dir = dir
 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("biome would reformat the generated file: %v\n%s\n%s", err, out, got)
+	}
+}
+
+// Without Biome installed the same wide names still get the shapes it writes.
+func TestCodegenPages_LongNamesAreLaidOutLikeBiome(t *testing.T) {
+	t.Parallel()
+
+	icfg := pagesConfig()
+	icfg.Pages = append(icfg.Pages, inertia.Define[pagesLongNames]("Long/Names/"+strings.Repeat("C", 120)).Info())
+
+	got, err := runPagesApp(t, icfg, "codegen:pages", "-o", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		"Props =\n  {\n    byName: Record<\n      string,\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("page-props lacks %q:\n%s", want, got)
+		}
+	}
+
+	for line := range strings.SplitSeq(got, "\n") {
+		if len([]rune(line)) > biomeLineWidth && !strings.Contains(line, "AVeryLongTypeName") &&
+			!strings.HasPrefix(line, "  \"") && !strings.Contains(line, "CCCCCCCC") {
+			t.Errorf("line of %d characters passes the width: %.100s", len([]rune(line)), line)
+		}
 	}
 }

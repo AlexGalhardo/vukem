@@ -96,13 +96,12 @@ func routesTypeScript(infos []router.RouteInfo) string {
 	b.WriteString("export const routes = {\n")
 
 	for _, r := range named {
-		host := ""
+		fields := []string{"method: " + strconv.Quote(r.method), "path: " + strconv.Quote(r.path)}
 		if r.host != "" {
-			host = ", host: " + strconv.Quote(r.host)
+			fields = append(fields, "host: "+strconv.Quote(r.host))
 		}
 
-		fmt.Fprintf(&b, "  %s: { method: %s, path: %s%s },\n",
-			strconv.Quote(r.name), strconv.Quote(r.method), strconv.Quote(r.path), host)
+		b.WriteString(tsObjectMember(tsPropKey(r.name), fields, ",", biomeLineWidth))
 	}
 
 	b.WriteString("} as const;\n\n")
@@ -112,7 +111,7 @@ func routesTypeScript(infos []router.RouteInfo) string {
 	b.WriteString("export interface RouteParams {\n")
 
 	for _, r := range named {
-		fmt.Fprintf(&b, "  %s: %s;\n", strconv.Quote(r.name), paramsType(r.params))
+		b.WriteString(tsObjectMember(tsPropKey(r.name), paramFields(r.params), ";", biomeLineWidth))
 	}
 
 	b.WriteString("}\n")
@@ -121,17 +120,40 @@ func routesTypeScript(infos []router.RouteInfo) string {
 	return b.String()
 }
 
-func paramsType(params []string) string {
-	if len(params) == 0 {
-		return "Record<string, never>"
-	}
-
+func paramFields(params []string) []string {
 	fields := make([]string, len(params))
 	for i, p := range params {
-		fields[i] = strconv.Quote(p) + ": RouteParam"
+		fields[i] = tsPropKey(p) + ": RouteParam"
 	}
 
-	return "{ " + strings.Join(fields, "; ") + " }"
+	return fields
+}
+
+// tsObjectMember writes "  key: { a, b };" on one line, or one field per line
+// when that is wider than width, as Biome does. end closes the member: ";" in
+// a type (fields are then separated by ";") or "," in a value. Without fields
+// the member is Record<string, never>.
+func tsObjectMember(key string, fields []string, end string, width int) string {
+	if len(fields) == 0 {
+		return "  " + key + ": Record<string, never>" + end + "\n"
+	}
+
+	one := "  " + key + ": { " + strings.Join(fields, end+" ") + " }" + end
+	if len([]rune(one)) <= width {
+		return one + "\n"
+	}
+
+	var b strings.Builder
+
+	b.WriteString("  " + key + ": {\n")
+
+	for _, f := range fields {
+		b.WriteString("    " + f + end + "\n")
+	}
+
+	b.WriteString("  }" + end + "\n")
+
+	return b.String()
 }
 
 // pathParams returns the wildcard names of a ServeMux pattern path.
@@ -157,9 +179,10 @@ func pathParams(path string) []string {
 // routeFuncTS mirrors router.URL: "{name...}" keeps "/" and encodes each
 // segment. It sticks to ES5 library calls so it type-checks under any lib.
 const routeFuncTS = `
-type RouteArgs<N extends RouteName> = RouteParams[N] extends Record<string, never>
-  ? [params?: RouteParams[N], query?: RouteQuery]
-  : [params: RouteParams[N], query?: RouteQuery];
+type RouteArgs<N extends RouteName> =
+  RouteParams[N] extends Record<string, never>
+    ? [params?: RouteParams[N], query?: RouteQuery]
+    : [params: RouteParams[N], query?: RouteQuery];
 
 /** route builds the URL of a named route, e.g. route("posts.show", { id: 7 }). */
 export function route<N extends RouteName>(name: N, ...args: RouteArgs<N>): string {
@@ -332,104 +355,6 @@ func tsPropKey(k string) string {
 	}
 
 	return strconv.Quote(k)
-}
-
-// wrapLongUnions breaks every line wider than width that ends in a top-level
-// union the way Biome does, one "| member" per line, so a file this command
-// wrote is already what the formatter would write and -check stays stable
-// after `biome format`. The generator emits one declaration per line, and
-// the only lines that can pass the width are a property or a type alias
-// whose value is a union.
-func wrapLongUnions(src string, width int) string {
-	lines := strings.Split(src, "\n")
-	out := make([]string, 0, len(lines))
-
-	for _, line := range lines {
-		out = append(out, wrapUnionLine(line, width)...)
-	}
-
-	return strings.Join(out, "\n")
-}
-
-func wrapUnionLine(line string, width int) []string {
-	if len([]rune(line)) <= width || !strings.HasSuffix(line, ";") {
-		return []string{line}
-	}
-
-	trimmed := strings.TrimLeft(line, " ")
-	indent := line[:len(line)-len(trimmed)]
-
-	var head, value string
-
-	switch {
-	case strings.HasPrefix(trimmed, "export type "):
-		i := strings.Index(trimmed, " = ")
-		if i < 0 {
-			return []string{line}
-		}
-
-		head, value = trimmed[:i+2], trimmed[i+3:]
-	default:
-		i := strings.Index(trimmed, ": ")
-		if i < 0 {
-			return []string{line}
-		}
-
-		head, value = trimmed[:i+1], trimmed[i+2:]
-	}
-
-	members := splitTopLevelUnion(strings.TrimSuffix(value, ";"))
-	// Biome keeps "T | null" on one line, whatever its width.
-	if len(members) < 2 || (len(members) == 2 && slices.Contains(members, "null")) {
-		return []string{line}
-	}
-
-	out := []string{indent + head}
-	for _, m := range members {
-		out = append(out, indent+"  | "+m)
-	}
-
-	out[len(out)-1] += ";"
-
-	return out
-}
-
-// splitTopLevelUnion splits s at " | " outside brackets, angle brackets,
-// parentheses and string literals.
-func splitTopLevelUnion(s string) []string {
-	var (
-		parts   []string
-		depth   int
-		quote   rune
-		escaped bool
-		start   int
-	)
-
-	rs := []rune(s)
-	for i, r := range rs {
-		switch {
-		case quote != 0:
-			switch {
-			case escaped:
-				escaped = false
-			case r == '\\':
-				escaped = true
-			case r == quote:
-				quote = 0
-			}
-		case r == '"' || r == '\'':
-			quote = r
-		case strings.ContainsRune("{[(<", r):
-			depth++
-		case strings.ContainsRune("}])>", r):
-			depth--
-		case depth == 0 && r == '|' && i > 0 && rs[i-1] == ' ' && i+1 < len(rs) && rs[i+1] == ' ':
-			parts = append(parts, string(rs[start:i-1]))
-			start = i + 2
-		}
-	}
-
-	return append(parts, string(rs[start:]))
 }
 
 var (

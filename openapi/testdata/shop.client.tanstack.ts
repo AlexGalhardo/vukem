@@ -94,7 +94,14 @@ export type ApiProblem = {
   request_id?: string;
   code?: string;
   errors?: Record<string, string[]>;
-  issues?: { path: string; code: string; key?: string; message: string; params?: Record<string, unknown>; on?: string }[];
+  issues?: {
+    path: string;
+    code: string;
+    key?: string;
+    message: string;
+    params?: Record<string, unknown>;
+    on?: string;
+  }[];
   [extension: string]: unknown;
 };
 
@@ -118,8 +125,31 @@ export class ApiError extends Error {
 
 /** HttpErrorStatus lists the error statuses the client narrows on. A status outside it is returned as it is: the type is an approximation. */
 export type HttpErrorStatus =
-  | 400 | 401 | 402 | 403 | 404 | 405 | 406 | 408 | 409 | 410 | 412 | 413 | 415
-  | 422 | 423 | 425 | 428 | 429 | 431 | 451 | 500 | 501 | 502 | 503 | 504;
+  | 400
+  | 401
+  | 402
+  | 403
+  | 404
+  | 405
+  | 406
+  | 408
+  | 409
+  | 410
+  | 412
+  | 413
+  | 415
+  | 422
+  | 423
+  | 425
+  | 428
+  | 429
+  | 431
+  | 451
+  | 500
+  | 501
+  | 502
+  | 503
+  | 504;
 
 /** ApiResult is what every client method resolves to: data on 2xx, error otherwise. A failed fetch (network, abort) is not a result: it rejects. */
 export type ApiResult<T, E> =
@@ -245,11 +275,9 @@ function requester(options: ClientOptions) {
   };
 }
 
-export type LegacyError =
-  | { status: HttpErrorStatus; value: ApiProblem | undefined };
+export type LegacyError = { status: HttpErrorStatus; value: ApiProblem | undefined };
 
-export type ProductsDestroyError =
-  | { status: HttpErrorStatus; value: ApiProblem | undefined };
+export type ProductsDestroyError = { status: HttpErrorStatus; value: ApiProblem | undefined };
 
 export type ProductsIndexError =
   | { status: 422; value: Problem }
@@ -260,19 +288,14 @@ export type ProductsStoreError =
   | { status: 422; value: Problem }
   | { status: Exclude<HttpErrorStatus, 401 | 422>; value: ApiProblem | undefined };
 
-export type WebhooksReceiveError =
-  | { status: HttpErrorStatus; value: ApiProblem | undefined };
-
+export type WebhooksReceiveError = { status: HttpErrorStatus; value: ApiProblem | undefined };
 
 /** Client has one method per API operation. */
 export interface Client {
   /**
    * GET /api/v1/legacy/{path}
    */
-  legacy(
-    args: { params: LegacyParams },
-    options?: CallOptions,
-  ): Promise<ApiResult<unknown, LegacyError>>;
+  legacy(args: { params: LegacyParams }, options?: CallOptions): Promise<ApiResult<unknown, LegacyError>>;
 
   /**
    * DELETE /api/v1/products/{id}
@@ -313,8 +336,7 @@ export function createClient(options: ClientOptions = {}): Client {
   const request = requester(options);
 
   return {
-    legacy: (args, options) =>
-      request<unknown, LegacyError>("GET", "/api/v1/legacy/{path}", args, options),
+    legacy: (args, options) => request<unknown, LegacyError>("GET", "/api/v1/legacy/{path}", args, options),
     productsDestroy: (args, options) =>
       request<ProductsDestroyResponse, ProductsDestroyError>("DELETE", "/api/v1/products/{id}", args, options),
     productsIndex: (args, options) =>
@@ -329,7 +351,10 @@ export function createClient(options: ClientOptions = {}): Client {
 function unwrap<T, E extends { status: number; value: unknown }>(result: ApiResult<T, E>): T {
   if (result.error !== null) {
     const value = result.error.value;
-    throw new ApiError(result.error.status, typeof value === "object" && value !== null ? (value as ApiProblem) : undefined);
+    throw new ApiError(
+      result.error.status,
+      typeof value === "object" && value !== null ? (value as ApiProblem) : undefined,
+    );
   }
   // error is null exactly when data is T; a generic union cannot say so.
   return result.data as T;
@@ -340,18 +365,15 @@ export function createQueries(client: Client) {
   return {
     legacy: (args: { params: LegacyParams }) => ({
       queryKey: ["legacy", args] as const,
-      queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-        unwrap(await client.legacy(args, { signal })),
+      queryFn: async ({ signal }: { signal?: AbortSignal }) => unwrap(await client.legacy(args, { signal })),
     }),
     productsDestroy: () => ({
       mutationKey: ["productsDestroy"] as const,
-      mutationFn: async (args: { params: ProductsDestroyParams }) =>
-        unwrap(await client.productsDestroy(args)),
+      mutationFn: async (args: { params: ProductsDestroyParams }) => unwrap(await client.productsDestroy(args)),
     }),
     productsIndex: (args?: { query?: ProductsIndexQuery }) => ({
       queryKey: ["productsIndex", args ?? {}] as const,
-      queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-        unwrap(await client.productsIndex(args, { signal })),
+      queryFn: async ({ signal }: { signal?: AbortSignal }) => unwrap(await client.productsIndex(args, { signal })),
     }),
     productsStore: () => ({
       mutationKey: ["productsStore"] as const,

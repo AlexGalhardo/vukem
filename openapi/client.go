@@ -209,7 +209,12 @@ func writeThrowClient(b *strings.Builder, ops []*clientOp) {
 		}
 
 		writeTSDoc(b, op, "  ")
-		fmt.Fprintf(b, "  %s(%s): Promise<%s>;\n", lowerFirst(tsName(op.id)), tsArgs(op), tsResult(op))
+		name, args := lowerFirst(tsName(op.id)), tsArgs(op)
+		b.WriteString(fit(
+			fmt.Sprintf("  %s(%s): Promise<%s>;\n", name, args, tsResult(op)),
+			// Biome hugs a lone object parameter: its fields go one per line inside the parentheses.
+			fmt.Sprintf("  %s(%s): Promise<%s>;\n", name, hugObject(args), tsResult(op)),
+		))
 	}
 
 	b.WriteString("}\n\n")
@@ -228,7 +233,11 @@ func writeThrowClient(b *strings.Builder, ops []*clientOp) {
 			call += ", " + arg
 		}
 
-		fmt.Fprintf(b, "    %s: (%s) => request<%s>(%s),\n", lowerFirst(tsName(op.id)), arg, tsResult(op), call)
+		name := lowerFirst(tsName(op.id))
+		b.WriteString(fit(
+			fmt.Sprintf("    %s: (%s) => request<%s>(%s),\n", name, arg, tsResult(op), call),
+			fmt.Sprintf("    %s: (%s) =>\n      request<%s>(%s),\n", name, arg, tsResult(op), call),
+		))
 	}
 
 	b.WriteString("  };\n}\n")
@@ -327,7 +336,14 @@ export type ApiProblem = {
   request_id?: string;
   code?: string;
   errors?: Record<string, string[]>;
-  issues?: { path: string; code: string; key?: string; message: string; params?: Record<string, unknown>; on?: string }[];
+  issues?: {
+    path: string;
+    code: string;
+    key?: string;
+    message: string;
+    params?: Record<string, unknown>;
+    on?: string;
+  }[];
   [extension: string]: unknown;
 };
 
@@ -503,8 +519,7 @@ func errorResponses(doc map[string]any, responses map[string]any) []clientError 
 // names the statuses left (Exclude) instead of saying number, or comparing
 // error.status with 422 would not narrow the declared member.
 func tsErrorUnion(op *clientOp) string {
-	var b strings.Builder
-
+	members := make([]string, 0, len(op.errors)+1)
 	declared := make([]string, 0, len(op.errors))
 
 	for _, e := range op.errors {
@@ -513,8 +528,7 @@ func tsErrorUnion(op *clientOp) string {
 			value = tsType(e.schema, "  ")
 		}
 
-		fmt.Fprintf(&b, "\n  | { status: %d; value: %s }", e.status, value)
-
+		members = append(members, fmt.Sprintf("{ status: %d; value: %s }", e.status, value))
 		declared = append(declared, strconv.Itoa(e.status))
 	}
 
@@ -523,9 +537,57 @@ func tsErrorUnion(op *clientOp) string {
 		status = "Exclude<HttpErrorStatus, " + strings.Join(declared, " | ") + ">"
 	}
 
-	fmt.Fprintf(&b, "\n  | { status: %s; value: ApiProblem | undefined }", status)
+	members = append(members, fmt.Sprintf("{ status: %s; value: ApiProblem | undefined }", status))
 
-	return "export type " + tsName(op.id) + "Error =" + b.String() + ";\n\n"
+	head := "export type " + tsName(op.id) + "Error ="
+
+	// Biome keeps a union on one line when it fits in the line width, and
+	// otherwise puts one member per line.
+	if one := head + " " + strings.Join(members, " | ") + ";"; !strings.ContainsRune(one, '\n') &&
+		widthOf(one) <= biomeLineWidth {
+		return one + "\n\n"
+	}
+
+	return head + "\n  | " + strings.Join(members, "\n  | ") + ";\n\n"
+}
+
+// fit is one when every line of it fits the Biome line width, and broken
+// otherwise: the way Biome would have laid the same code out.
+func fit(one, broken string) string {
+	if widthOf(one) <= biomeLineWidth {
+		return one
+	}
+
+	return broken
+}
+
+// hugObject writes "args: { a; b }" the way Biome breaks a lone object
+// parameter: the fields one per line, the braces hugging the parentheses.
+func hugObject(arg string) string {
+	i := strings.Index(arg, "{ ")
+	if i < 0 || !strings.HasSuffix(arg, " }") {
+		return arg
+	}
+
+	fields := strings.Split(arg[i+2:len(arg)-2], "; ")
+
+	return arg[:i] + "{\n    " + strings.Join(fields, ";\n    ") + ";\n  }"
+}
+
+// biomeLineWidth is the line width of the Biome config vukem new writes
+// (biome.json): the generated client is written so that `biome format` leaves
+// it as it is.
+const biomeLineWidth = 120
+
+// widthOf is the width of the longest line of s, in characters.
+func widthOf(s string) int {
+	longest := 0
+
+	for line := range strings.SplitSeq(s, "\n") {
+		longest = max(longest, len([]rune(line)))
+	}
+
+	return longest
 }
 
 // tsCallArgs is the parameter list of a client method: the argument object
@@ -541,7 +603,7 @@ func tsCallArgs(op *clientOp) string {
 // writeResultClient writes the Client interface and createClient of the
 // result style.
 func writeResultClient(b *strings.Builder, ops []*clientOp) {
-	b.WriteString("\n/** Client has one method per API operation. */\nexport interface Client {\n")
+	b.WriteString("/** Client has one method per API operation. */\nexport interface Client {\n")
 
 	for i, op := range ops {
 		if i > 0 {
@@ -549,9 +611,18 @@ func writeResultClient(b *strings.Builder, ops []*clientOp) {
 		}
 
 		writeTSDoc(b, op, "  ")
-		fmt.Fprintf(b, "  %s(\n    %s,\n  ): Promise<ApiResult<%s, %sError>>;\n",
-			lowerFirst(tsName(op.id)), strings.ReplaceAll(tsCallArgs(op), ", options?", ",\n    options?"),
-			tsResult(op), tsName(op.id))
+		name := lowerFirst(tsName(op.id))
+		b.WriteString(fit(
+			fmt.Sprintf(
+				"  %s(%s): Promise<ApiResult<%s, %sError>>;\n",
+				name,
+				tsCallArgs(op),
+				tsResult(op),
+				tsName(op.id),
+			),
+			fmt.Sprintf("  %s(\n    %s,\n  ): Promise<ApiResult<%s, %sError>>;\n",
+				name, strings.ReplaceAll(tsCallArgs(op), ", options?", ",\n    options?"), tsResult(op), tsName(op.id)),
+		))
 	}
 
 	b.WriteString("}\n\n")
@@ -567,9 +638,13 @@ func writeResultClient(b *strings.Builder, ops []*clientOp) {
 			params, args = "args, options", "args"
 		}
 
-		fmt.Fprintf(b, "    %s: (%s) =>\n      request<%s, %sError>(%s, %s, %s, options),\n",
-			lowerFirst(tsName(op.id)), params, tsResult(op), tsName(op.id),
+		name := lowerFirst(tsName(op.id))
+		call := fmt.Sprintf("request<%s, %sError>(%s, %s, %s, options)", tsResult(op), tsName(op.id),
 			strconv.Quote(op.method), strconv.Quote(op.path), args)
+		b.WriteString(fit(
+			fmt.Sprintf("    %s: (%s) => %s,\n", name, params, call),
+			fmt.Sprintf("    %s: (%s) =>\n      %s,\n", name, params, call),
+		))
 	}
 
 	b.WriteString("  };\n}\n")
@@ -602,9 +677,14 @@ func writeTanStack(b *strings.Builder, ops []*clientOp) {
 				key = "[" + strconv.Quote(name) + ", args] as const"
 			}
 
-			fmt.Fprintf(b, "    %s: (%s) => ({\n      queryKey: %s,\n"+
-				"      queryFn: async ({ signal }: { signal?: AbortSignal }) =>\n        unwrap(await client.%s(%s)),\n    }),\n",
-				name, tsArgs(op), key, name, call)
+			fmt.Fprintf(b, "    %s: (%s) => ({\n      queryKey: %s,\n", name, tsArgs(op), key)
+
+			fn := "async ({ signal }: { signal?: AbortSignal }) =>"
+			b.WriteString(fit(
+				fmt.Sprintf("      queryFn: %s unwrap(await client.%s(%s)),\n", fn, name, call),
+				fmt.Sprintf("      queryFn: %s\n        unwrap(await client.%s(%s)),\n", fn, name, call),
+			))
+			b.WriteString("    }),\n")
 
 			continue
 		}
@@ -614,14 +694,12 @@ func writeTanStack(b *strings.Builder, ops []*clientOp) {
 			fn, call = "async ("+tsArgs(op)+") =>", "client."+name+"(args)"
 		}
 
-		fmt.Fprintf(
-			b,
-			"    %s: () => ({\n      mutationKey: [%s] as const,\n      mutationFn: %s\n        unwrap(await %s),\n    }),\n",
-			name,
-			strconv.Quote(name),
-			fn,
-			call,
-		)
+		fmt.Fprintf(b, "    %s: () => ({\n      mutationKey: [%s] as const,\n", name, strconv.Quote(name))
+		b.WriteString(fit(
+			fmt.Sprintf("      mutationFn: %s unwrap(await %s),\n", fn, call),
+			fmt.Sprintf("      mutationFn: %s\n        unwrap(await %s),\n", fn, call),
+		))
+		b.WriteString("    }),\n")
 	}
 
 	b.WriteString("  };\n}\n")
@@ -633,7 +711,10 @@ const tsUnwrap = `
 function unwrap<T, E extends { status: number; value: unknown }>(result: ApiResult<T, E>): T {
   if (result.error !== null) {
     const value = result.error.value;
-    throw new ApiError(result.error.status, typeof value === "object" && value !== null ? (value as ApiProblem) : undefined);
+    throw new ApiError(
+      result.error.status,
+      typeof value === "object" && value !== null ? (value as ApiProblem) : undefined,
+    );
   }
   // error is null exactly when data is T; a generic union cannot say so.
   return result.data as T;
@@ -652,7 +733,14 @@ export type ApiProblem = {
   request_id?: string;
   code?: string;
   errors?: Record<string, string[]>;
-  issues?: { path: string; code: string; key?: string; message: string; params?: Record<string, unknown>; on?: string }[];
+  issues?: {
+    path: string;
+    code: string;
+    key?: string;
+    message: string;
+    params?: Record<string, unknown>;
+    on?: string;
+  }[];
   [extension: string]: unknown;
 };
 
@@ -676,8 +764,31 @@ export class ApiError extends Error {
 
 /** HttpErrorStatus lists the error statuses the client narrows on. A status outside it is returned as it is: the type is an approximation. */
 export type HttpErrorStatus =
-  | 400 | 401 | 402 | 403 | 404 | 405 | 406 | 408 | 409 | 410 | 412 | 413 | 415
-  | 422 | 423 | 425 | 428 | 429 | 431 | 451 | 500 | 501 | 502 | 503 | 504;
+  | 400
+  | 401
+  | 402
+  | 403
+  | 404
+  | 405
+  | 406
+  | 408
+  | 409
+  | 410
+  | 412
+  | 413
+  | 415
+  | 422
+  | 423
+  | 425
+  | 428
+  | 429
+  | 431
+  | 451
+  | 500
+  | 501
+  | 502
+  | 503
+  | 504;
 
 /** ApiResult is what every client method resolves to: data on 2xx, error otherwise. A failed fetch (network, abort) is not a result: it rejects. */
 export type ApiResult<T, E> =
