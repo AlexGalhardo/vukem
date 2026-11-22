@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-11-22
+
+### Added
+
+- **studio:** Embed the built React interface and serve it under /ui/ ([26cb186](https://github.com/AlexGalhardo/vukem/commit/26cb1866c349bb1d15e43ed8462dc20f3740545b))
+- **studio:** Add the JSON API bootstrap and SQL read routes ([d96a349](https://github.com/AlexGalhardo/vukem/commit/d96a349973a7bcf26718d9ed79b99790b1434896))
+- **studio:** Add the API console and explain routes ([61b9806](https://github.com/AlexGalhardo/vukem/commit/61b9806f367be38dc55af174a9c9c17ed87c84c0))
+- **studio:** Add the MongoDB and Redis read routes to the API ([f0913fe](https://github.com/AlexGalhardo/vukem/commit/f0913fec71ec551862e41f6182f6f8d4eae4e637))
+- **studio:** Add the API write routes behind --write ([6158927](https://github.com/AlexGalhardo/vukem/commit/61589278876334f73b55d6faaecb397a979e3597))
+- **studio:** Build the interface shell, overview and table list pages ([386790f](https://github.com/AlexGalhardo/vukem/commit/386790fe3217a9965c66973ccb96bf92419bad4f))
+- **studio:** Add an exact row count and an expected-value guard on update ([6e481ec](https://github.com/AlexGalhardo/vukem/commit/6e481ec52f9f9a276333abde3c4b3c28d5bb5d8a))
+- **studio:** Add the grid window math ([2e79819](https://github.com/AlexGalhardo/vukem/commit/2e79819147d15bd9d8f266e8287601b68b04df20))
+- **studio:** Add the grid page cache with keyset and offset modes ([c09572d](https://github.com/AlexGalhardo/vukem/commit/c09572d5b4e6f40d051a04f3176466ae25c30738))
+- **studio:** Add the grid filter model and URL state ([9836fac](https://github.com/AlexGalhardo/vukem/commit/9836fac1c3256141e0e2547e65155f977cfbd7f3))
+- **studio:** Build the read-only virtualized data grid ([ebba77e](https://github.com/AlexGalhardo/vukem/commit/ebba77ebe793f5a4255b21ed1ee9036b597ae0d1))
+- **studio:** Add grid keyboard navigation, selection, copy and live announcements ([8c0bfeb](https://github.com/AlexGalhardo/vukem/commit/8c0bfeb3f2cb793ccd77d135f62b087a85e8de4b))
+- **studio:** Add the grid filter bar with URL state ([9759ddf](https://github.com/AlexGalhardo/vukem/commit/9759ddf9248265ee9fe03cf89abdba1f41c89351))
+- **studio:** Add the row drawer with full values, foreign key links and references ([c816b56](https://github.com/AlexGalhardo/vukem/commit/c816b563efa7d0d1aae8f31999ebe0372d057c5b))
+- **studio:** Add the shortcut registry and help dialog ([0415538](https://github.com/AlexGalhardo/vukem/commit/0415538bf6d58f5875e7edcfbb14ed0b010c8ef8))
+- **studio:** Add the inline edit state machine and new row model ([634ffbf](https://github.com/AlexGalhardo/vukem/commit/634ffbf1c005a40801dda0fd84f65db34dbcab7a))
+- **studio:** Wire inline edit, new row and delete to the API with conflict handling ([2302129](https://github.com/AlexGalhardo/vukem/commit/2302129632fc7b04af6c20178d9a3934c8714da9))
+- **studio:** Explain tables without a primary key and names that are not tables ([062d0d4](https://github.com/AlexGalhardo/vukem/commit/062d0d4a1eff138e4e6ca3bcaaf88247a853e977))
+- **studio:** Add live refresh and export links to the table view ([0b1a491](https://github.com/AlexGalhardo/vukem/commit/0b1a4913d81f893fcd7dc977a382ca386623c788))
+- **studio:** Classify console statements, cancel them and cap the result size ([c4c3db5](https://github.com/AlexGalhardo/vukem/commit/c4c3db598d345953bb519b02309d54e8f4be64d5))
+- **studio:** Add the SQL tokenizer for the editor ([80d8f4e](https://github.com/AlexGalhardo/vukem/commit/80d8f4e1eac19e66a3942ef7640b65b479af796b))
+- **studio:** Add SQL completion and formatting for the editor ([0044231](https://github.com/AlexGalhardo/vukem/commit/00442317c39f8e9407fdc1a63f342123adf26f7e))
+- **studio:** Add the editor's text operations ([d1d47bc](https://github.com/AlexGalhardo/vukem/commit/d1d47bc8745c76914abee9385de1106627444da1))
+- **studio:** Add the SQL editor component and the console route ([87dca0a](https://github.com/AlexGalhardo/vukem/commit/87dca0a514aeb30e01e3a4dc90dfd2456e706689))
+- **studio:** Run, explain and cancel statements and show results in the grid ([8a1a0b2](https://github.com/AlexGalhardo/vukem/commit/8a1a0b23cab40f845d1251e81992d85ddb39ce7d))
+- **studio:** Add the write mode switch and confirmation dialogs to the SQL console ([38820af](https://github.com/AlexGalhardo/vukem/commit/38820af7d53348281fd3b4041c5f66fc4f3e83a9))
+- **studio:** Add the tabs reducer and its session persistence ([fa024fa](https://github.com/AlexGalhardo/vukem/commit/fa024fa30429d756a686eb98abf2d02a633765fe))
+- **studio:** Add the tab strip and the query and table workspace ([1ac8413](https://github.com/AlexGalhardo/vukem/commit/1ac841388eacc1350c502d31ced379cda00f17f1))
+- **studio:** Expose a per-run session key in the bootstrap answer ([8721d0f](https://github.com/AlexGalhardo/vukem/commit/8721d0fc443fde8fe28c32687c5504f4bb334908))
+- **studio:** Add the query history and the saved-query library ([d86071a](https://github.com/AlexGalhardo/vukem/commit/d86071a76d36e071c01aa305f131fa16cd68ea7e))
+- **studio:** Add the tab shortcuts with chords and list the editor keys in the help ([c7c5362](https://github.com/AlexGalhardo/vukem/commit/c7c53623364ac4809b6955f77626089237aeec05))
+- **studio:** Map indexes and serve the schema and CREATE statement ([3354673](https://github.com/AlexGalhardo/vukem/commit/33546730cd9e53726cbab3ae8d40afcfe6d2d341))
+- **studio:** Add the deterministic layered layout of the schema diagram ([8b7efdd](https://github.com/AlexGalhardo/vukem/commit/8b7efdd98ecf87519a637a7678bb6a1df852e16b))
+- **studio:** Add schema, collection and key tab kinds ([5960fd4](https://github.com/AlexGalhardo/vukem/commit/5960fd4aa770589d9da0dd327d738e03edd42930))
+- **studio:** Add the schema view with a relationship diagram ([4b19ecd](https://github.com/AlexGalhardo/vukem/commit/4b19ecd73dbb2c9a31bf663ba99b83cd7e9ce2c4))
+- **studio:** Flag binary Redis strings so the interface can show hex ([5a435ae](https://github.com/AlexGalhardo/vukem/commit/5a435ae36f887b37f61473b08edb8b59242903b6))
+- **studio:** Serve the table and collection exports under the API ([4b896b4](https://github.com/AlexGalhardo/vukem/commit/4b896b4b3baafebc452c8c69d10e4478894c8d9e))
+- **studio:** Stream rows into the grid, and add a typed confirmation and editor languages ([78f4089](https://github.com/AlexGalhardo/vukem/commit/78f40894b8cdbb362952eca35b6c59c8836c3ba5))
+- **studio:** Add the MongoDB and Redis views, consoles and write dialogs ([b9a0edb](https://github.com/AlexGalhardo/vukem/commit/b9a0edbf31e15ce2a9ccad4862a635146a874e55))
+- **studio:** Wire the MongoDB and Redis views into the workspace and routes ([1db5872](https://github.com/AlexGalhardo/vukem/commit/1db58725a82fb292f542a1e1ba62ab4b99c2c636))
+- **router:** Add SecretPaths to hide secret segments outside registered routes ([4f04cc8](https://github.com/AlexGalhardo/vukem/commit/4f04cc82218979b1eb57b31bc3c871b46b9344c6))
+
+### Changed
+
+- **studio:** Share request parsing between the HTML handlers and the API ([d1db6df](https://github.com/AlexGalhardo/vukem/commit/d1db6df5fe22a2773d1dd79517439e53fcc92ea7))
+- **studio:** Keep typing cheap in long scripts ([63fddaa](https://github.com/AlexGalhardo/vukem/commit/63fddaaf0ff7d28914c1c85fe9f9b31236c7d324))
+- **studio:** Remove the htmx pages and open the React interface at / ([9ecbe22](https://github.com/AlexGalhardo/vukem/commit/9ecbe227088bb94c4c8e5fba90467c33afa4d488))
+
+### Fixed
+
+- **studio:** Keep database text out of write logs and report query failures as 500 ([82abca0](https://github.com/AlexGalhardo/vukem/commit/82abca065c1fba6742b7fe85aa80808e7db297cf))
+- **studio:** Show the plan of a write in EXPLAIN and refuse EXPLAIN ANALYZE of one ([a2436b9](https://github.com/AlexGalhardo/vukem/commit/a2436b9751eeca928be39382f60b1a168ccdd993))
+- **studio:** Focus the find field when it opens, not a frame later ([394c5e0](https://github.com/AlexGalhardo/vukem/commit/394c5e01c6ef249f0125e7648cec98a20e46e14a))
+- **studio:** Confirm unfiltered writes and read scalar functions named like verbs ([edc8e5c](https://github.com/AlexGalhardo/vukem/commit/edc8e5cbd2af135b935f7a2e228bac8343e6a602))
+- **studio:** Refuse EXPLAIN of a write with a quoted option or EXECUTE ([229bdf2](https://github.com/AlexGalhardo/vukem/commit/229bdf29c7812d2060eb040c5f357584b6937f4f))
+- **studio:** Keep console errors out of the log and neutralize hidden CSV formulas ([77809c5](https://github.com/AlexGalhardo/vukem/commit/77809c554ac2c7f7c892111b31a46b71872e70d6))
+- **studio:** Find a CSV formula behind any leading space or control character ([b303cd4](https://github.com/AlexGalhardo/vukem/commit/b303cd428d11e2439f385a05efd46fea3c02b9c7))
+- **release:** Regenerate the changelog section after the merge and refuse stale commit links ([ee4bf54](https://github.com/AlexGalhardo/vukem/commit/ee4bf54cbd8f8db84d6eb34f20fd5685c1a17639))
+- **cli:** Generate page-props.ts the way Biome formats it ([1e298cf](https://github.com/AlexGalhardo/vukem/commit/1e298cf404b93320e184c0c69c7e26e257f6eda7))
+- **router:** Hide SecretPaths values for any method and any form of the path ([df42b70](https://github.com/AlexGalhardo/vukem/commit/df42b7027b827a7050b0b6803b3e5f869219da9c))
+- **cli:** Pin contrib/stripe v0.5.4 and contrib/studio v0.1.1 ([7756073](https://github.com/AlexGalhardo/vukem/commit/7756073357c3445b86f91980068a01bc9544a235))
+- **tools:** Do not treat the ignore constraint as a build tag in modcheck ([53c672e](https://github.com/AlexGalhardo/vukem/commit/53c672ed03e376e78e8db5a9fa7154d670078c8e))
+
 ## [0.47.0] - 2026-11-21
 
 ### Added
@@ -1795,7 +1862,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/AlexGalhardo/vukem/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/AlexGalhardo/vukem/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/AlexGalhardo/vukem/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/AlexGalhardo/vukem/compare/v0.44.0...v0.45.0
