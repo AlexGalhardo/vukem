@@ -18,7 +18,8 @@ test("a string shows its value, its size and its type", async ({ page, serviceSt
 
 test("a key with a time to live shows it", async ({ page, serviceStudio, services }) => {
   await openKey(page, serviceStudio, services, "ttl");
-  await expect(page.getByText(/^(1h|59m)$/)).toBeVisible();
+  // The key is seeded once with one hour to live, before the whole suite.
+  await expect(page.getByText(/^(1h|[3-5]\dm)$/)).toBeVisible();
 });
 
 test("a binary string opens as a hex dump, with a text view", async ({ page, serviceStudio, services }) => {
