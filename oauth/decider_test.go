@@ -162,6 +162,35 @@ func TestSecurity_A01_ConsentDeciderCannotApproveMoreThanRequested(t *testing.T)
 	}
 }
 
+// A form with no box ticked gives an empty list: that must never mean "all".
+func TestSecurity_A01_ConsentDeciderEmptyApprovesNothing(t *testing.T) {
+	t.Parallel()
+
+	for name, scopes := range map[string][]string{"nil": nil, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			e := deciderEnv(t, oauth.NewMemoryStore(), func(*http.Request, oauth.ConsentRequest) (oauth.Decision, error) {
+				return oauth.Decision{Scopes: scopes, Tenant: "7"}, nil
+			})
+
+			if rec := e.get(authQuery(rwQuery)); rec.Code != 200 {
+				t.Fatalf("GET = %d", rec.Code)
+			}
+
+			form := e.consent.rendered.Load().Fields
+			form.Set("decision", "approve")
+
+			rec := e.post(e.srv.AuthorizeHandler(), "/authorize", form, nil)
+
+			loc, _ := url.Parse(rec.Header().Get("Location"))
+			if rec.Code != http.StatusFound || loc.Query().Get("error") != "access_denied" || loc.Query().Get("code") != "" {
+				t.Fatalf("POST = %d %s, want access_denied and no code", rec.Code, loc)
+			}
+		})
+	}
+}
+
 func TestSecurity_A01_ConsentDeciderForgedScopesFailCSRF(t *testing.T) {
 	t.Parallel()
 

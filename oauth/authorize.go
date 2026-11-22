@@ -47,11 +47,13 @@ type ConsentDecider interface {
 
 // Decision is the outcome of ConsentDecider.Decide.
 type Decision struct {
-	// Scopes is the approved subset of ConsentRequest.Scopes. Empty means
-	// all of them. The server refuses a scope that was not requested (the
-	// requested set is bound to the form by the CSRF token, so the user
-	// cannot widen it) and the grant, its code, refresh and access tokens
-	// carry exactly this set.
+	// Scopes is the approved subset of ConsentRequest.Scopes; to approve all
+	// of them, return req.Scopes. Empty approves nothing and the client gets
+	// access_denied, so a form with no box ticked never grants everything.
+	// The server refuses a scope that was not requested (the requested set
+	// is bound to the form by the CSRF token, so the user cannot widen it)
+	// and the grant, its code, refresh and access tokens carry exactly this
+	// set.
 	Scopes []string
 	// Tenant is stored on the Grant and returned by VerifyAccessToken.
 	Tenant string
@@ -257,16 +259,20 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, v url.Values,
 			return
 		}
 
-		if len(dec.Scopes) > 0 {
-			if scopes = narrow(p.scopes, dec.Scopes); scopes == nil {
-				s.cfg.Logger.ErrorContext(
-					r.Context(),
-					"oauth: consent decision approved a scope that was not requested",
-				)
-				deny("server_error")
+		if len(dec.Scopes) == 0 {
+			deny("access_denied")
 
-				return
-			}
+			return
+		}
+
+		if scopes = narrow(p.scopes, dec.Scopes); scopes == nil {
+			s.cfg.Logger.ErrorContext(
+				r.Context(),
+				"oauth: consent decision approved a scope that was not requested",
+			)
+			deny("server_error")
+
+			return
 		}
 
 		tenant = dec.Tenant
