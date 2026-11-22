@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -105,4 +106,39 @@ func TestSecurity_A04_SuppressionCheckFailsClosed(t *testing.T) {
 		len(arr.Sent()) != 0 {
 		t.Errorf("Send with a failing check = %v, sent %d, want an error and nothing sent", err, len(arr.Sent()))
 	}
+}
+
+func TestSetSuppressionIsSafeWhileSending(t *testing.T) {
+	t.Parallel()
+
+	arr := NewArray()
+	m := New(arr, "app@example.com", nil)
+
+	var wg sync.WaitGroup
+
+	for range 8 {
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			for range 50 {
+				m.SetSuppression(func(context.Context, string) (bool, error) { return false, nil })
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			for range 50 {
+				if err := m.Send(context.Background(), raw{Envelope{To: []string{"ok@example.com"}}, Text("x")}); err != nil {
+					t.Error(err)
+
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 }
