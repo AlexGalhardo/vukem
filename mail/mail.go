@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync/atomic"
 
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -208,7 +209,7 @@ type Mailer struct {
 	transport Transport
 	views     web.Renderer
 	react     web.Renderer
-	suppress  SuppressionCheck
+	suppress  atomic.Pointer[SuppressionCheck]
 	// Pointers keep Mailer comparable, as it was before SendLater.
 	enqueue   *Enqueue
 	enqueueTx *EnqueueTx
@@ -243,8 +244,16 @@ var ErrAllSuppressed = errors.New("mail: every recipient is suppressed")
 // with [ErrAllSuppressed] (test it with errors.Is to skip quietly). A check
 // that returns an error stops the send, so a broken suppression store never
 // mails someone who opted out. Keep the list in your own table and fill it
-// from [Event.Suppress]. Call it before the mailer is used.
-func (m *Mailer) SetSuppression(check SuppressionCheck) { m.suppress = check }
+// from [Event.Suppress]. It is safe to call while the mailer is sending.
+func (m *Mailer) SetSuppression(check SuppressionCheck) {
+	if check == nil {
+		m.suppress.Store(nil)
+
+		return
+	}
+
+	m.suppress.Store(&check)
+}
 
 // Transport returns the mailer's transport (tests read the Array).
 func (m *Mailer) Transport() Transport { return m.transport }
@@ -305,8 +314,8 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 		return nil, ErrNoRecipients
 	}
 
-	if m.suppress != nil {
-		if err := m.dropSuppressed(ctx, msg); err != nil {
+	if check := m.suppress.Load(); check != nil {
+		if err := dropSuppressed(ctx, *check, msg); err != nil {
 			return nil, err
 		}
 	}
@@ -338,7 +347,7 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 	return msg, nil
 }
 
-func (m *Mailer) dropSuppressed(ctx context.Context, msg *Message) error {
+func dropSuppressed(ctx context.Context, check SuppressionCheck, msg *Message) error {
 	for _, list := range []*[]string{&msg.To, &msg.Cc, &msg.Bcc} {
 		var kept []string
 
@@ -348,7 +357,7 @@ func (m *Mailer) dropSuppressed(ctx context.Context, msg *Message) error {
 				return fmt.Errorf("mail: recipient: %w", err)
 			}
 
-			gone, err := m.suppress(ctx, strings.ToLower(plain.Address))
+			gone, err := check(ctx, strings.ToLower(plain.Address))
 			if err != nil {
 				return fmt.Errorf("mail: suppression check: %w", err)
 			}
