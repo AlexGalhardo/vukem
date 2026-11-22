@@ -403,6 +403,45 @@ func quote(s string) string {
 	return strconv.Quote(s)
 }
 
+// rpcFailure is failure for everything that is not a tool call (resources/read,
+// prompts/get, completion/complete). Those methods have no tool-shaped result,
+// so a *ToolError or a 4xx *errs.HTTPError is a JSON-RPC error here: an invalid
+// params error for a bad request or a missing thing, -32030 for a refusal,
+// -32023 for a usage limit. The message is the one the developer wrote for the
+// caller; a 5xx and any other error stay a bare internal error, logged.
+func (s *Server) rpcFailure(ctx context.Context, c *call, what string, err error) (any, *Error) {
+	if te, ok := errors.AsType[*ToolError](err); ok {
+		return nil, &Error{Code: CodeInvalidParams, Message: te.Message}
+	}
+
+	if he, ok := errors.AsType[*errs.HTTPError](
+		err,
+	); ok && he.Status >= 400 &&
+		he.Status < http.StatusInternalServerError {
+		return nil, httpStatusError(he)
+	}
+
+	return s.failure(ctx, c, what, err)
+}
+
+func httpStatusError(he *errs.HTTPError) *Error {
+	switch he.Status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return &Error{Code: CodeForbidden, Message: he.Text()}
+	case http.StatusNotFound, http.StatusGone:
+		return &Error{Code: CodeInvalidParams, Message: "Not found"}
+	case http.StatusTooManyRequests:
+		e := &Error{Code: CodeRateLimited, Message: he.Text()}
+		if retry := he.Headers.Get("Retry-After"); retry != "" {
+			e.Data = map[string]any{"retryAfter": retry}
+		}
+
+		return e
+	default:
+		return &Error{Code: CodeInvalidParams, Message: he.Text()}
+	}
+}
+
 // failure maps an error returned by user code to what the client may see.
 func (s *Server) failure(ctx context.Context, c *call, what string, err error) (any, *Error) {
 	if ir, ok := errors.AsType[*inputRequiredError](err); ok {

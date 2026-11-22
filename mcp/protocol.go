@@ -27,6 +27,8 @@ const (
 	CodeHeaderMismatch             = -32020
 	CodeMissingClientCapability    = -32021
 	CodeUnsupportedProtocolVersion = -32022
+	CodeRateLimited                = -32023
+	CodeForbidden                  = -32030
 )
 
 // Error is a JSON-RPC error object.
