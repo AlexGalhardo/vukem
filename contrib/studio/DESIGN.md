@@ -102,7 +102,11 @@ virtualization library).
   `n`, `?`, `]`, `[`) and two-key chords (`q` then `n`, `w` then `c`), never a
   combination the browser owns (`mod+T`, `mod+W` and `mod+N` are never used), and
   never while the focus is in an input, textarea, select or editable element.
-  The SQL editor is a typing field, so inside it only its own documented chords
+  The one exception is the help chord `Ctrl+K` (`Cmd+K` on Apple platforms):
+  the header's "Shortcuts" button advertises it and it opens the same help
+  dialog from anywhere, also inside a field, since a modified key is never text.
+  It overrides the browsers' search-bar key only while the page has focus, and
+  nothing else binds it. The SQL editor is a typing field, so inside it only its own documented chords
   apply (see below); they are listed in the help dialog.
 
 ## The SQL console

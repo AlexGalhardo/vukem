@@ -1,13 +1,18 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { CloseIcon } from "../components/icons";
-import { ShortcutRegistry } from "./registry";
+import { helpChordLabel, isApplePlatform, isHelpChord, ShortcutRegistry } from "./registry";
 import type { Listed, Shortcut } from "./registry";
 
 interface ShortcutsApi {
   registry: ShortcutRegistry;
   openHelp: () => void;
 }
+
+const apple = typeof navigator !== "undefined" && isApplePlatform(navigator.platform);
+
+/** The chord that opens the help, written for this platform: "Ctrl K" or "⌘ K". */
+export const helpChord = helpChordLabel(apple);
 
 const ShortcutsContext = createContext<ShortcutsApi | null>(null);
 
@@ -99,7 +104,12 @@ function KeyTable({ label, rows }: { label: string; rows: readonly Listed[] }): 
   );
 }
 
-function HelpDialog({ registry, open, onClose }: { registry: ShortcutRegistry; open: boolean; onClose: () => void }): ReactElement {
+/**
+ * The dialog opens on a request counter, not on a flag: the native close event
+ * arrives after the dialog is already shut, and a flag that still said "open"
+ * would swallow a request made in between (Escape, then the chord at once).
+ */
+function HelpDialog({ registry, request }: { registry: ShortcutRegistry; request: number }): ReactElement {
   const dialog = useRef<HTMLDialogElement>(null);
   const [listed, setListed] = useState<Listed[]>([]);
 
@@ -108,25 +118,23 @@ function HelpDialog({ registry, open, onClose }: { registry: ShortcutRegistry; o
     if (!d) {
       return;
     }
-    if (open && !d.open) {
+    if (request > 0 && !d.open) {
       setListed(registry.list());
       d.showModal();
-    } else if (!open && d.open) {
-      d.close();
     }
-  }, [open, registry]);
+  }, [request, registry]);
 
   return (
-    <dialog ref={dialog} className="dialog" aria-labelledby="shortcut-title" onClose={onClose}>
+    <dialog ref={dialog} className="dialog" aria-labelledby="shortcut-title">
       <header className="dialog-header">
         <h2 id="shortcut-title" className="dialog-title">
           Keyboard shortcuts
         </h2>
-        <button type="button" className="icon-button" aria-label="Close the shortcut help" onClick={onClose}>
+        <button type="button" className="icon-button" aria-label="Close the shortcut help" onClick={() => dialog.current?.close()}>
           <CloseIcon />
         </button>
       </header>
-      <p className="muted">Shortcuts do nothing while you type in a field.</p>
+      <p className="muted">Single-key shortcuts do nothing while you type in a field.</p>
       <h3 className="dialog-subtitle">Anywhere</h3>
       <table className="data-table" aria-label="Shortcuts">
         <tbody>
@@ -138,6 +146,12 @@ function HelpDialog({ registry, open, onClose }: { registry: ShortcutRegistry; o
               <td>{s.description}</td>
             </tr>
           ))}
+          <tr>
+            <th scope="row">
+              <kbd>{helpChord.replace(" ", "+")}</kbd>
+            </th>
+            <td>Show this help, from anywhere, also while you type</td>
+          </tr>
         </tbody>
       </table>
       <h3 className="dialog-subtitle">In the grid</h3>
@@ -153,11 +167,18 @@ function HelpDialog({ registry, open, onClose }: { registry: ShortcutRegistry; o
 /** ShortcutsProvider owns the registry, listens for keys and shows the help dialog. */
 export function ShortcutsProvider({ children }: { children: ReactNode }): ReactElement {
   const registry = useMemo(() => new ShortcutRegistry(), []);
-  const [helpOpen, setHelpOpen] = useState(false);
-  const api = useMemo<ShortcutsApi>(() => ({ registry, openHelp: () => setHelpOpen(true) }), [registry]);
+  const [helpRequest, setHelpRequest] = useState(0);
+  const openHelp = useCallback(() => setHelpRequest((n) => n + 1), []);
+  const api = useMemo<ShortcutsApi>(() => ({ registry, openHelp }), [registry, openHelp]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
+      if (isHelpChord(e, apple)) {
+        // The browsers bind Ctrl+K to their own search while the page has focus; the page's own use wins.
+        e.preventDefault();
+        openHelp();
+        return;
+      }
       // Without this the "/" that moved the focus would be typed into the field it moved to.
       if (registry.handle(e)) {
         e.preventDefault();
@@ -165,13 +186,13 @@ export function ShortcutsProvider({ children }: { children: ReactNode }): ReactE
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [registry]);
+  }, [registry, openHelp]);
 
   return (
     <ShortcutsContext.Provider value={api}>
       <HelpShortcut />
       {children}
-      <HelpDialog registry={registry} open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <HelpDialog registry={registry} request={helpRequest} />
     </ShortcutsContext.Provider>
   );
 }

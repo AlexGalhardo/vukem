@@ -86,3 +86,40 @@ test("the shortcuts are not browser combinations: Ctrl+R is left to the browser"
   await page.waitForTimeout(200);
   expect(requests).toBe(0);
 });
+
+test("the Shortcuts link next to the keyboard icon shows its key and opens the help, as the key does", async ({ page, studio }) => {
+  await open(page, studio, "items");
+  const link = page.getByRole("button", { name: /^Shortcuts (Ctrl K|⌘ K)$/ });
+  await expect(link).toBeVisible();
+  const hint = (await link.locator("kbd").innerText()).trim();
+  expect(["Ctrl K", "⌘ K"]).toContain(hint);
+
+  // The link sits to the right of the keyboard icon.
+  const icon = await page.getByRole("button", { name: "Keyboard shortcuts" }).boundingBox();
+  const box = await link.boundingBox();
+  expect((box?.x ?? 0) > (icon?.x ?? 0) + (icon?.width ?? 0) - 1).toBe(true);
+
+  await link.focus();
+  await page.keyboard.press("Enter");
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(help).toBeHidden();
+
+  // The key it advertises does the same, also while the focus is in a field.
+  const chord = hint === "Ctrl K" ? "Control+k" : "Meta+k";
+  await page.getByRole("form", { name: "Add a filter" }).getByLabel("Value").focus();
+  await page.keyboard.press(chord);
+  await expect(help).toBeVisible();
+  await expect(help.getByRole("table", { name: "Shortcuts" }).getByRole("row", { name: /(Ctrl|⌘)\+K .*help/i })).toBeVisible();
+});
+
+test("the Shortcuts link fits a narrow screen", async ({ page, studio }) => {
+  await page.setViewportSize({ width: 360, height: 700 });
+  await open(page, studio, "items");
+  const link = page.getByRole("button", { name: /^Shortcuts/ });
+  await expect(link).toBeVisible();
+  const box = await link.boundingBox();
+  expect((box?.x ?? 0) + (box?.width ?? 0) <= 360).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
