@@ -46,7 +46,7 @@ func NewResend(cfg ResendConfig) *Resend {
 	}
 
 	if cfg.HTTP == nil {
-		cfg.HTTP = &http.Client{Timeout: 10 * time.Second}
+		cfg.HTTP = &http.Client{Transport: ownTransport(), Timeout: 10 * time.Second}
 	}
 
 	if cfg.MaxRetries == 0 {

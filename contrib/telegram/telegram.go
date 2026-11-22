@@ -56,7 +56,7 @@ func New(cfg Config) (*Bot, error) {
 	cfg.BaseURL = strings.TrimSuffix(cfg.BaseURL, "/")
 
 	if cfg.HTTP == nil {
-		cfg.HTTP = &http.Client{Timeout: 60 * time.Second}
+		cfg.HTTP = &http.Client{Transport: ownTransport(), Timeout: 60 * time.Second}
 	}
 
 	if cfg.Logger == nil {
@@ -302,4 +302,15 @@ func (b *Bot) GetUpdates(ctx context.Context, offset int64, timeoutSeconds int) 
 	}, &out)
 
 	return out, err
+}
+
+// ownTransport copies the default transport, proxy settings included. Anything
+// in the process that calls CloseIdleConnections on the shared one (every
+// httptest.Server.Close does) would otherwise break a call in flight.
+func ownTransport() http.RoundTripper {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		return t.Clone()
+	}
+
+	return http.DefaultTransport
 }

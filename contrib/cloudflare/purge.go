@@ -34,7 +34,8 @@ type Purger struct {
 
 	// BaseURL is the API base; tests point it at a fake server.
 	BaseURL string
-	// Client sends the requests; nil uses a client with a 10s timeout.
+	// Client sends the requests; NewPurger sets one with a 10s timeout and its
+	// own transport. Nil falls back to a 10s client for each call.
 	Client *http.Client
 }
 
@@ -49,7 +50,10 @@ func NewPurger(zoneID, token string) (*Purger, error) {
 		return nil, errors.New("cloudflare: empty API token")
 	}
 
-	return &Purger{zoneID: zoneID, token: token, BaseURL: APIURL}, nil
+	return &Purger{
+		zoneID: zoneID, token: token, BaseURL: APIURL,
+		Client: &http.Client{Transport: ownTransport(), Timeout: 10 * time.Second},
+	}, nil
 }
 
 // URLs purges these URLs.
@@ -104,7 +108,7 @@ func (p *Purger) purge(ctx context.Context, body map[string]any) error {
 
 	client := p.Client
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = &http.Client{Transport: ownTransport(), Timeout: 10 * time.Second}
 	}
 
 	resp, err := client.Do(req)
@@ -135,4 +139,15 @@ func (p *Purger) purge(ctx context.Context, body map[string]any) error {
 	}
 
 	return nil
+}
+
+// ownTransport copies the default transport, proxy settings included. Anything
+// in the process that calls CloseIdleConnections on the shared one (every
+// httptest.Server.Close does) would otherwise break a call in flight.
+func ownTransport() http.RoundTripper {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		return t.Clone()
+	}
+
+	return http.DefaultTransport
 }
