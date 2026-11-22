@@ -296,7 +296,7 @@ func (s *Server) readResource(ctx context.Context, c *call) (any, *Error) {
 			return nil, e
 		}
 
-		return s.failure(ctx, c, "resource "+p.URI, err)
+		return s.rpcFailure(ctx, c, "resource "+p.URI, err)
 	}
 
 	if len(contents) == 0 {

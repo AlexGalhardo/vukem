@@ -180,7 +180,7 @@ func (s *Server) getPrompt(ctx context.Context, c *call) (any, *Error) {
 			return nil, e
 		}
 
-		return s.failure(ctx, c, "prompt "+p.Name, err)
+		return s.rpcFailure(ctx, c, "prompt "+p.Name, err)
 	}
 
 	if res.Messages == nil {
@@ -261,7 +261,7 @@ func (s *Server) complete(ctx context.Context, c *call) (any, *Error) {
 		return fn(ctx, p.Argument.Name, p.Argument.Value, p.Context.Arguments)
 	})
 	if err != nil {
-		return s.failure(ctx, c, "completion", err)
+		return s.rpcFailure(ctx, c, "completion", err)
 	}
 
 	if len(got.Values) > maxCompletions {
