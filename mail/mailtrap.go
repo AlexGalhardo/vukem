@@ -66,6 +66,7 @@ func NewMailtrap(cfg MailtrapConfig) *Mailtrap {
 		// A redirected API POST is never expected; following it would resend
 		// the token and the message somewhere else.
 		cfg.HTTP = &http.Client{
+			Transport:     ownTransport(),
 			Timeout:       10 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
@@ -80,6 +81,17 @@ func NewMailtrap(cfg MailtrapConfig) *Mailtrap {
 	}
 
 	return &Mailtrap{cfg: cfg}
+}
+
+// ownTransport copies the default transport, proxy settings included. Anything
+// in the process that calls CloseIdleConnections on the shared one (every
+// httptest.Server.Close does) would otherwise break a send in flight.
+func ownTransport() http.RoundTripper {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		return t.Clone()
+	}
+
+	return http.DefaultTransport
 }
 
 // MailtrapError is an error answered by the Mailtrap API. It never
