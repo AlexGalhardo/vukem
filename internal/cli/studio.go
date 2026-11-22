@@ -16,7 +16,7 @@ const (
 	// studioVersion is the contrib/studio release vukem studio installs: the
 	// latest contrib/studio tag (TestStudioVersionIsLatestTag). Bump it after
 	// tagging the module.
-	studioVersion = "v0.1.1"
+	studioVersion = "v0.1.2"
 )
 
 // studioFlags are the flags of vukem-studio that vukem studio passes on.
