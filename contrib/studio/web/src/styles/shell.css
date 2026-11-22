@@ -441,4 +441,24 @@ a.nav-link:hover {
   .topbar-end .icon-button:has(+ .shortcuts-link) {
     display: none;
   }
+
+  /* Font widths differ by system, so the source picker takes its own line instead of squeezing the bar. */
+  .shell {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+    padding-block: var(--space-1);
+  }
+
+  .switcher {
+    order: 1;
+    flex: 1 0 100%;
+  }
+
+  .switcher select {
+    width: 100%;
+    max-width: none;
+  }
 }
