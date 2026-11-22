@@ -188,7 +188,8 @@ func TestSecurity_A01_ConsentDeciderEmptyApprovesNothing(t *testing.T) {
 			rec := e.post(e.srv.AuthorizeHandler(), "/authorize", form, nil)
 
 			loc, _ := url.Parse(rec.Header().Get("Location"))
-			if rec.Code != http.StatusFound || loc.Query().Get("error") != "access_denied" || loc.Query().Get("code") != "" {
+			if rec.Code != http.StatusFound || loc.Query().Get("error") != "access_denied" ||
+				loc.Query().Get("code") != "" {
 				t.Fatalf("POST = %d %s, want access_denied and no code", rec.Code, loc)
 			}
 		})
