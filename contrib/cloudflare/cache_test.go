@@ -217,3 +217,16 @@ func TestPurger(t *testing.T) {
 		t.Error("NewPurger(empty token) = nil error")
 	}
 }
+
+func TestPurgerDefaultClientOwnsItsTransport(t *testing.T) {
+	t.Parallel()
+
+	p, err := cloudflare.NewPurger(strings.Repeat("a", 32), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if p.Client == nil || p.Client.Transport == nil || p.Client.Transport == http.DefaultTransport {
+		t.Fatalf("Client = %+v, want its own copy of the default transport", p.Client)
+	}
+}

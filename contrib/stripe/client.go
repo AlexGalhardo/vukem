@@ -67,7 +67,7 @@ func New(key string, opts ...Option) (*Client, error) {
 
 	c := &Client{
 		key: key, baseURL: "https://api.stripe.com", retries: 2,
-		http: &http.Client{Timeout: 30 * time.Second}, sleep: sleepCtx,
+		http: &http.Client{Transport: ownTransport(), Timeout: 30 * time.Second}, sleep: sleepCtx,
 	}
 
 	for _, o := range opts {
@@ -598,4 +598,15 @@ func flattenScalar(v url.Values, prefix string, x reflect.Value) error {
 type List[T any] struct {
 	Data    []T  `json:"data"`
 	HasMore bool `json:"has_more"`
+}
+
+// ownTransport copies the default transport, proxy settings included. Anything
+// in the process that calls CloseIdleConnections on the shared one (every
+// httptest.Server.Close does) would otherwise break a call in flight.
+func ownTransport() http.RoundTripper {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		return t.Clone()
+	}
+
+	return http.DefaultTransport
 }
