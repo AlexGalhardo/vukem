@@ -70,6 +70,23 @@ func (c consent) Render(w http.ResponseWriter, r *http.Request, req oauth.Consen
 
 The form posts to `req.Action` with every entry of `req.Fields` as a hidden input and a `decision` field of `approve` or `deny`. One of the fields is `csrf`, an HMAC over the signed-in user and the exact request, valid for ten minutes. A form for another user, another client or another redirect is refused, and so is a cross-site post.
 
+### Approving fewer scopes, and a tenant
+
+When the `Consent` value also has a `Decide` method (the `oauth.ConsentDecider` interface), the server calls it on an approved POST, after the CSRF, same-site and decision checks. It returns an `oauth.Decision` with the scopes the user approved and a tenant, for example the workspace picked on the screen:
+
+```go title="app/consent.go"
+func (c consent) Decide(w http.ResponseWriter, r *http.Request, req oauth.ConsentRequest) (oauth.Decision, error) {
+	ws := r.PostForm.Get("workspace")
+	if !c.member(req.Subject, ws) {
+		return oauth.Decision{}, oauth.ErrConsentDenied // the client gets access_denied
+	}
+
+	return oauth.Decision{Scopes: r.PostForm["scope"], Tenant: ws}, nil
+}
+```
+
+`Decision.Scopes` must be a subset of `req.Scopes` (empty means all of them); a scope that was not requested ends the request with `server_error` and no code. The requested set is bound to the form by the `csrf` token, so a forged `scope` field fails before `Decide` runs. The approved set is what the grant stores, so the code, the refresh tokens and every access token carry it, and a refresh cannot ask for more. `VerifyAccessToken` returns `Tenant` and `GrantID` from the grant. With `SQLStore`, run `oauth.TenantMigration` after `oauth.Migration` and use `NewSQLStore(db).WithTenant()`; without it a grant with a tenant is refused instead of saved without it. A `Consent` without `Decide` keeps the old behavior: the requested scopes and no tenant.
+
 ## What the server enforces
 
 - The `redirect_uri` must match a registered one character for character. Until the client and the redirect are validated an error is shown, never redirected, so the endpoint is not an open redirector.
