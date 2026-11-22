@@ -277,6 +277,10 @@ func (s *Schema) Table(table string, fn func(t *Table)) error {
 	return nil
 }
 
+// sqliteTriggerDropRe matches the SQLite error for a DROP COLUMN that leaves a
+// trigger pointing at a missing column.
+var sqliteTriggerDropRe = regexp.MustCompile(`error in trigger (\S+) after drop column`)
+
 // alterDrops runs the check drops, renames, index drops and column drops of
 // an alter, in the order that keeps each valid.
 func (s *Schema) alterDrops(table string, t *Table) error {
@@ -309,6 +313,15 @@ func (s *Schema) alterDrops(table string, t *Table) error {
 	// foreign keys; Schema.Rebuild recreates the table when a drop needs it.
 	for _, col := range t.drops {
 		if err := s.exec("ALTER TABLE " + s.q(table) + " DROP COLUMN " + s.q(col)); err != nil {
+			if m := sqliteTriggerDropRe.FindStringSubmatch(err.Error()); m != nil {
+				return fmt.Errorf(
+					"schema: cannot drop column %s.%s: trigger %s names it; drop that trigger first, "+
+						"or Rebuild the table with schema.DropTriggers() (which drops every trigger on it, "+
+						"to recreate afterwards): %w",
+					table, col, strings.Trim(m[1], "\"`'[]"), err,
+				)
+			}
+
 			return err
 		}
 	}

@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -775,5 +776,35 @@ func TestRebuildInDownRefusesTheColumnItsUpAdded(t *testing.T) {
 
 	if before != after {
 		t.Errorf("checksum changed after editing Down: %s != %s", before, after)
+	}
+}
+
+func TestDropColumnNamedByATriggerPointsToDropTriggers(t *testing.T) {
+	t.Parallel()
+
+	db := rebuildDB(t)
+	execAll(t, db,
+		"CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, flag INTEGER)",
+		"CREATE TABLE audit (note_id INTEGER)",
+		"CREATE TRIGGER notes_audit AFTER INSERT ON notes BEGIN INSERT INTO audit VALUES (new.flag); END",
+	)
+
+	err := New(t.Context(), db).Table("notes", func(t *Table) { t.DropColumn("flag") })
+	if err == nil {
+		t.Fatal("DropColumn of a column a trigger names succeeded, want an error")
+	}
+
+	for _, want := range []string{"notes_audit", "DropTriggers", `"flag"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+
+	if !strings.Contains(err.Error(), "no such column: new.flag") {
+		t.Errorf("error %q lost the SQLite message", err)
+	}
+
+	if errors.Unwrap(err) == nil {
+		t.Errorf("error %q does not wrap the original", err)
 	}
 }
