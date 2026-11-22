@@ -1,5 +1,5 @@
 import type { ApiCell, Column, QueryResponse } from "../api/types";
-import type { GridData } from "../grid/useGridData";
+import type { GridData } from "../grid/gridData";
 
 /** The grid wants typed columns; a console result only has names, so every column reads as text. */
 export function resultColumns(names: readonly string[]): Column[] {
@@ -10,10 +10,9 @@ export function resultColumns(names: readonly string[]): Column[] {
 export function staticGridData(rows: readonly (readonly ApiCell[])[], version: number): GridData {
   return {
     rowCount: rows.length,
+    offset: 0,
+    total: rows.length,
     approx: false,
-    capped: false,
-    mode: "offset",
-    tail: false,
     row: (index) => rows[index] as ApiCell[] | undefined,
     version,
     want: () => undefined,
@@ -21,11 +20,8 @@ export function staticGridData(rows: readonly (readonly ApiCell[])[], version: n
     error: null,
     retry: () => undefined,
     refresh: () => undefined,
-    countState: "idle",
-    exact: rows.length,
-    askCount: () => undefined,
-    jumpToEnd: () => Promise.resolve(rows.length),
-    leaveTail: () => undefined,
+    jumpToEnd: () => Promise.resolve({ moved: false, last: rows.length }),
+    jumpToStart: () => undefined,
     patchCell: () => undefined,
     reload: () => undefined,
   };

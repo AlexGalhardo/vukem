@@ -1,6 +1,6 @@
 import { expect, test } from "./fixtures";
 
-test("Live is off by default; turning it on refetches the visible rows and keeps scroll and focus", async ({
+test("Live is off by default; turning it on refetches the current page and keeps the page and the focus", async ({
   page,
   liveStudio,
 }) => {
@@ -12,12 +12,12 @@ test("Live is off by default; turning it on refetches the visible rows and keeps
   const live = page.getByRole("switch", { name: "Live" });
   await expect(live).not.toBeChecked();
 
-  // Scroll down a little and put the focus on a cell.
-  await grid.evaluate((el) => el.scrollTo({ top: 32 * 40 }));
-  await expect(grid.locator("[data-r='45'][data-c='2']")).toBeVisible();
-  await grid.locator("[data-r='45'][data-c='2']").click();
+  // Go to the second page (rows 26 to 50: row 46 is its 21st) and put the focus on a cell.
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 26 to 50 of 100,000");
+  await expect(grid.locator("[data-r='20'][data-c='2']")).toBeVisible();
+  await grid.locator("[data-r='20'][data-c='2']").click();
   await expect(grid.locator("[data-active='true']")).toBeFocused();
-  const scrollBefore = await grid.evaluate((el) => el.scrollTop);
 
   // Off: a change in the database does not show up on its own.
   const patch = (note: string) =>
@@ -26,26 +26,27 @@ test("Live is off by default; turning it on refetches the visible rows and keeps
     });
   expect((await patch("changed-1")).status()).toBe(200);
   await page.waitForTimeout(1500);
-  await expect(grid.locator("[data-r='45'][data-c='2']")).toHaveText("kind-6");
+  await expect(grid.locator("[data-r='20'][data-c='2']")).toHaveText("kind-6");
 
   await live.check();
-  await expect(grid.locator("[data-r='45'][data-c='2']")).toHaveText("changed-1");
+  await expect(grid.locator("[data-r='20'][data-c='2']")).toHaveText("changed-1");
 
-  // The scroll position did not move, and the focused cell keeps the focus across refreshes.
-  expect(await grid.evaluate((el) => el.scrollTop)).toBe(scrollBefore);
-  await grid.locator("[data-r='45'][data-c='2']").click();
+  // Still the second page, and the focused cell keeps the focus across refreshes.
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 26 to 50 of 100,000");
+  await expect(page.getByTestId("grid-page")).toHaveText("Page 2 of 4,000");
+  await grid.locator("[data-r='20'][data-c='2']").click();
   await expect(grid.locator("[data-active='true']")).toBeFocused();
 
   expect((await patch("changed-2")).status()).toBe(200);
-  await expect(grid.locator("[data-r='45'][data-c='2']")).toHaveText("changed-2");
-  expect(await grid.evaluate((el) => el.scrollTop)).toBe(scrollBefore);
+  await expect(grid.locator("[data-r='20'][data-c='2']")).toHaveText("changed-2");
+  await expect(page.getByTestId("grid-page")).toHaveText("Page 2 of 4,000");
   await expect(grid.locator("[data-active='true']")).toBeFocused();
-  await expect(grid.locator("[data-active='true']")).toHaveAttribute("data-r", "45");
+  await expect(grid.locator("[data-active='true']")).toHaveAttribute("data-r", "20");
 
   await live.uncheck();
   expect((await patch("changed-3")).status()).toBe(200);
   await page.waitForTimeout(1500);
-  await expect(grid.locator("[data-r='45'][data-c='2']")).toHaveText("changed-2");
+  await expect(grid.locator("[data-r='20'][data-c='2']")).toHaveText("changed-2");
 });
 
 test("Live sends refresh requests only while it is on", async ({ page, liveStudio }) => {
@@ -73,9 +74,8 @@ test("the export link downloads the rows of the current filter and sort", async 
   const grid = page.getByRole("grid", { name: "events rows" });
   await expect(grid.getByRole("gridcell", { name: "kind-3", exact: true }).first()).toBeVisible();
 
-  // The footer's exact count is the number of rows the export must hold.
-  await page.getByRole("button", { name: "Exact count" }).click();
-  await expect(page.getByTestId("grid-position")).toHaveText(/of 10,000$/);
+  // The footer's exact count is the number of rows the export must hold: all of them, not the page.
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 1 to 25 of 10,000");
 
   const [download] = await Promise.all([
     page.waitForEvent("download"),

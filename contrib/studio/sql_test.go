@@ -141,9 +141,41 @@ func TestBuildRows(t *testing.T) {
 			`SELECT "id", "name", "bio" FROM "users" ORDER BY "name", "id" LIMIT 21 OFFSET 40`, nil,
 		},
 		{
+			// The cap is in rows now (100,000 for a sort), not in pages: at 200 a page it is page 500.
 			"page is capped", database.SQLite, users,
 			RowQuery{Sort: "id", Page: 99999, PerPage: 9999},
-			`SELECT "id", "name", "bio" FROM "users" ORDER BY "id" LIMIT 201 OFFSET 199800`, nil,
+			`SELECT "id", "name", "bio" FROM "users" ORDER BY "id" LIMIT 201 OFFSET 99800`, nil,
+		},
+		{
+			"a page of 25 reaches row 100,000 of a sorted view", database.SQLite, users,
+			RowQuery{Sort: "name", Page: 99999, PerPage: 25},
+			`SELECT "id", "name", "bio" FROM "users" ORDER BY "name", "id" LIMIT 26 OFFSET 99975`, nil,
+		},
+		{
+			"a page number without a cursor is an offset in primary key order", database.SQLite, users,
+			RowQuery{Page: 3, PerPage: 25},
+			`SELECT "id", "name", "bio" FROM "users" ORDER BY "id" LIMIT 26 OFFSET 50`, nil,
+		},
+		{
+			"the first page of the primary key order has no offset", database.SQLite, users,
+			RowQuery{Page: 1, PerPage: 25},
+			`SELECT "id", "name", "bio" FROM "users" ORDER BY "id" LIMIT 26`, nil,
+		},
+		{
+			"descending page numbers count from the end", database.SQLite, users,
+			RowQuery{Page: 2, PerPage: 100, Desc: true},
+			`SELECT "id", "name", "bio" FROM "users" ORDER BY "id" DESC LIMIT 101 OFFSET 100`, nil,
+		},
+		{
+			"the cursor wins over the page", database.Postgres, users,
+			RowQuery{After: []string{"7"}, Page: 5, PerPage: 10},
+			`SELECT "id", "name", "bio" FROM "users" WHERE ("id") > ($1) ORDER BY "id" LIMIT 11`,
+			[]any{"7"},
+		},
+		{
+			"the primary key order reaches a million rows", database.SQLite, users,
+			RowQuery{Page: 1 << 40, PerPage: 100},
+			`SELECT "id", "name", "bio" FROM "users" ORDER BY "id" LIMIT 101 OFFSET 999900`, nil,
 		},
 		{
 			"no primary key is offset", database.SQLite, sqlTables[2],
@@ -695,6 +727,12 @@ func TestGridSQL(t *testing.T) {
 				"sort by a column",
 				RowQuery{Sort: "name", Page: 2},
 				sel + " ORDER BY " + q("name") + ", " + q("id") + " LIMIT 51 OFFSET 50",
+				nil,
+			},
+			{
+				"a page number without a cursor",
+				RowQuery{Page: 3, PerPage: 25},
+				sel + " ORDER BY " + q("id") + " LIMIT 26 OFFSET 50",
 				nil,
 			},
 			{"per page 0", RowQuery{PerPage: 0}, sel + " ORDER BY " + q("id") + " LIMIT 51", nil},

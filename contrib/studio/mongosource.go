@@ -27,7 +27,6 @@ const (
 	mongoTimeout  = 30 * time.Second
 	maxConsoleDoc = 1000
 	maxDocDisplay = 256 << 10
-	maxSkipPages  = 1000
 )
 
 // ErrNotFound is returned for a collection, document or key that does not exist.
@@ -37,6 +36,7 @@ var ErrNotFound = errors.New("studio: not found")
 type mongoAPI interface {
 	listCollections(ctx context.Context) ([]string, error)
 	estimate(ctx context.Context, coll string) (int64, error)
+	count(ctx context.Context, coll string, filter bson.D) (int64, error)
 	find(ctx context.Context, coll string, filter, sort bson.D, skip, limit int64) ([]bson.Raw, error)
 	findID(ctx context.Context, coll string, id any) (bson.Raw, error)
 	aggregate(ctx context.Context, coll string, pipeline bson.A, limit int64) ([]bson.Raw, error)
@@ -137,7 +137,8 @@ func perPage(n int) int {
 }
 
 // Documents implements MongoSource: filtered, sorted and paged on the server.
-// Ordering by _id pages by keyset; another field pages by skip (capped).
+// Ordering by _id follows a keyset cursor when one is given; otherwise, and for
+// another field, a page is read by skip (capped at maxSortedRows or maxOrderedRows).
 func (m *MongoDB) Documents(ctx context.Context, q DocQuery) (DocPage, error) {
 	if err := m.known(ctx, q.Collection); err != nil {
 		return DocPage{}, err
@@ -160,10 +161,14 @@ func (m *MongoDB) Documents(ctx context.Context, q DocQuery) (DocPage, error) {
 		sort bson.D
 	)
 
-	if q.Sort == "" || q.Sort == "_id" {
+	ordered := q.Sort == "" || q.Sort == "_id"
+
+	if ordered {
 		sort = bson.D{{Key: "_id", Value: dir}}
 
-		if q.After != "" {
+		if q.After == "" {
+			skip = int64(min(max(q.Page, 1), maxGridPage(n, true))-1) * int64(n)
+		} else {
 			after, err := parseID(q.After)
 			if err != nil {
 				return DocPage{}, err
@@ -182,7 +187,7 @@ func (m *MongoDB) Documents(ctx context.Context, q DocQuery) (DocPage, error) {
 		}
 
 		sort = bson.D{{Key: q.Sort, Value: dir}, {Key: "_id", Value: 1}}
-		skip = int64(min(max(q.Page, 1), maxSkipPages)-1) * int64(n)
+		skip = int64(min(max(q.Page, 1), maxGridPage(n, false))-1) * int64(n)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, mongoTimeout)
@@ -202,11 +207,38 @@ func (m *MongoDB) Documents(ctx context.Context, q DocQuery) (DocPage, error) {
 		return DocPage{}, err
 	}
 
-	if page.HasMore && len(page.Docs) > 0 && (q.Sort == "" || q.Sort == "_id") {
+	if page.HasMore && len(page.Docs) > 0 && ordered {
 		page.Next = page.Docs[len(page.Docs)-1].ID
 	}
 
 	return page, nil
+}
+
+// Count implements MongoSource: the exact number of documents matching
+// filters, within countTimeout.
+func (m *MongoDB) Count(ctx context.Context, coll string, filters []Filter) (int64, error) {
+	if err := m.known(ctx, coll); err != nil {
+		return 0, err
+	}
+
+	filter, err := buildMongoFilter(filters)
+	if err != nil {
+		return 0, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, countTimeout)
+	defer cancel()
+
+	n, err := m.api.count(ctx, coll, filter)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return 0, ErrCountTimeout
+		}
+
+		return 0, &queryError{err}
+	}
+
+	return n, nil
 }
 
 func andFilter(a, b bson.D) bson.D {
@@ -459,6 +491,10 @@ func (r realMongo) listCollections(ctx context.Context) ([]string, error) {
 
 func (r realMongo) estimate(ctx context.Context, coll string) (int64, error) {
 	return r.db.Collection(coll).EstimatedDocumentCount(ctx)
+}
+
+func (r realMongo) count(ctx context.Context, coll string, filter bson.D) (int64, error) {
+	return r.db.Collection(coll).CountDocuments(ctx, filter)
 }
 
 func (r realMongo) find(ctx context.Context, coll string, filter, sort bson.D, skip, limit int64) ([]bson.Raw, error) {

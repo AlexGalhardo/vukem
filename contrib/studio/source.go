@@ -42,6 +42,8 @@ type MongoSource interface {
 	Source
 	Collections(ctx context.Context) ([]Collection, error)
 	Documents(ctx context.Context, q DocQuery) (DocPage, error)
+	// Count is the exact number of documents matching filters; ErrCountTimeout when it took too long.
+	Count(ctx context.Context, collection string, filters []Filter) (int64, error)
 	Document(ctx context.Context, collection, id string) (Doc, error)
 	// Find and Aggregate are the console: Extended JSON typed by the developer.
 	Find(ctx context.Context, collection, filterJSON string) (DocPage, error)
@@ -65,8 +67,8 @@ type DocQuery struct {
 	Sort       string // field path; empty means _id
 	Desc       bool
 	After      string // keyset cursor: the _id of the last row, as Extended JSON
-	Page       int    // 1-based, used only when Sort is not _id (capped at 1000)
-	PerPage    int    // 1..200, default 50
+	Page       int    // 1-based, used when there is no cursor (the cursor wins)
+	PerPage    int    // 1..200, default 50 (the HTTP API accepts 1..100)
 }
 
 // Doc is one document.

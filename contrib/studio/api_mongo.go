@@ -2,6 +2,7 @@ package studio
 
 import (
 	"context"
+	"errors"
 	"net/http"
 )
 
@@ -27,6 +28,7 @@ func apiDocPage(pg DocPage) map[string]any {
 func (s *Studio) apiMongoRoutes() {
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/collections", s.apiCollections)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/collections/{collection}/documents", s.apiDocuments)
+	s.mux.HandleFunc("GET /api/v1/sources/{source}/collections/{collection}/count", s.apiDocCount)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/collections/{collection}/documents/{id}", s.apiDocument)
 	s.mux.HandleFunc("GET /api/v1/sources/{source}/collections/{collection}/export", s.exportDocuments)
 	s.mux.HandleFunc("POST /api/v1/sources/{source}/find", s.apiFind)
@@ -88,6 +90,34 @@ func (s *Studio) apiDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, apiDocPage(pg))
+}
+
+// apiDocCount answers the exact number of documents matching the filters, or
+// timedOut when the bounded count did not finish.
+func (s *Studio) apiDocCount(w http.ResponseWriter, r *http.Request) {
+	m := s.apiMongo(w, r)
+	if m == nil {
+		return
+	}
+
+	filters, err := filtersFrom(r.URL.Query(), apiParams.filter)
+	if err != nil {
+		s.apiFail(w, r, err)
+		return
+	}
+
+	n, err := m.Count(r.Context(), r.PathValue("collection"), filters)
+	if errors.Is(err, ErrCountTimeout) {
+		writeJSON(w, http.StatusOK, map[string]any{"timedOut": true})
+		return
+	}
+
+	if err != nil {
+		s.apiFail(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"count": n})
 }
 
 func (s *Studio) apiDocument(w http.ResponseWriter, r *http.Request) {

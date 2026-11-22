@@ -120,8 +120,8 @@ function TableData({
   const editingRef = useRef(editing);
   editingRef.current = editing;
 
-  // Live refresh refetches the pages on screen. It leaves the scroll and the focus alone (rows are kept
-  // until the new ones land), waits while a cell is being edited and while the tab is hidden.
+  // Live refresh refetches the current page and the count. It keeps the page, the selection and the focus (rows
+  // are kept until the new ones land), waits while a cell is being edited and while the tab is hidden.
   useEffect(() => {
     if (!live || refreshSeconds <= 0) {
       return;
@@ -169,7 +169,7 @@ function TableData({
     if (parts) {
       replaceSearch(viewToSearch(view, packKey(parts)));
     } else {
-      setCellsTarget({ kind: "cells", cells, number: index + 1 });
+      setCellsTarget({ kind: "cells", cells, number: data.offset + index + 1 });
     }
   };
 
@@ -264,7 +264,7 @@ function TableData({
         view={view}
         density={density}
         announce={announce}
-        resetKey={viewSearch}
+        resetKey={`${viewSearch}|${data.paging?.page}|${data.paging?.size}`}
         onOpenRow={openRow}
         linkFor={linkFor}
         onSort={(column) => setView(nextSort(view, column))}
@@ -331,7 +331,7 @@ export function TablePage({
   const tables = useApi<TablesResponse>(apiPath("sources", source, "tables"));
 
   return (
-    <section className="table-page" aria-labelledby="table-title">
+    <section className="table-page table-page-paged" aria-labelledby="table-title">
       <p className="crumbs">
         <Link route={{ name: "source", source }}>{source}</Link>
       </p>

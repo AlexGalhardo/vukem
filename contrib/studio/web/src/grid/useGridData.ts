@@ -1,53 +1,10 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { ApiError, apiGet, apiPath } from "../api/client";
-import type { ApiCell, CountResponse, RowsResponse } from "../api/types";
+import { apiGet, apiPath } from "../api/client";
+import type { CountResponse, RowsResponse } from "../api/types";
 import { apiQuery, viewToSearch } from "./filters";
 import type { ViewState } from "./filters";
-import { PageCache, pageSize } from "./pageCache";
-import type { PageMode } from "./pageCache";
-
-/** The server pages by offset up to page 1000, so a sorted view reaches this many rows. */
-export const maxOffsetRows = 1000 * pageSize;
-
-export type CountState = "idle" | "loading" | "unavailable";
-
-export interface GridData {
-  /** How many rows to make room for: exact, or the best estimate so far. */
-  rowCount: number;
-  /** True while rowCount is an estimate. */
-  approx: boolean;
-  /** True when a sorted view hides rows past what offset paging reaches. */
-  capped: boolean;
-  /** Offset paging gives random access; keyset paging loads in order. */
-  mode: PageMode;
-  /** The view is read from its end (keyset order reversed, shown ascending). */
-  tail: boolean;
-  row: (index: number) => ApiCell[] | undefined;
-  /** Changes every time rows arrive, so a view that reads them draws again. */
-  version: number;
-  want: (start: number, end: number) => void;
-  /** No page has arrived yet. */
-  loading: boolean;
-  error: ApiError | null;
-  retry: () => void;
-  refresh: () => void;
-  countState: CountState;
-  /** The exact count, when known (asked for, or learned by reaching the last page). */
-  exact: number | null;
-  askCount: () => void;
-  /**
-   * Prepare to show the last row and say how many rows there are. An offset
-   * view has random access, so nothing changes; a keyset view counts the rows
-   * and reads from the end. Null when the count is not available.
-   */
-  jumpToEnd: () => Promise<number | null>;
-  /** Leave the tail and read from the start again. */
-  leaveTail: () => void;
-  /** Put a saved value into the cached row, so the grid shows it without a new request. */
-  patchCell: (row: number, column: number, cell: ApiCell) => void;
-  /** Drop every page and the count and read again: after a row was added or removed. */
-  reload: () => void;
-}
+import type { GridData } from "./gridData";
+import { orderedRowCap, sortedRowCap } from "./paging";
+import { usePagedRows } from "./usePagedRows";
 
 export interface GridDataOptions {
   source: string;
@@ -58,200 +15,29 @@ export interface GridDataOptions {
   estimate: number;
 }
 
-function asApiError(err: unknown): ApiError {
-  return err instanceof ApiError ? err : new ApiError(0, "network", "Studio could not be reached.");
-}
-
-interface Counted {
-  key: string;
-  state: CountState;
-  n: number | null;
-}
-
-/** useGridData owns the page cache of one table view and the row count shown for it. */
+/**
+ * useGridData reads one page of a table at a time: the rows of the page
+ * (`perPage` and `page` go to the server, which bounds the size) and, apart,
+ * the exact count of the view. A view in primary key order can be paged a
+ * million rows deep, a sorted one 100,000.
+ */
 export function useGridData(options: GridDataOptions): GridData {
   const { source, table, view, hasPrimaryKey, estimate } = options;
-  const [, bump] = useReducer((n: number) => n + 1, 0);
-  const [cache, setCache] = useState<PageCache<ApiCell[]> | null>(null);
-  const [counted, setCounted] = useState<Counted | null>(null);
-  const [tailFor, setTailFor] = useState<string | null>(null);
-  const [nonce, setNonce] = useState(0);
-  const versionRef = useRef(0);
 
-  const mode: PageMode = view.sort === null && hasPrimaryKey ? "keyset" : "offset";
-  const viewKey = `${source}|${table}|${viewToSearch(view)}`;
-  const viewKeyRef = useRef(viewKey);
-  viewKeyRef.current = viewKey;
-  const countKeyRef = useRef("");
-
-  const countKey = `${viewKey}|${nonce}`;
-  const count = counted && counted.key === countKey ? counted : null;
-  const asked = count?.n ?? null;
-  countKeyRef.current = countKey;
-  const tail = mode === "keyset" && tailFor === viewKey && asked !== null;
-  const key = `${viewKey}|${tail ? "tail" : "head"}|${nonce}`;
-
-  useEffect(() => {
-    const created = new PageCache<ApiCell[]>({
-      mode,
-      onChange: () => {
-        versionRef.current++;
-        bump();
-      },
-      fetchPage: async (request, signal) => {
-        const extra: Record<string, string> = { perPage: String(request.perPage) };
-        if (request.after !== undefined) {
-          extra.after = request.after;
-        }
-        if (request.page !== undefined) {
-          extra.page = String(request.page);
-        }
-        if (mode === "keyset" && tail) {
-          extra.desc = "1";
-        }
-        const res = await apiGet<RowsResponse>(
-          apiPath("sources", source, "tables", table, "rows") + apiQuery(view, extra),
-          signal,
-        );
-        return { rows: res.rows, next: res.next, hasMore: res.hasMore };
-      },
-    });
-    setCache(created);
-
-    return () => {
-      created.dispose();
-      setCache(null);
-    };
-    // The key stands for source, table, view and tail.
-  }, [key, mode]);
-
-  const askCount = useCallback(() => {
-    const forKey = countKeyRef.current;
-    setCounted({ key: forKey, state: "loading", n: null });
-    return apiGet<CountResponse>(apiPath("sources", source, "tables", table, "count") + apiQuery(view)).then(
-      (res) => {
-        if (countKeyRef.current !== forKey) {
-          return null;
-        }
-        const n = res.count ?? null;
-        setCounted({ key: forKey, state: n === null ? "unavailable" : "idle", n });
-        return n;
-      },
-      () => {
-        if (countKeyRef.current === forKey) {
-          setCounted({ key: forKey, state: "unavailable", n: null });
-        }
-        return null;
-      },
-    );
-    // view is part of the key.
-  }, [source, table, viewKey, nonce]);
-
-  // After a row was added or removed the estimate from the table list is stale: count again.
-  useEffect(() => {
-    if (nonce > 0) {
-      void askCount();
-    }
-    // Only a reload asks.
-  }, [nonce]);
-
-  const learned = !tail ? (cache?.exactCount ?? null) : null;
-  const exact = asked ?? learned;
-  const known = cache?.knownRows ?? 0;
-
-  const jumpToEnd = useCallback(async (): Promise<number | null> => {
-    if (mode === "offset") {
-      return Math.min(exactRef.current ?? rowCountRef.current, maxOffsetRows);
-    }
-    const forKey = viewKeyRef.current;
-    const n = asked ?? (await askCount());
-    if (n !== null && viewKeyRef.current === forKey) {
-      setTailFor(forKey);
-    }
-    return n;
-  }, [mode, asked, askCount]);
-
-  const exactRef = useRef<number | null>(null);
-  const rowCountRef = useRef(0);
-  exactRef.current = exact;
-
-  const leaveTail = useCallback(() => setTailFor(null), []);
-  const reload = useCallback(() => {
-    setTailFor(null);
-    setNonce((n) => n + 1);
-  }, []);
-
-  let rowCount: number;
-  let approx: boolean;
-
-  if (exact !== null) {
-    rowCount = exact;
-    approx = false;
-  } else if (estimate >= 0 && estimate >= known) {
-    rowCount = estimate;
-    approx = true;
-  } else {
-    // The estimate is unknown or already beaten: room for what is loaded plus one more page.
-    rowCount = known + pageSize;
-    approx = true;
-  }
-
-  let capped = false;
-  if (mode === "offset" && rowCount > maxOffsetRows) {
-    rowCount = maxOffsetRows;
-    capped = true;
-  }
-
-  rowCountRef.current = rowCount;
-
-  // Displayed row i is the cache row rowCount - 1 - i while reading from the end.
-  const want = useCallback(
-    (start: number, end: number) => {
-      if (tail) {
-        cache?.want(Math.max(rowCount - end, 0), Math.max(rowCount - start, 1));
-      } else {
-        cache?.want(start, end);
-      }
+  return usePagedRows({
+    resetKey: `${source}|${table}|${viewToSearch(view)}`,
+    fetchPage: async (page, size, signal) => {
+      const res = await apiGet<RowsResponse>(
+        apiPath("sources", source, "tables", table, "rows") + apiQuery(view, { perPage: String(size), page: String(page) }),
+        signal,
+      );
+      return { rows: res.rows, hasMore: res.hasMore };
     },
-    [cache, tail, rowCount],
-  );
-  const row = useCallback(
-    (index: number) => (tail ? cache?.row(rowCount - 1 - index) : cache?.row(index)),
-    [cache, tail, rowCount],
-  );
-  const patchCell = useCallback(
-    (index: number, column: number, cell: ApiCell) => {
-      const current = tail ? cache?.row(rowCount - 1 - index) : cache?.row(index);
-      if (!current) {
-        return;
-      }
-      const next = current.map((c, i) => (i === column ? cell : c));
-      cache?.setRow(tail ? rowCount - 1 - index : index, next);
+    fetchTotal: async (signal) => {
+      const res = await apiGet<CountResponse>(apiPath("sources", source, "tables", table, "count") + apiQuery(view), signal);
+      return res.count ?? null;
     },
-    [cache, tail, rowCount],
-  );
-  const retry = useCallback(() => cache?.retry(), [cache]);
-  const refresh = useCallback(() => cache?.refresh(), [cache]);
-
-  return {
-    rowCount,
-    approx,
-    capped,
-    mode,
-    tail,
-    row,
-    version: versionRef.current,
-    want,
-    loading: cache === null || (known === 0 && cache.loadedPages === 0 && cache.error === null),
-    error: cache?.error ? asApiError(cache.error) : null,
-    retry,
-    refresh,
-    countState: count?.state ?? "idle",
-    exact,
-    askCount: () => void askCount(),
-    jumpToEnd,
-    leaveTail,
-    patchCell,
-    reload,
-  };
+    rowCap: view.sort === null && hasPrimaryKey ? orderedRowCap : sortedRowCap,
+    estimate,
+  });
 }

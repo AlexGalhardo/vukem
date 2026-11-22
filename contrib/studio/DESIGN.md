@@ -68,29 +68,56 @@ attribute in markup and no `eval`.
 
 ## The data grid
 
-The table view is one virtualized grid, written for this project (no
-virtualization library).
+The data grid is written for this project (no virtualization library). The
+rows of a SQL table and of a MongoDB collection are read **a page at a time**
+(see Paging); a list that arrives in steps or sits in memory (the keys of
+Redis, the elements of a key, a console result of at most 1,000 rows) is drawn
+through a scrolling window.
 
 - **Window math** is a pure module (`web/src/grid/virtual.ts`): from the scroll
   position it returns the rows and columns to draw, with an overscan of 6 rows
   and 2 columns. Rows have a fixed height of 28, 32 or 40 px, so nothing is
-  measured. The DOM holds a screen of rows, never more than about 100, however
-  large the table. Columns are windowed only above 30. A table taller than 10
+  measured. A scrolling list draws a screen of rows, never more than about 100,
+  however long. Columns are windowed only above 30. A list taller than 10
   million pixels is scrolled through a scaled range, because browsers cap the
-  height of an element.
+  height of an element. A paged grid asks for the window of its whole page: it
+  is as tall as its rows (at most 100) and the page scrolls, not a small box
+  inside it.
 - **Placement under the CSP.** Rows get `transform: translateY(...)` and cells
   a width from the script through the CSSOM (React's `style` prop sets
   `element.style`), which `style-src 'self'` allows. There is still no
   `style=""` in the served markup and no `<style>` element:
   `TestBuiltUIIsCSPClean` and `e2e/grid.spec.ts` (no console error) check it.
-- **Paging.** `pageCache.ts` keeps pages of 100 rows. The default order uses the
-  server's keyset cursor and loads in order, so "last row" reads the table from
-  its end (the sort reversed, after an exact count). Any other sort uses offset
-  pages (random access, up to page 1000 of the server, so 100,000 rows). Stale
-  requests are aborted, at most 3 run at once, at most 50 pages stay in memory.
-- **Semantics.** The grid is an ARIA `grid`: `aria-rowcount` is the rows plus the
-  header row, `aria-colcount` the columns plus the row gutter, every row and cell
-  carries `aria-rowindex` and `aria-colindex`, and there is one tab stop (the
+- **Paging.** A table or collection is browsed in pages of 25 (the default),
+  50, 75 or 100 rows. `usePagedRows` fetches only the current page, with
+  `perPage` and `page`, and asks the exact count apart (`/count`), so the
+  footer reads "Rows 1 to 25 of 27", with First, Previous, Next and Last and
+  "Page 1 of 2"; until the count lands the total is the table's estimate, "of
+  about N". The arithmetic is pure (`paging.ts`). The server refuses a
+  `perPage` outside 1 to 100 with 422 (a client cannot ask for more rows at
+  once than the interface offers); exports read 200 at a time internally and
+  ignore the page, so they hold the whole filtered result. A page is read with
+  OFFSET (or `skip`), which reads and drops what comes before it, so the reach
+  is bounded: 1,000,000 rows in primary key (or `_id`) order, which walks an
+  index, and 100,000 in a sorted view, which the footer says. A new view
+  (filter, sort, source) and a new page size return to page 1; the page goes back
+  to the last one that exists when rows disappear under it (deleting the last
+  row of the last page); Live and a refresh refetch the current page and keep
+  it, with its focus. The size is remembered per browser (`localStorage`,
+  `studio.pageSize`; a value that is not one of the four is ignored). A page that
+  is being replaced stays on screen until the next one lands, and stale requests
+  are aborted. A selection belongs to its page and is cleared when the page
+  changes. **Last row** (the button and `Ctrl+End`) means the last row of the
+  whole table: it goes to the last page and focuses that row; `Ctrl+Home` goes
+  to the first page. The arrow keys, Home, End and Page Up and Down stay inside
+  the page. Redis keys (read with SCAN, which has no total and no random access)
+  and the elements of a key (200 a page, with More and a visible count) keep
+  their own stepwise loading.
+- **Semantics.** The grid is an ARIA `grid`: `aria-rowcount` is the rows of the
+  whole view plus the header row (-1 while a paged view does not know its
+  count), `aria-colcount` the columns plus the row gutter, every row and cell
+  carries `aria-rowindex` (the number of the row in the whole view, not in its
+  page) and `aria-colindex`, and there is one tab stop (the
   active cell moves with the arrow keys). A polite live region announces
   position in steps of 100 rows, selection, copy and save results.
 - **Write mode** changes nothing on screen unless Studio started with
@@ -196,9 +223,10 @@ database catalog alone.
 
 ## MongoDB
 
-A collection (`web/src/mongo/`) is a virtualized list of documents read by
-cursor (`_id`) or, sorted by a field, by page up to the server's cap, which the
-page says in words. The Table view infers its columns from the top-level fields
+A collection (`web/src/mongo/`) is browsed a page at a time, like a SQL table
+(`page` and `perPage` to `/documents`, the exact count from `/count`); sorted
+by a field the page says in words that Studio pages through the first 100,000
+documents. The Table view infers its columns from the top-level fields
 of the first 100 documents and shows nested values as compact JSON; the JSON
 view is one summary column. The filter bar takes a field path, an operator from
 the fixed table and a scalar: the server builds the MongoDB filter, and nothing

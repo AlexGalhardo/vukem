@@ -55,8 +55,8 @@ export function useShortcut(shortcut: Shortcut): void {
 export const gridKeys: readonly Listed[] = [
   { key: "Arrow keys", description: "Move between cells" },
   { key: "Home, End", description: "First and last cell of the row" },
-  { key: "Ctrl+Home, Ctrl+End", description: "First and last cell of the grid (End asks for the exact count)" },
-  { key: "Page Up, Page Down", description: "Move a screen of rows" },
+  { key: "Ctrl+Home, Ctrl+End", description: "First and last row of the whole table: the first page, and the last page" },
+  { key: "Page Up, Page Down", description: "Move a screen of rows, inside the page" },
   { key: "Enter", description: "Sort on a header; open the row on a cell" },
   { key: "F2", description: "Edit the cell (write mode)" },
   { key: "Escape", description: "Cancel an edit or clear the selection" },

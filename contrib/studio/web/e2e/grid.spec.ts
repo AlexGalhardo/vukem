@@ -18,7 +18,7 @@ async function open(page: Page, studio: { startUrl: string; origin: string }, pa
   await page.goto(`${studio.origin}/ui/s/db/t/${path}`);
 }
 
-test("a large table renders a window of rows and stays inside the CSP", async ({ page, studio }) => {
+test("a large table renders one page of rows and stays inside the CSP", async ({ page, studio }) => {
   const errors = watchErrors(page);
   await open(page, studio, "events");
 
@@ -30,11 +30,10 @@ test("a large table renders a window of rows and stays inside the CSP", async ({
   await expect(grid).toHaveAttribute("aria-rowcount", "100001");
   await expect(grid).toHaveAttribute("aria-colcount", "8");
 
-  const rendered = await grid.getByRole("row").count();
-  expect(rendered).toBeLessThanOrEqual(100);
-  expect(rendered).toBeGreaterThan(10);
+  // One page of 25 rows and the header row are in the DOM, however large the table.
+  await expect(grid.getByRole("row")).toHaveCount(26);
 
-  await expect(page.getByTestId("grid-position")).toHaveText(/Rows 1 to \d+ of about 100,000/);
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 1 to 25 of 100,000");
 
   // Row placement is set through the CSSOM: no inline style attribute is in the markup the server sent.
   const html = await (await page.request.get(`${studio.origin}/ui/s/db/t/events`)).text();
@@ -70,25 +69,18 @@ test("NULL is a token, numbers and booleans are typed", async ({ page, studio })
   await expect(grid.locator(".token-binary").first()).toHaveText("<binary 2 bytes>");
 });
 
-test("the exact count replaces the estimate", async ({ page, studio }) => {
+test("the exact count is asked for by the page, not by a button", async ({ page, studio }) => {
   await open(page, studio, "events");
-  await expect(page.getByTestId("grid-position")).toBeVisible();
-  const button = page.getByRole("button", { name: "Exact count" });
-  if (await button.isVisible()) {
-    await button.click();
-  }
-  await expect(page.getByTestId("grid-position")).toHaveText(/of 100,000$/);
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 1 to 25 of 100,000");
+  await expect(page.getByRole("button", { name: "Exact count" })).toHaveCount(0);
 });
 
-test("aria-rowcount is the estimate plus the header row", async ({ page, studio, request }) => {
+test("aria-rowcount is the exact count plus the header row", async ({ page, studio }) => {
   await open(page, studio, "events");
-  const tables = await page.request.get(`${studio.origin}/api/v1/sources/db/tables`);
-  const estimate = ((await tables.json()) as { tables: { name: string; rowEstimate: number }[] }).tables.find(
-    (t) => t.name === "events",
-  )?.rowEstimate;
-  expect(estimate).toBe(100000);
-  await expect(page.getByRole("grid", { name: "events rows" })).toHaveAttribute("aria-rowcount", String((estimate ?? 0) + 1));
-  void request;
+  const count = await page.request.get(`${studio.origin}/api/v1/sources/db/tables/events/count`);
+  const total = ((await count.json()) as { count: number }).count;
+  expect(total).toBe(100000);
+  await expect(page.getByRole("grid", { name: "events rows" })).toHaveAttribute("aria-rowcount", String(total + 1));
 });
 
 const active = "[data-active='true']";
@@ -132,18 +124,20 @@ test("the keyboard moves the active cell and the grid has one tab stop", async (
   await expect(grid.locator(active)).toBeFocused();
 });
 
-test("Ctrl+End reaches the last row of a keyset view", async ({ page, studio }) => {
+test("Ctrl+End reaches the last row of the whole table, on the last page", async ({ page, studio }) => {
   await open(page, studio, "events");
   const grid = page.getByRole("grid", { name: "events rows" });
   await grid.getByRole("gridcell", { name: "kind-1", exact: true }).first().click();
 
   await page.keyboard.press("Control+End");
-  await expect(page.getByTestId("grid-position")).toHaveText(/Rows \d[\d,]* to 100,000 of 100,000/);
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 99,976 to 100,000 of 100,000");
   await expect(grid.getByRole("gridcell", { name: "100000", exact: true })).toBeVisible();
   await expect(grid.locator(active)).toBeFocused();
+  await expect(grid.locator(active)).toHaveAttribute("data-r", "24");
   await expect(page.getByTestId("grid-live")).toContainText("Row 100,000 of 100,000");
 
   await page.keyboard.press("Control+Home");
+  await expect(page.getByTestId("grid-position")).toHaveText("Rows 1 to 25 of 100,000");
   await expect(grid.getByRole("gridcell", { name: "1", exact: true }).first()).toBeVisible();
   await expect(grid.locator(active)).toHaveAttribute("data-r", "0");
 });

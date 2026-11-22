@@ -16,11 +16,31 @@ import (
 )
 
 const (
-	maxGridPage   = 1000
+	// A page deep into a view is read with OFFSET (SQL) or skip (MongoDB), which
+	// reads and drops every row before it. A view in primary key order walks an
+	// index, so it reaches further than a sorted one, which may scan the table.
+	maxSortedRows  = 100_000
+	maxOrderedRows = 1_000_000
+
+	// maxAPIPerPage is the most rows one request of the browsing API returns; the
+	// interface offers 25, 50, 75 and 100. Exports read 200 at a time internally.
+	maxAPIPerPage = 100
+
 	gridTimeout   = 30 * time.Second
 	gridCellRunes = 200
 	detailCellMax = 64 << 10
 )
+
+// maxGridPage is the last page reachable with perPage rows a page: a page past it
+// is read as the last one. ordered is true for the primary key order.
+func maxGridPage(perPageRows int, ordered bool) int {
+	limit := maxSortedRows
+	if ordered {
+		limit = maxOrderedRows
+	}
+
+	return max(limit/perPage(perPageRows), 1)
+}
 
 // RowQuery selects a page of rows of one table.
 type RowQuery struct {
@@ -29,8 +49,8 @@ type RowQuery struct {
 	Sort    string   // a column name; empty means the primary key
 	Desc    bool
 	After   []string // keyset cursor: the primary key of the last row
-	Page    int      // 1-based; used only when Sort is not the primary key
-	PerPage int      // 1..200, default 50
+	Page    int      // 1-based; used when there is no cursor (the cursor wins)
+	PerPage int      // 1..200, default 50 (the HTTP API accepts 1..100)
 	Full    bool     // keep values up to 64 KiB instead of 200 runes (export)
 }
 
@@ -231,8 +251,10 @@ func buildRows(d database.Dialect, t Table, q RowQuery) (string, []any, error) {
 	n := perPage(q.PerPage)
 	b.WriteString(" LIMIT " + strconv.Itoa(n+1))
 
-	if !keyset {
-		page := min(max(q.Page, 1), maxGridPage)
+	// A keyset view follows its cursor; without one, and past the first page, it
+	// is read by offset like a sorted view, so a page can be asked for by number.
+	if !keyset || (len(q.After) == 0 && q.Page > 1) {
+		page := min(max(q.Page, 1), maxGridPage(n, keyset))
 		b.WriteString(" OFFSET " + strconv.Itoa((page-1)*n))
 	}
 

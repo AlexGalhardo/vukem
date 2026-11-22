@@ -14,8 +14,9 @@ import { columnWidth, formatInt, plainText, toCSV, toJSON, toTSV } from "./forma
 import { clampPos, keyAction, selectRange, shouldAnnounce } from "./keyboard";
 import type { Pos } from "./keyboard";
 import { Menu } from "./Menu";
+import { Pager } from "./Pager";
 import type { MenuItem } from "./Menu";
-import type { GridData } from "./useGridData";
+import type { GridData } from "./gridData";
 import {
   columnOffsets,
   computeWindow,
@@ -25,6 +26,9 @@ import {
   scrollTopToShowRow,
 } from "./virtual";
 import type { Density } from "./virtual";
+
+/** A focus position past every row: the grid clamps it to the last row of the rows it holds. */
+const lastRow = Number.MAX_SAFE_INTEGER;
 
 export const headerHeight = 36;
 export const gutterWidth = 96;
@@ -98,7 +102,10 @@ export function Grid({
   const [manualCopy, setManualCopy] = useState<string | null>(null);
   const frame = useRef(0);
   const hasFocus = useRef(false);
-  const pendingShow = useRef<Pos | null>(null);
+  const pendingShow = useRef(false);
+  const wantLast = useRef<number | null>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const mounted = useRef(false);
   const dialog = useRef<HTMLDialogElement>(null);
 
   const rowHeight = rowHeights[density];
@@ -107,7 +114,9 @@ export function Grid({
   const offsets = useMemo(() => columnOffsets(widths), [widths]);
   const cols = columns.length + 1;
 
-  const viewportHeight = Math.max(size.height - headerHeight, 0);
+  // A paged grid shows every row of its page and lets the page scroll, so its window is the whole page.
+  const paged = data.paging !== undefined;
+  const viewportHeight = paged ? data.rowCount * rowHeight : Math.max(size.height - headerHeight, 0);
   const win = computeWindow({
     scrollTop: scroll.top,
     scrollLeft: scroll.left,
@@ -118,7 +127,9 @@ export function Grid({
     columnWidths: widths,
   });
 
-  const pageRows = Math.max(Math.floor(viewportHeight / rowHeight) - 1, 1);
+  const pageRows = paged
+    ? Math.max(Math.floor((window.innerHeight * 0.7) / rowHeight), 1)
+    : Math.max(Math.floor(viewportHeight / rowHeight) - 1, 1);
   const dims = { rows: data.rowCount, cols, page: pageRows };
   const active = data.rowCount === 0 && focus.row >= 0 ? { row: -1, col: focus.col } : clampPos(focus, dims);
 
@@ -138,9 +149,19 @@ export function Grid({
 
   useEffect(() => {
     setSelected(new Set());
-    // A header stays where it is, so Enter on it can cycle the sort; a data cell goes back to the first row.
-    setFocus((f) => (f.row < 0 ? f : { row: 0, col: Math.max(f.col, 1) }));
+    const last = wantLast.current;
+    wantLast.current = null;
+    // A header stays where it is, so Enter on it can cycle the sort; a data cell goes back to the first row,
+    // or to the last one when the person asked for it and the page moved to make it so.
+    setFocus((f) =>
+      last !== null ? { row: lastRow, col: last } : f.row < 0 ? f : { row: 0, col: Math.max(f.col, 1) },
+    );
     scroller.current?.scrollTo({ top: 0, left: 0 });
+    // A new page starts at its top: when the footer was used, the page is scrolled far below it.
+    if (paged && mounted.current && (wrap.current?.getBoundingClientRect().top ?? 0) < 0) {
+      wrap.current?.scrollIntoView({ block: "start" });
+    }
+    mounted.current = true;
   }, [resetKey]);
 
   const onScroll = useCallback(() => {
@@ -171,6 +192,9 @@ export function Grid({
     const el = scroller.current?.querySelector<HTMLElement>(`[data-r="${active.row}"][data-c="${active.col}"]`);
     if (el && document.activeElement !== el) {
       el.focus({ preventScroll: true });
+      if (paged) {
+        el.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
     }
   });
 
@@ -191,7 +215,13 @@ export function Grid({
       if (!el) {
         return;
       }
-      if (pos.row >= 0) {
+      if (pos.row >= 0 && paged) {
+        // The page scrolls, not the grid.
+        el.querySelector<HTMLElement>(`[data-r="${pos.row}"][data-c="${pos.col}"]`)?.scrollIntoView({
+          block: "nearest",
+          inline: "nearest",
+        });
+      } else if (pos.row >= 0) {
         el.scrollTop = scrollTopToShowRow(pos.row, rowHeight, el.scrollTop, el.clientHeight - headerHeight, data.rowCount);
       }
       if (pos.col >= 2) {
@@ -200,16 +230,16 @@ export function Grid({
         el.scrollLeft = 0;
       }
     },
-    [rowHeight, data.rowCount, offsets, widths],
+    [rowHeight, data.rowCount, offsets, widths, paged],
   );
 
-  // After a jump to the end the row count and the scroll size change; scroll once they have.
+  // After a jump to the last row the page and the row count change; scroll once the page has landed.
   useEffect(() => {
-    if (pendingShow.current) {
-      showCell(pendingShow.current);
-      pendingShow.current = null;
+    if (pendingShow.current && !data.paging?.pending) {
+      pendingShow.current = false;
+      showCell(active);
     }
-  }, [data.rowCount, data.tail, showCell]);
+  }, [data.version, data.offset, data.rowCount, data.paging?.pending, active.row, showCell]);
 
   const rowsOf = useCallback(
     (indexes: readonly number[]): ApiCell[][] =>
@@ -277,7 +307,9 @@ export function Grid({
   const move = useCallback(
     (to: Pos, extend: boolean): void => {
       if (!extend && shouldAnnounce(Math.max(active.row, 0), Math.max(to.row, 0)) && to.row >= 0) {
-        announce(`Row ${formatInt(to.row + 1)} of ${data.approx ? "about " : ""}${formatInt(data.rowCount)}`);
+        announce(
+          `Row ${formatInt(to.row + 1 + data.offset)} of ${data.approx ? "about " : ""}${formatInt(data.total ?? data.offset + data.rowCount)}`,
+        );
       }
       if (extend) {
         const next = new Set(selected);
@@ -290,20 +322,27 @@ export function Grid({
       setFocus(to);
       showCell(to);
     },
-    [active.row, anchor, announce, data.approx, data.rowCount, selected, showCell],
+    [active.row, anchor, announce, data.approx, data.offset, data.rowCount, data.total, selected, showCell],
   );
 
   const jumpToLastRow = useCallback(
     (col: number): void => {
-      void data.jumpToEnd().then((rows) => {
-        if (rows === null) {
+      // The page change resets the focus; this tells it where to put it. It is set first because the page
+      // changes (and the reset runs) before the promise settles.
+      wantLast.current = Math.max(col, 1);
+      void data.jumpToEnd().then((end) => {
+        if (end === null) {
+          wantLast.current = null;
           announce("The last row cannot be reached: the exact count is not available.");
           return;
         }
-        const to = { row: Math.max(rows - 1, 0), col: Math.max(col, 1) };
-        announce(`Row ${formatInt(to.row + 1)} of ${formatInt(rows)}`);
-        setFocus(to);
-        pendingShow.current = to;
+        announce(`Row ${formatInt(end.last)} of ${formatInt(end.last)}`);
+        if (!end.moved && wantLast.current !== null) {
+          // Already on the last page: nothing resets the focus, so move it here.
+          wantLast.current = null;
+          setFocus({ row: lastRow, col: Math.max(col, 1) });
+        }
+        pendingShow.current = true;
       });
     },
     [data, announce],
@@ -362,8 +401,8 @@ export function Grid({
 
     switch (action.type) {
       case "move":
-        if (action.to.row === 0 && action.to.col === 0 && e.ctrlKey && data.tail) {
-          data.leaveTail();
+        if (action.to.row === 0 && action.to.col === 0 && (e.ctrlKey || e.metaKey)) {
+          data.jumpToStart();
         }
         if (action.extend && !selected.has(active.row)) {
           setAnchor(active.row);
@@ -536,7 +575,7 @@ export function Grid({
       <div
         key={i}
         role="row"
-        aria-rowindex={i + 2}
+        aria-rowindex={i + 2 + data.offset}
         aria-selected={isSelected}
         aria-busy={cells ? undefined : true}
         className={i % 2 === 1 ? "grid-row grid-row-odd" : "grid-row"}
@@ -556,7 +595,7 @@ export function Grid({
             type="checkbox"
             tabIndex={-1}
             className="row-check"
-            aria-label={`Select row ${formatInt(i + 1)}`}
+            aria-label={`Select row ${formatInt(i + 1 + data.offset)}`}
             checked={isSelected}
             onChange={() => toggleRow(i)}
             onClick={(e) => {
@@ -570,10 +609,10 @@ export function Grid({
               }
             }}
           />
-          <span className="row-number">{formatInt(i + 1)}</span>
+          <span className="row-number">{formatInt(i + 1 + data.offset)}</span>
           <Menu
             id={`row-menu-${i}`}
-            label={`Actions for row ${formatInt(i + 1)}`}
+            label={`Actions for row ${formatInt(i + 1 + data.offset)}`}
             onClose={refocus}
             items={rowMenuItems(i)}
           />
@@ -658,7 +697,7 @@ export function Grid({
   const activeCell = active.row >= 0 && active.col >= 1 ? data.row(active.row)?.[active.col - 1] : undefined;
 
   return (
-    <div className="grid-wrap">
+    <div ref={wrap} className={paged ? "grid-wrap grid-wrap-paged" : "grid-wrap"}>
       <div className="grid-actions">
         <button
           type="button"
@@ -692,25 +731,13 @@ export function Grid({
         >
           Last row
         </button>
-        {data.tail ? (
-          <button
-            type="button"
-            className="button button-small"
-            onClick={() => {
-              data.leaveTail();
-              move({ row: 0, col: active.col || 1 }, false);
-            }}
-          >
-            First row
-          </button>
-        ) : null}
       </div>
       <div
         ref={scroller}
-        className="grid-scroll"
+        className={paged ? "grid-scroll grid-scroll-paged" : "grid-scroll"}
         role="grid"
         aria-label={label}
-        aria-rowcount={data.rowCount + 1}
+        aria-rowcount={paged ? (data.total !== null ? data.total + 1 : -1) : data.rowCount + 1}
         aria-colcount={cols}
         aria-multiselectable="true"
         onScroll={onScroll}
@@ -751,29 +778,19 @@ export function Grid({
         </div>
       </div>
       <div className="grid-footer">
-        <span data-testid="grid-position">
-          {data.rowCount === 0
-            ? data.loading
-              ? "Loading rows…"
-              : "No rows"
-            : `Rows ${formatInt(firstVisible)} to ${formatInt(lastVisible)} of ${data.approx ? "about " : ""}${formatInt(data.rowCount)}`}
-        </span>
-        {data.approx ? (
-          <button
-            type="button"
-            className="button button-small"
-            onClick={data.askCount}
-            disabled={data.countState === "loading"}
-          >
-            {data.countState === "loading" ? "Counting…" : "Exact count"}
-          </button>
-        ) : null}
-        {data.countState === "unavailable" ? (
-          <span className="muted" role="status">
-            The exact count is not available: counting took too long.
-          </span>
-        ) : null}
-        {data.capped ? <span className="muted">Sorted views show the first {formatInt(data.rowCount)} rows.</span> : null}
+        {data.paging ? (
+          <Pager data={data} paging={data.paging} />
+        ) : (
+          <>
+            <span data-testid="grid-position">
+              {data.rowCount === 0
+                ? data.loading
+                  ? "Loading rows…"
+                  : "No rows"
+                : `Rows ${formatInt(firstVisible)} to ${formatInt(lastVisible)} of ${data.approx ? "about " : ""}${formatInt(data.rowCount)}`}
+            </span>
+          </>
+        )}
       </div>
       <dialog
         ref={dialog}
