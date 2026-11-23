@@ -30,28 +30,13 @@ services:
       timeout: 3s
       retries: 12
 {{- if .Finance}}
+    # The app's own compose.yaml entrypoint: apply the migrations, then hand the
+    # container to the server so it receives the stop signal.
+    entrypoint: ["/bin/sh", "-c", "/app/app migrate && exec /app/app"]
+    restart: unless-stopped
     depends_on:
       mailpit:
         condition: service_started
-      postgres:
-        condition: service_healthy
-
-  # The app starts on SQLite; this service is here for the day you switch to
-  # PostgreSQL from a full-source project (`vukem new --example finance`).
-  postgres:
-    image: {{.PostgresImage}}
-    environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
-    ports: ["127.0.0.1:5432:5432"]
-    # PostgreSQL 18 images want the mount one level above the data directory,
-    # so pg_upgrade can move between major versions inside it.
-    volumes: ["postgres:/var/lib/postgresql"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app"]
-      interval: 2s
-      retries: 30
 
   # Mailpit accepts every message and shows it in a web inbox, so password
   # resets and verification emails are readable without a mail provider.
@@ -66,6 +51,3 @@ services:
 
 volumes:
   storage:
-{{- if .Finance}}
-  postgres:
-{{- end}}
