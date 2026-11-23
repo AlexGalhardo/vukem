@@ -11,35 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **oauth:** Let Consent approve a subset of scopes and set a tenant ([17ee33f](https://github.com/AlexGalhardo/vukem/commit/17ee33ffd8cf45a3067506f92efdadb6ce2139df))
-- **mcp:** Expose the tenant and grant id of a verified OAuth token ([95b4e05](https://github.com/AlexGalhardo/vukem/commit/95b4e055f5781c2eb3de0665776a7880acbafd62))
-- **mcp:** Add TextResult to send a text summary next to structured content ([895b1fe](https://github.com/AlexGalhardo/vukem/commit/895b1fee06c810421d266556b4021a95ce4e2c0a))
-- **studio:** Add a Shortcuts link with a Ctrl K hint beside the keyboard icon ([431dc21](https://github.com/AlexGalhardo/vukem/commit/431dc216b1074a40cb19b55d206cdaacf6de0cc4))
-- **studio:** Page the data grid with 25, 50, 75 or 100 rows a page ([817da8e](https://github.com/AlexGalhardo/vukem/commit/817da8e7d0325ff66a471e3c76a9a6f93afeadc7))
-- **cli:** Embed the exported finance app scaffold and verify it against its manifest ([65aa575](https://github.com/AlexGalhardo/vukem/commit/65aa5755fcedc50b09990a270593fe46a12267ed))
-- **cli:** Generate the finance example from the exported vukem-finances app ([33bb42b](https://github.com/AlexGalhardo/vukem/commit/33bb42b4f83acac6227eaf4c5e57fa3114a3565a))
-- **cli:** Pin the finance scaffold to vukem-finances v0.8.0 ([a56bbcb](https://github.com/AlexGalhardo/vukem/commit/a56bbcb73f93d1667afd5ab956fb028cfd583768))
+- **oauth:** Let Consent approve a subset of scopes and set a tenant ([f44baf6](https://github.com/AlexGalhardo/vukem/commit/f44baf648211ab43af6711783d96d289b0ca8193))
+- **mcp:** Expose the tenant and grant id of a verified OAuth token ([3b34d1e](https://github.com/AlexGalhardo/vukem/commit/3b34d1edf625202763c48accc41eaecccde2a676))
+- **mcp:** Add TextResult to send a text summary next to structured content ([51d5d83](https://github.com/AlexGalhardo/vukem/commit/51d5d83d3affd92a6ef73e01377e72ac0762f4e3))
+- **studio:** Add a Shortcuts link with a Ctrl K hint beside the keyboard icon ([e3e2bdc](https://github.com/AlexGalhardo/vukem/commit/e3e2bdc7a13d51716633f88042375add041504f0))
+- **studio:** Page the data grid with 25, 50, 75 or 100 rows a page ([e4a1910](https://github.com/AlexGalhardo/vukem/commit/e4a1910f89d12b970c0169c5a62c8664eab2acfc))
+- **cli:** Embed the exported finance app scaffold and verify it against its manifest ([6e00a53](https://github.com/AlexGalhardo/vukem/commit/6e00a5307c7195bb0547caf2fab0882ea17f453b))
+- **cli:** Generate the finance example from the exported vukem-finances app ([bd9f56c](https://github.com/AlexGalhardo/vukem/commit/bd9f56cbb31392bab511e23e0f3871b83cfda483))
+- **cli:** Pin the finance scaffold to vukem-finances v0.8.0 ([0eab3cf](https://github.com/AlexGalhardo/vukem/commit/0eab3cf3cceae416cc286faeb93d59c08fa3c76c))
 
 ### Fixed
 
 - **cli:** Pin contrib/studio v0.1.2 ([4fd5115](https://github.com/AlexGalhardo/vukem/commit/4fd51159017e84070ab34aa4d3177e94669299f3))
-- **mcp:** Return an *mcp.Error from a resource handler as a JSON-RPC error ([bb256b0](https://github.com/AlexGalhardo/vukem/commit/bb256b03cced694fa7fbcd97ce75b48ed9aa3882))
-- **oauth:** Treat an empty consent decision as approving nothing ([0a3e9c8](https://github.com/AlexGalhardo/vukem/commit/0a3e9c8ff1310fa5812725382ad029437217e957))
-- **studio:** Make the dark theme neutral black instead of green-tinted ([e2b1a4a](https://github.com/AlexGalhardo/vukem/commit/e2b1a4ab753449250c09aaf0789c03b0e38a8926))
-- **mcp:** Answer resource, template and prompt failures with JSON-RPC errors ([0db09fe](https://github.com/AlexGalhardo/vukem/commit/0db09feb2d5c1b9b7a194889f2147c7577b303c0))
-- **schema:** Make the Rebuild refusal name the fix and point to the upgrade guide ([c062ad9](https://github.com/AlexGalhardo/vukem/commit/c062ad9852ddd222875d68f5e4b4c3d26b84a82b))
-- **codegen:** Write routes, page props and the client the way Biome 2.6.7 formats them ([13aad1c](https://github.com/AlexGalhardo/vukem/commit/13aad1c957bc215c680bacc77ff0b3b85ce0055d))
-- **studio:** Keep the top bar inside a narrow screen on any font ([b30edf1](https://github.com/AlexGalhardo/vukem/commit/b30edf139c99177d4ce0fd942784f533c7cfb36e))
-- **mail:** Give the Mailtrap client its own HTTP transport ([2f6eb30](https://github.com/AlexGalhardo/vukem/commit/2f6eb30d7083dcfb4319c754bb9597b83d03c4ac))
-- **mail:** Make SetSuppression safe while the mailer is sending ([47efdf1](https://github.com/AlexGalhardo/vukem/commit/47efdf1ff45e6531eae916fbd1fd1de2ee2f33d8))
-- **contrib:** Give default HTTP clients their own transport ([80360e6](https://github.com/AlexGalhardo/vukem/commit/80360e6fca7da462fcbc7e46e9879d0f9208370c))
-- **vukemtest:** Respect the session driver the app sets as a default ([d2cce56](https://github.com/AlexGalhardo/vukem/commit/d2cce560a78055fbebae41f0ca448a865629f3ea))
-- **schema:** Name the trigger when SQLite refuses a column drop ([74fa5c6](https://github.com/AlexGalhardo/vukem/commit/74fa5c63e1bb9f692c0c102aa14977a1a7423c2d))
-- **cli:** Refuse unsafe paths in the finance scaffold archive ([15cf7f6](https://github.com/AlexGalhardo/vukem/commit/15cf7f65f59d2f411602cc369924c5b3772e5012))
+- **mcp:** Return an *mcp.Error from a resource handler as a JSON-RPC error ([f6488b2](https://github.com/AlexGalhardo/vukem/commit/f6488b29d9c7568bf44ce6173df6bd90568a9212))
+- **oauth:** Treat an empty consent decision as approving nothing ([ea26ca6](https://github.com/AlexGalhardo/vukem/commit/ea26ca64eb5382c08a78b2d33be906847798171a))
+- **studio:** Make the dark theme neutral black instead of green-tinted ([485ee3e](https://github.com/AlexGalhardo/vukem/commit/485ee3e006f00e74506a54867556f2f8af234dd1))
+- **mcp:** Answer resource, template and prompt failures with JSON-RPC errors ([86ad2d9](https://github.com/AlexGalhardo/vukem/commit/86ad2d95c0a8b8cb25daa6dc9b588f5a27911b06))
+- **schema:** Make the Rebuild refusal name the fix and point to the upgrade guide ([8c63e06](https://github.com/AlexGalhardo/vukem/commit/8c63e060172b55f20cfa7927c69b9542ebcf2cda))
+- **codegen:** Write routes, page props and the client the way Biome 2.6.7 formats them ([72f931c](https://github.com/AlexGalhardo/vukem/commit/72f931c30af849cebf5fabe65adfdca3b670c454))
+- **studio:** Keep the top bar inside a narrow screen on any font ([a3ebef4](https://github.com/AlexGalhardo/vukem/commit/a3ebef4b0622413a8bf23a6195b3db42da7ad983))
+- **mail:** Give the Mailtrap client its own HTTP transport ([90c3ac1](https://github.com/AlexGalhardo/vukem/commit/90c3ac137dc5009abb90a480e81def0ca3b70619))
+- **mail:** Make SetSuppression safe while the mailer is sending ([614b6c2](https://github.com/AlexGalhardo/vukem/commit/614b6c29ac9939857eb089beb457cd1a8f39a9b5))
+- **contrib:** Give default HTTP clients their own transport ([f16dd80](https://github.com/AlexGalhardo/vukem/commit/f16dd803c625cc4476996732d1aa8476d47e4927))
+- **vukemtest:** Respect the session driver the app sets as a default ([78fc86a](https://github.com/AlexGalhardo/vukem/commit/78fc86a798bba1c5e9df9524a07b92fb681519f7))
+- **schema:** Name the trigger when SQLite refuses a column drop ([3dd9406](https://github.com/AlexGalhardo/vukem/commit/3dd9406290d79003b868899a100b52edc6d120a3))
+- **cli:** Refuse unsafe paths in the finance scaffold archive ([3207461](https://github.com/AlexGalhardo/vukem/commit/32074617cef0dce6d51ab7a5249f9d365af00973))
 
 ### Security
 
-- **oauth:** Answer pre-consent errors of metadata-document clients with a 400 ([cfad7c3](https://github.com/AlexGalhardo/vukem/commit/cfad7c382ea377b0201f133e88d54e307f8e2592))
+- **oauth:** Answer pre-consent errors of metadata-document clients with a 400 ([a70c140](https://github.com/AlexGalhardo/vukem/commit/a70c14078946d7425befd34674cdaed14d9d651a))
 
 ## [0.48.0] - 2026-11-22
 
