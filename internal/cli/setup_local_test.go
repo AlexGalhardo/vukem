@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -13,9 +12,21 @@ import (
 func TestFinanceSetupLocalHasNoBareLinks(t *testing.T) {
 	t.Parallel()
 
-	b, err := os.ReadFile("scaffolds/finance/setup-local.md.tmpl")
+	files, err := loadFinanceScaffold()
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	var b []byte
+
+	for _, f := range files {
+		if f.rel == "setup-local.md" {
+			b = f.content
+		}
+	}
+
+	if b == nil {
+		t.Fatal("the finance scaffold has no setup-local.md")
 	}
 
 	action := regexp.MustCompile(`{{[^}]*}}`)
@@ -36,7 +47,7 @@ func TestFinanceSetupLocalHasNoBareLinks(t *testing.T) {
 
 		prose := span.ReplaceAllString(action.ReplaceAllString(line, "x"), "")
 		if m := bare.FindString(prose); m != "" {
-			t.Errorf("setup-local.md.tmpl:%d has a bare link %q outside backticks (MD034)", i+1, m)
+			t.Errorf("setup-local.md:%d has a bare link %q outside backticks (MD034)", i+1, m)
 		}
 	}
 }

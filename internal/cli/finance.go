@@ -1,358 +1,261 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"go/format"
 	"os"
-	"path"
 	"path/filepath"
+	"slices"
 	"strings"
+
+	"github.com/AlexGalhardo/vukem/config"
 )
 
-// financeFramework is the Inertia adapter of the finance example: its pages,
-// admin and emails are React (vukem new rejects other stacks).
-const financeFramework = "react"
+// Editions of the finance app, written to APP_EDITION in .env.
+const (
+	editionPersonal = "personal"
+	editionSaaS     = "saas"
+)
 
-// financeDropped lists the starter files the finance app does not keep: the
-// Posts demo, whose pages, controller, model and seeders the app replaces.
-var financeDropped = []string{
-	"app/controllers/post_controller.go", "app/models/post.go", "app/requests/post.go",
-	"database/factories/post_factory.go", "database/seeders/posts_seeder.go",
-	"database/migrations/20260101000000_create_posts_table.go", "tests/posts_test.go",
-	"resources/js/components/PostForm.tsx", "resources/js/pages/Posts",
-	// The mails of auth-core are React Email components here (resources/js/emails).
-	"resources/views/mail/verify_email.html", "resources/views/mail/reset_password.html",
+var financeEditions = []string{editionPersonal, editionSaaS}
+
+// checkEdition validates --edition: only the finance example has editions.
+func checkEdition(o newOpts, kind string) error {
+	if o.edition == "" {
+		return nil
+	}
+
+	if kind != exampleFinance {
+		return usagef("--edition is only valid with --example finance")
+	}
+
+	if !slices.Contains(financeEditions, o.edition) {
+		return usagef("--edition must be %s, not %q", strings.Join(financeEditions, " or "), o.edition)
+	}
+
+	return nil
 }
 
-// financeEdits are the edits to files of the starter and of the auth and
-// admin installers that the finance app needs.
-func financeEdits() []exampleEdit {
-	return []exampleEdit{
-		{
-			"app/accounts/accounts.go",
-			`VerifyTTL time.Duration`,
-			"VerifyTTL time.Duration\n\tRequireEmailVerification bool",
-		},
-		{
-			"app/accounts/accounts.go",
-			`VerifyTTL: time.Hour,`,
-			"VerifyTTL: time.Hour,\n\t\tRequireEmailVerification: !strings.EqualFold(" +
-				"app.Source.Get(\"AUTH_REQUIRE_EMAIL_VERIFICATION\"), \"false\"),",
-		},
-		{
-			"app/accounts/users.go",
-			`return true, a.SendVerification(ctx, u)`,
-			"if !a.RequireEmailVerification {\n" +
-				"\t\t// Nobody proved the address, so it stays unverified: it gets no admin\n" +
-				"\t\t// access and cannot accept an invitation.\n" +
-				"\t\treturn true, nil\n" +
-				"\t}\n\n" +
-				"\treturn true, a.SendVerification(ctx, u)",
-		},
-		{
-			"app/accounts/users.go",
-			"// account: the caller always answers \"check your email\" and never logs in.\n" +
-				"// A new address gets the account and a verification mail; an existing one\n" +
-				"// gets a notice (\"sign in or reset your password\", at most one per hour\n" +
-				"// per address) and nothing is created or changed. Both paths hash the\n" +
-				"// password and queue one mail, so they take about the same time. It\n" +
-				"// reports whether an account was created.",
-			"// account: the caller gives the same response to new and existing addresses\n" +
-				"// and never logs in. A new address gets an account. Verification mail is\n" +
-				"// sent unless AUTH_REQUIRE_EMAIL_VERIFICATION is false (development and test\n" +
-				"// only), and the address is never marked verified without proof. An existing address gets a notice (\"sign in\n" +
-				"// or reset your password\", at most one per hour per address) and nothing\n" +
-				"// is created or changed. It reports whether an account was created.",
-		},
-		{
-			"app/accounts/accounts.go",
-			"web := auth.NewSessionGuard(\"web\", users, hasher, auth.NewRememberStore(db))",
-			"// An address nobody proved must not count as verified: turning the check\n" +
-				"\t// off is a development and test setting only.\n" +
-				"\tif app.Config.IsProduction() && strings.EqualFold(app.Source.Get(\"AUTH_REQUIRE_EMAIL_VERIFICATION\"), \"false\") {\n" +
-				"\t\treturn nil, errors.New(\"AUTH_REQUIRE_EMAIL_VERIFICATION=false is refused in production\")\n" +
-				"\t}\n\n" +
-				"\tweb := auth.NewSessionGuard(\"web\", users, hasher, auth.NewRememberStore(db))",
-		},
-		{
-			"app/controllers/account/account.go",
-			`return c.Redirect("/register/check-email")`,
-			"if !h.a.RequireEmailVerification {\n" +
-				"\t\tinertia.Flash(c, \"success\", h.a.T(c.Context(), \"auth.account_created\"))\n\n" +
-				"\t\treturn c.Redirect(\"/login\")\n" +
-				"\t}\n\n" +
-				"\treturn c.Redirect(\"/register/check-email\")",
-		},
-		{
-			"app/controllers/account/account.go",
-			`// enumeration) and does not log in: the user is asked to check the inbox,`,
-			`// enumeration) and does not log in: verification may ask for an inbox check,`,
-		},
-		{
-			"routes/auth.go", `// Sign-up queues a mail: limit it per IP and per address. The limits count`,
-			`// Sign-up may queue a mail: limit it per IP and per address. The limits count`,
-		},
-		{"database/migrations/registry.go", "\t\tm20260101000000CreatePostsTable(),\n", ""},
-		{
-			"database/seeders/registry.go",
-			"\treturn []vukem.Seeder{\n\t\tPostsSeeder{},\n\t}\n",
-			"\treturn []vukem.Seeder{}\n}\n\n" +
-				"// AllApp lists seeders that need the booted app. vukem db:seed runs them\n" +
-				"// after All. Both finance seeders refuse production.\n" +
-				"func AllApp() []vukem.AppSeeder {\n\treturn []vukem.AppSeeder{\n" +
-				"\t\tFinanceAdminSeeder{},\n\t\tFinanceDemoSeeder{},\n\t}\n",
-		},
-		{
-			"bootstrap/app.go",
-			"\t\tvukem.WithSeeders(seeders.All()...),\n",
-			"\t\tvukem.WithSeeders(seeders.All()...),\n\t\tvukem.WithAppSeeders(seeders.AllApp()...),\n",
-		},
-		// Radix's scroll lock injects a <style>: without the nonce the CSP blocks it on every dialog.
-		{
-			"resources/js/app.tsx",
-			"createInertiaApp({",
-			"// react-style-singleton, used by the Radix scroll lock, reads the nonce of its injected <style> here.\n" +
-				"(globalThis as { __webpack_nonce__?: string }).__webpack_nonce__ =\n" +
-				"  document.querySelector<HTMLMetaElement>('meta[property=\"csp-nonce\"]')?.nonce;\n\n" +
-				"createInertiaApp({",
-		},
-		// The panel's feature flags page needs install:flags, which this app does not use.
-		{"tests/admin_test.go", "\tc.Get(\"/admin-api/_flags\").AssertOK().AssertSee(\"Feature flags\")\n", ""},
-		// /dashboard is the finance dashboard (routes/finance.go, inside a workspace).
-		{"routes/auth.go", "\n\tr.Get(\"/dashboard\", h.Dashboard).Name(\"dashboard\").Use(required, verified)\n", ""},
-		{
-			"routes/auth.go",
-			"\t// Signed-in pages also need a verified email; unverified users are sent\n" +
-				"\t// to the verification notice.\n\tverified := auth.Verified(acc.Web)\n", "",
-		},
-		{
-			"app/controllers/account/account.go",
-			"\n// Dashboard is the first page after login; the user arrives as the shared\n" +
-				"// auth.user prop.\n" +
-				"func (*Handlers) Dashboard(c *web.Ctx) error { return pages.Dashboard.Render(c, struct{}{}) }\n",
-			"",
-		},
-		{
-			"app/pages/auth.go", `Dashboard      = inertia.Define[struct{}]("Dashboard")`,
-			`Dashboard      = inertia.Define[DashboardProps]("Dashboard")`,
-		},
-		{"app/mail/auth.go", `mail.View("mail/verify_email", m)`, `mail.React("verify_email", m)`},
-		{"app/mail/auth.go", `mail.View("mail/reset_password", m)`, `mail.React("reset_password", m)`},
-		{
-			"bootstrap/app.go", "\t\tvukem.WithVite(resources.Public()),\n",
-			"\t\tvukem.WithVite(resources.Public()),\n\t\tvukem.WithReactEmails(resources.Emails()),\n",
-		},
-		{
-			"resources/resources.go", "//go:embed views all:public\n", "//go:embed views all:public emails\n",
-		},
-		{
-			"resources/resources.go", "// Public returns the static assets served at /.\n",
-			"// Emails returns the React Email templates exported by npm run build:emails.\n" +
-				"func Emails() fs.FS { return dirOrEmbedded(\"emails\") }\n\n" +
-				"// Public returns the static assets served at /.\n",
-		},
-		{
-			"package.json", `"typecheck": "tsc --noEmit"`,
-			`"typecheck": "tsc --noEmit",` + "\n    " +
-				`"build:emails": "email export --dir resources/js/emails --outDir resources/emails"`,
-		},
-		{
-			"package.json", "\"devDependencies\": {\n",
-			"\"devDependencies\": {\n    \"@react-email/components\": \"" + reactEmailComponentsVersion + "\",\n" +
-				"    \"react-email\": \"" + reactEmailCLIVersion + "\",\n",
-		},
-		{
-			"package.json",
-			"\"dependencies\": {\n    \"@inertiajs/react\": \"3.11.0\",\n    \"react\": \"19.3.1\",\n    \"react-dom\": \"19.3.1\"\n  }",
-			"\"dependencies\": {\n    \"@inertiajs/react\": \"3.11.0\",\n" +
-				"    \"class-variance-authority\": \"0.7.1\",\n    \"clsx\": \"2.1.1\",\n    \"lucide-react\": \"1.72.0\",\n" +
-				"    \"radix-ui\": \"1.8.1\",\n    \"react\": \"19.3.1\",\n    \"react-dom\": \"19.3.1\",\n" +
-				"    \"tailwind-merge\": \"3.7.0\"\n  }",
-		},
-		{
-			"resources/css/app.css",
-			"@import \"tailwindcss\";\n",
-			"@import \"tailwindcss\";\n@import \"./finance.css\";\n",
-		},
-		{
-			"resources/views/app.html",
-			"<meta property=\"csp-nonce\" nonce=\"{{cspNonce}}\">\n",
-			"<meta property=\"csp-nonce\" nonce=\"{{cspNonce}}\">\n" +
-				"\t<script nonce=\"{{cspNonce}}\">try{var t=localStorage.getItem(\"theme\");" +
-				"document.documentElement.classList.toggle(\"dark\",t?t===\"dark\":matchMedia(\"(prefers-color-scheme: dark)\").matches)}" +
-				"catch(e){}</script>\n" +
-				// A data URL keeps /favicon.ico from being a 404 and needs no route or file (the CSP allows data: images).
-				"\t<link rel=\"icon\" href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E" +
-				"%3Crect width='32' height='32' rx='8' fill='%23bdfb6b'/%3E%3Cpath d='M10 22 22 10M12 10h10v10' " +
-				"stroke='%23111' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\">\n",
-		},
-		{
-			".env.example",
-			"ADMIN_EMAILS=\n",
-			"ADMIN_EMAILS=admin@example.test\n",
-		},
-	}
-}
-
-// financeEnv is appended to .env.example: the finance settings beside the
-// admin and Stripe ones the installers add.
-const financeEnv = `
-# Mail. Development writes mails to the log; production sends them with Resend:
-# MAIL_MAILER=resend, a verified sending domain in MAIL_FROM, an API key and
-# the signing secret of the webhook that reports bounces and complaints
-# (Resend dashboard, Webhooks: POST /webhooks/resend, email.bounced and
-# email.complained).
-MAIL_MAILER=log
-AUTH_REQUIRE_EMAIL_VERIFICATION=true
-MAIL_FROM="Finance <no-reply@example.com>"
-RESEND_API_KEY=
-RESEND_WEBHOOK_SECRET=
-
-# Optional Google sign-in. Leave both empty to use password login only.
-# Set both together, and register SOCIAL callback http://localhost:3000/auth/google/callback.
-SOCIAL_GOOGLE_CLIENT_ID=
-SOCIAL_GOOGLE_CLIENT_SECRET=
-
-# Local administrator created by vukem db:seed (development and test only).
-# Leave the password empty to generate one into storage/finance-admin-*.txt.
-FINANCE_ADMIN_EMAIL=admin@example.test
-FINANCE_ADMIN_PASSWORD=
-`
-
-// scaffoldFinance turns the Inertia + React starter in env.Dir into the
-// personal finance SaaS: auth with two-factor, the admin panel, workspaces
-// (tenancy), Stripe billing per workspace, Resend mail with React Email, and
-// the accounts, transactions, budgets, dashboard and CSV import. It runs
-// before the Go module is resolved, so it only writes files and registers
-// code; go mod tidy and vukem codegen:pages run after it.
-func scaffoldFinance(_ context.Context, env *Env, _ string, sd starterData) error {
-	if inertiaFramework(env) != financeFramework {
-		return usagef("the finance example needs the Inertia + React stack")
+// checkFinanceFlags refuses the flags that contradict the app the example
+// writes: it ships its own Dockerfile and installs with Bun (it carries
+// bun.lock).
+func checkFinanceFlags(o newOpts) error {
+	if o.pmFlag != "" && !strings.EqualFold(o.pmFlag, "bun") {
+		return usagef("--example finance installs with Bun (the app ships bun.lock): drop --pm %s", o.pmFlag)
 	}
 
-	for _, rel := range financeDropped {
-		if err := os.RemoveAll(env.path(filepath.FromSlash(rel))); err != nil {
-			return err
-		}
+	if o.assetsImage != "" {
+		return usagef("--example finance ships its own Dockerfile: drop --assets-image")
 	}
-
-	data, err := authData(env, "")
-	if err != nil {
-		return err
-	}
-
-	// The docs name the package manager the project was generated with.
-	data["PM"] = sd.PM
-	if data["PM"] == "" {
-		data["PM"] = "bun"
-	}
-
-	// The overlay first: it replaces the starter's pages.go, routes and
-	// schedule, and the installers below register their own parts after it.
-	if err := installScaffold(env, "finance", data, true); err != nil {
-		return err
-	}
-
-	regs := []registration{
-		{"database/migrations/registry.go", "All", "m" + data["TS3"] + "CreateSocialAccountsTable()"},
-		{"database/migrations/registry.go", "All", "m" + data["TS6"] + "CreateFinanceTables()"},
-		{"routes/registry.go", "All", "Social"},
-		{"routes/registry.go", "All", "Finance"},
-	}
-
-	more, err := installFinanceAuth(env, data)
-	if err != nil {
-		return err
-	}
-
-	regs = append(regs, more...)
-
-	more, err = installFinanceAdmin(env, data)
-	if err != nil {
-		return err
-	}
-
-	regs = append(regs, more...)
-
-	if err := installFinanceBilling(env, data); err != nil {
-		return err
-	}
-
-	// The React pages last: they replace the starter's Home and the
-	// installers' Dashboard and layout.
-	if err := installScaffold(env, "finance-inertia-react", data, true); err != nil {
-		return err
-	}
-
-	for _, e := range financeEdits() {
-		if err := patchFile(env, e.file, e.old, e.new); err != nil {
-			return err
-		}
-	}
-
-	if err := finalizeFinanceAuth(env, data); err != nil {
-		return err
-	}
-
-	for _, reg := range regs {
-		if err := register(env, reg.file, reg.fn, reg.expr); err != nil {
-			return err
-		}
-	}
-
-	if err := appendEnvBlock(env, "RESEND_API_KEY=", financeEnv); err != nil {
-		return err
-	}
-
-	fmt.Fprintln(env.Stdout, "finance: workspaces, billing, mail, import and admin added")
 
 	return nil
 }
 
-// finalizeFinanceAuth points the shared auth tests at the opt-in verification
-// path, then formats the Go files the finance edits touched.
-func finalizeFinanceAuth(env *Env, data map[string]string) error {
-	for _, rel := range []string{"tests/auth_test.go", "tests/password_reset_test.go", "tests/two_factor_test.go"} {
-		file := env.path(filepath.FromSlash(rel))
+// runFinanceProject creates the finance example: the exported vukem-finances
+// tree rendered for the project, a go.mod for the chosen framework, the
+// standards the flags ask for and the steps every example shares. It does not
+// start from the Inertia starter and patches nothing.
+func runFinanceProject(ctx context.Context, env *Env, name, dir string, o newOpts) error {
+	st, err := financeStack(o)
+	if err != nil {
+		return err
+	}
 
-		content, err := os.ReadFile(file)
-		if err != nil {
-			return err
-		}
+	if err := checkFinanceFlags(o); err != nil {
+		return err
+	}
 
-		updated := strings.ReplaceAll(string(content), "vukemtest.New(t, bootstrap.New", "authTestApp(t")
-		updated = strings.ReplaceAll(updated, "\n\t\""+data["Module"]+"/bootstrap\"", "")
-		updated = strings.ReplaceAll(updated, "\n\n)", "\n)")
+	std := o.std
+	askStandards(env, &std)
+	std = std.withStack(st.kind)
 
-		if err := writeFile(file, []byte(updated)); err != nil {
+	pm := pmByName["bun"]
+
+	data := starterData{Name: name, Module: o.module, PM: pm.name}
+	if data.Module == "" {
+		data.Module = name
+	}
+
+	project := *env
+	project.Dir = dir
+
+	if err := writeFinanceScaffold(&project, data, std.license != ""); err != nil {
+		return err
+	}
+
+	if err := writeFinanceGoMod(&project, data); err != nil {
+		return err
+	}
+
+	if err := writeFinanceStandards(&project, newStandardsData(data, st.kind, std, env.Now().Year()), std); err != nil {
+		return err
+	}
+
+	if err := resolveModules(ctx, &project, st, o.framework); err != nil {
+		return err
+	}
+
+	if err := writeAppKey(&project, config.GenerateKey(), false); err != nil {
+		return err
+	}
+
+	if err := writeEdition(&project, o.edition); err != nil {
+		return err
+	}
+
+	if o.seed {
+		if err := seedFinance(ctx, &project); err != nil {
 			return err
 		}
 	}
 
-	for _, rel := range []string{
-		"app/accounts/accounts.go", "app/accounts/users.go", "app/controllers/account/account.go",
-		"tests/auth_test.go", "tests/password_reset_test.go", "tests/two_factor_test.go", "tests/finance_test.go",
-	} {
-		file := env.path(filepath.FromSlash(rel))
+	gitInit(ctx, env, &project)
+	jsInstall(ctx, &project, pm, o.noInstall)
 
-		content, err := os.ReadFile(file)
-		if err != nil {
+	// The app always ships Dockerfile and compose.yaml.
+	std.docker = true
+
+	desc := "vukem-finances " + financeAppVersion() + ", Inertia + react, SQLite"
+	fmt.Fprint(env.Stdout, nextSteps(name, desc, st.kind, std, pm, true))
+
+	return nil
+}
+
+// writeFinanceScaffold renders the exported tree into project.Dir. Files with
+// the .tmpl suffix are rendered with data and lose the suffix; the others are
+// copied byte for byte. MANIFEST.sha256 and VERSION describe the export and
+// are not written. The app's MIT text becomes NOTICE, unless the project gets
+// a LICENSE of its own (--license), when it stays as LICENSE.vukem-finances.
+func writeFinanceScaffold(project *Env, data starterData, ownLicense bool) error {
+	files, err := loadFinanceScaffold()
+	if err != nil {
+		return err
+	}
+
+	for _, f := range files {
+		rel, content := f.rel, f.content
+
+		switch rel {
+		case financeManifestName, financeVersionName:
+			continue
+		case financeLicenseName:
+			if !ownLicense {
+				rel = "NOTICE"
+			}
+		}
+
+		if stub, ok := strings.CutSuffix(rel, ".tmpl"); ok {
+			rel = stub
+
+			if content, err = renderStarterFile(rel, content, data); err != nil {
+				return err
+			}
+		}
+
+		dst := project.path(filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 			return err
 		}
 
-		formatted, err := format.Source(content)
-		if err != nil {
-			return fmt.Errorf("format %s: %w", rel, err)
+		perm := os.FileMode(0o600)
+		if f.exec {
+			perm = 0o700
 		}
 
-		if err := writeFile(file, formatted); err != nil {
+		if err := os.WriteFile(dst, content, perm); err != nil { //nolint:gosec // G703: the project directory is the developer's own
 			return err
 		}
+	}
+
+	// The export carries no storage/ (runtime data); the SQLite file needs the folder.
+	if err := os.MkdirAll(project.path("storage"), 0o750); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(project.Stdout, "finance: wrote vukem-finances %s\n", financeAppVersion())
+
+	return nil
+}
+
+// writeFinanceGoMod writes go.mod (the exported tree has none) with the
+// starter's Go directive and the contrib/stripe release the app pins. The
+// framework requirement is added by resolveModules.
+func writeFinanceGoMod(project *Env, data starterData) error {
+	src, err := starterFS.ReadFile("starter/go.mod.tmpl")
+	if err != nil {
+		return err
+	}
+
+	mod, err := renderStarterFile("go.mod", src, data)
+	if err != nil {
+		return err
+	}
+
+	mod = append(mod, fmt.Sprintf("\nrequire %s %s\n", stripeModule, financeStripeVersion)...)
+
+	return writeFile(project.path("go.mod"), mod)
+}
+
+// writeFinanceStandards writes the files the standards flags select, except
+// those the app already ships: it keeps its own compose.yaml, SECURITY.md,
+// .editorconfig and so on, and says so in one line. package.json, the README
+// and .env.example are the app's and are not patched.
+func writeFinanceStandards(project *Env, data standardsData, std standardsOpts) error {
+	var kept []string
+
+	for _, f := range standardsSet(std) {
+		if exists(project, f.dst) {
+			// .editorconfig and .gitattributes are always in the set: the line is for what a flag asked for.
+			if f.dst != ".editorconfig" && f.dst != ".gitattributes" {
+				kept = append(kept, f.dst)
+			}
+
+			continue
+		}
+
+		if f.dst == ".github/CODEOWNERS" && data.Owner == "" {
+			continue
+		}
+
+		if err := renderStandards(project, f, data); err != nil {
+			return err
+		}
+	}
+
+	if len(kept) > 0 {
+		fmt.Fprintf(project.Stdout, "finance: kept the app's %s (the flags do not overwrite them)\n",
+			strings.Join(kept, ", "))
 	}
 
 	return nil
+}
+
+// writeEdition sets APP_EDITION in .env. The default (no --edition) is what
+// .env.example already says, personal.
+func writeEdition(project *Env, edition string) error {
+	if edition == "" {
+		return nil
+	}
+
+	p := project.path(".env")
+
+	src, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+
+	text := string(src)
+
+	re := envLine("APP_EDITION")
+	if re.MatchString(text) {
+		return writeFile(p, []byte(setEnvValue(re, text, edition)))
+	}
+
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+
+	return writeFile(p, []byte(text+"APP_EDITION="+edition+"\n"))
 }
 
 // seedFinance migrates the new finance app and runs its idempotent local
@@ -366,114 +269,4 @@ func seedFinance(ctx context.Context, env *Env) error {
 	}
 
 	return delegate(ctx, env, []string{"db:seed"})
-}
-
-// installFinanceAuth is install:auth --2fa without the go mod tidy and
-// codegen the installer runs at its end.
-func installFinanceAuth(env *Env, data map[string]string) ([]registration, error) {
-	regs, err := installCore(env, data, false)
-	if err != nil {
-		return nil, err
-	}
-
-	more, err := installAuthParts(env, data, nil, authOpts{twoFactor: true})
-	if err != nil {
-		return nil, err
-	}
-
-	return append(regs, more...), nil
-}
-
-// installFinanceAdmin is install:admin --stack inertia without the tidy.
-func installFinanceAdmin(env *Env, data map[string]string) ([]registration, error) {
-	data["AdminStack"] = "inertia"
-
-	for _, name := range []string{"admin", "admin-inertia-react"} {
-		if err := installScaffold(env, name, data, true); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := appendEnvExample(env, []string{"ADMIN_EMAILS"}); err != nil {
-		return nil, err
-	}
-
-	// The support panel: users, workspaces and subscriptions, read-only (app/admin/finance.go).
-	for _, name := range []string{"User", "Workspace", "WorkspaceSubscription"} {
-		if err := register(env, "app/admin/registry.go", "Resources", name+"()"); err != nil {
-			return nil, err
-		}
-
-		if err := register(env, "app/admin/registry.go", "Policies",
-			"authz.For[*models."+name+"]("+name+"Policy{Admins: admins})",
-			"github.com/AlexGalhardo/vukem/authz", data["Module"]+"/app/models"); err != nil {
-			return nil, err
-		}
-	}
-
-	regs := []registration{
-		{"database/migrations/registry.go", "All", "m" + data["TS1"] + "CreateAdminAuditLogsTable()"},
-		{"routes/registry.go", "All", "Admin"},
-	}
-
-	return append(regs, pageRegistrations(env, "AdminDashboard", "AdminResourceList", "AdminResourceShow")...), nil
-}
-
-// installFinanceBilling writes config/billing.go (the Stripe settings and the
-// Pro plan) from the billing scaffold; the billing logic is the finance app's
-// own, per workspace. contrib/stripe is pinned in go.mod and go mod tidy,
-// which runs after the module is resolved, fetches it.
-func installFinanceBilling(env *Env, data map[string]string) error {
-	planData(data, []string{"pro"})
-
-	files, err := collectScaffold("billing", data)
-	if err != nil {
-		return err
-	}
-
-	for _, f := range files {
-		if path.Base(f.rel) != "billing.go" || path.Dir(f.rel) != "config" {
-			continue
-		}
-
-		dst := env.path(filepath.FromSlash(f.rel))
-		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
-			return err
-		}
-
-		if err := writeFile(dst, f.content); err != nil {
-			return err
-		}
-
-		fmt.Fprintln(env.Stdout, "created", f.rel)
-	}
-
-	if err := appendEnvBlock(env, "STRIPE_KEY=", billingEnvFor([]string{"pro"})); err != nil {
-		return err
-	}
-
-	return pinStripe(env)
-}
-
-// pinStripe requires contrib/stripe at the release install:billing pins. It
-// only edits go.mod: this runs before the framework is resolved, and the go
-// mod tidy that follows fetches the module. With --framework the stripe
-// module comes from the proxy and builds against the local framework replace.
-func pinStripe(env *Env) error {
-	mod, err := os.ReadFile(env.path("go.mod"))
-	if err != nil {
-		return err
-	}
-
-	if bytes.Contains(mod, []byte(stripeModule+" ")) {
-		return nil
-	}
-
-	if !bytes.HasSuffix(mod, []byte("\n")) {
-		mod = append(mod, '\n')
-	}
-
-	mod = append(mod, fmt.Sprintf("\nrequire %s %s\n", stripeModule, stripeVersion)...)
-
-	return writeFile(env.path("go.mod"), mod)
 }

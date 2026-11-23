@@ -36,7 +36,7 @@ func TestStandardsProjectPassesItsOwnSecretScan(t *testing.T) {
 	dir := t.TempDir()
 
 	code, out, errOut := vukem(t, dir, "new", "app", "--inertia", "react", "--example", "finance", "--standards",
-		"--module", "example.com/app", "--framework", repo, "--no-install", "--pm", "npm")
+		"--module", "example.com/app", "--framework", repo, "--no-install")
 	if code != 0 {
 		t.Skipf("the finance example could not be generated here (%d): %s%s", code, out, errOut)
 	}

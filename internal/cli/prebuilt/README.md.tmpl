@@ -16,6 +16,12 @@ the moving `latest` image rather than a release. Pin the image in
 Open <http://localhost:3000>.{{if .Finance}} The mail catcher inbox is at <http://localhost:8025>.{{end}}
 {{- if .Finance}}
 
+The image is the application itself, [vukem-finances](https://github.com/AlexGalhardo/vukem-finances),
+on SQLite (no PostgreSQL). `APP_EDITION` in `.env` picks the edition: `personal`
+is the offline-first app for one person; `saas` is the multi-tenant edition,
+which needs the Stripe settings. There is no hosted instance of the SaaS
+edition: whoever deploys it runs it on their own server.
+
 ## Demo data
 
 The image runs in development mode, so the local seeders are available. Seed
