@@ -8,7 +8,7 @@
 #
 # Debian (glibc), not Alpine: Bun's default Linux build links glibc, and the
 # golang Debian image already ships git and ca-certificates.
-ARG GO_IMAGE=golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
+ARG GO_IMAGE=golang:1.27.4@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf
 
 FROM ${GO_IMAGE} AS build
 ARG VERSION=devel
@@ -27,9 +27,9 @@ RUN git config --global --add safe.directory /src \
 	&& if [ "$VERSION" != devel ]; then [ "$(/out/vukem version)" = "vukem v$VERSION" ]; fi
 
 FROM ${GO_IMAGE}
-ARG BUN_VERSION=1.4.4
-ARG BUN_SHA256_AMD64=bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c
-ARG BUN_SHA256_ARM64=baa6bb36f51d6e58561e02bbea825038a9df454f673d6d776e8bbf86f8c7850e
+ARG BUN_VERSION=1.4.5
+ARG BUN_SHA256_AMD64=94559b3b528995a49452f9f2404cec74f2efd7d06e0a000a8cd214b02c3666eb
+ARG BUN_SHA256_ARM64=18656a3bf0ea5641f5796ae4213b75255579a70a0fded2f337933785568cdf84
 ARG TARGETARCH
 ARG VERSION=devel
 ARG REVISION=unknown

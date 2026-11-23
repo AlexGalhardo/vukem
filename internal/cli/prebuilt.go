@@ -19,7 +19,7 @@ var prebuiltFS embed.FS
 
 // Same pin as standards/compose.yaml.tmpl; TestPrebuiltComposeSharesImagePins
 // fails if they drift.
-const mailpitImage = "axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce"
+const mailpitImage = "axllent/mailpit:v1.34.0@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e"
 
 // exampleImageRepo is the registry path of the example images; release.yml
 // publishes <repo>-<example> for the todo example.
