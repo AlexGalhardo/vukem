@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -59,6 +60,10 @@ func financeScaffoldFiles() ([]financeFile, error) {
 		return nil, err
 	}
 
+	return readFinanceArchive(raw)
+}
+
+func readFinanceArchive(raw []byte) ([]financeFile, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("finance scaffold: %w", err)
@@ -84,7 +89,9 @@ func financeScaffoldFiles() ([]financeFile, error) {
 			return nil, fmt.Errorf("finance scaffold: %s is not a regular file", hdr.Name)
 		}
 
-		if !fs.ValidPath(hdr.Name) || strings.Contains(hdr.Name, "\\") {
+		// ValidPath alone would let a Windows volume or reserved name through.
+		if strings.Contains(hdr.Name, "..") || !fs.ValidPath(hdr.Name) || strings.Contains(hdr.Name, "\\") ||
+			!filepath.IsLocal(filepath.FromSlash(hdr.Name)) {
 			return nil, fmt.Errorf("finance scaffold: unsafe name %q", hdr.Name)
 		}
 
