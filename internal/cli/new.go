@@ -29,8 +29,8 @@ var starterFS embed.FS
 // The starter vendors htmx so apps work offline and under a strict CSP.
 // TestVendoredHTMX fails if the file changes without updating the hash.
 const (
-	htmxVersion = "4.0.1"
-	htmxSHA256  = "a0abb04f2f45a1f89d1d4844023245537e5e6014c87b144553e0607b4cc32130"
+	htmxVersion = "4.0.2"
+	htmxSHA256  = "fd25ba3fe5e44768756f23862a6daa4f928192199a121e825e882e719bc8aabd"
 	htmxPath    = "resources/public/js/htmx.min.js"
 )
 
