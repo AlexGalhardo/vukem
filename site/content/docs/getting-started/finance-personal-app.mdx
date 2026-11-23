@@ -1,0 +1,84 @@
+---
+title: Finance app, personal edition
+description: Run vukem-finances for yourself or your family, offline-first, on a desktop app, a phone or Docker on localhost.
+---
+
+[vukem-finances](https://github.com/AlexGalhardo/vukem-finances) in its personal edition is an offline-first finance app for one person or one family. Your data stays on your own devices, and nothing leaves them unless you turn an integration on. The edition is made for personal use and does not forbid commercial use.
+
+Which page is for me? This page is for running the app for yourself. If you want to operate the multi-tenant edition for customers, read [Finance app, SaaS edition](/docs/finance-saas-edition) instead.
+
+You will learn:
+
+- what the personal edition is and how it differs in setup
+- how to run it as a desktop app, on a phone, or with Docker on localhost
+- how backups and exports work
+- how the optional AI and Telegram features are switched on
+
+## What it is
+
+The personal edition is the default (`APP_EDITION=personal`). One implicit workspace holds your accounts, categories, transactions, budgets and goals. There is no public sign-up and no plan limits: every limit is unlimited.
+
+| Question | Answer |
+| --- | --- |
+| Who is it for? | A person or a family on their own computer or server |
+| Who creates the first user? | You do, at `/setup`, with a setup secret |
+| How do family members join? | You invite them from the Workspace page and send the link privately |
+| Does it need the internet? | No. The pages, scripts, styles and fonts come from the binary |
+| What is optional? | AI with your own key, the Telegram bot, mail |
+
+The first user is created at `/setup`. It asks for `SETUP_TOKEN` from `.env` or, when that is empty, for the one-time code the server prints once in its boot log (`setup code`). From then on `/setup` answers 404.
+
+## The desktop app
+
+The desktop app runs the same server in a native window for Windows, macOS and Linux. It needs no Docker, no terminal and no browser tab, keeps its data in your user folder and works offline. The installers are unsigned, so your system may warn you the first time. Download them from the [releases page](https://github.com/AlexGalhardo/vukem-finances/releases) of the application repository.
+
+## The mobile app
+
+The mobile app works with no account and no server: everything lives in a SQLite database on the phone and follows the same rules as the server. When you want your phone and your server to agree, you pair them and the app syncs both ways. Records made offline are merged when the phone reaches the server again. The app is built with Expo, and its source is in the `mobile` folder of the application repository.
+
+## Docker on localhost
+
+With the CLI:
+
+```bash
+vukem new money --example finance
+cd money
+docker compose up -d --build --wait
+```
+
+Open `http://localhost:3000`. The project is the exported application and runs on SQLite with a mail catcher at `http://localhost:8025`, where every email the app sends is readable. `docker compose up -d --no-deps app` leaves the catcher out, and mail is then dropped with a warning in the log.
+
+You can also skip the source and run the ready-made image:
+
+```bash
+vukem new money --prebuilt --example finance
+cd money
+docker compose up
+```
+
+That folder holds only `compose.yaml`, `.env` and `README.md` and runs `ghcr.io/alexgalhardo/vukem-finances` with the version your CLI embeds. To seed a demo workspace with an administrator, run the seed command printed in its `README.md`.
+
+To read the data of a running install, never copy `database.sqlite` yourself. Use the backup command below.
+
+## Backups and exports
+
+`db:backup` writes a consistent snapshot of the SQLite file while the app runs:
+
+```bash
+docker compose exec app /app/app db:backup -to /app/storage/backups/$(date +%F).sqlite
+```
+
+Copy the snapshot somewhere safe. To restore, use the same command with the restore options described in the deployment guide of the application repository. You can also export your data as CSV and JSON from the app, and import CSV and OFX files from your bank.
+
+## AI with your own key
+
+AI is off by default. The service never pays for it: you connect a key from your own provider, turn AI on and choose which features may use it, such as categorizing transactions. Only the fields a feature needs are sent, after email addresses and phone numbers are redacted.
+
+## The Telegram bot
+
+The bot is off until you set `TELEGRAM_BOT_TOKEN`. Once you link a private chat, you can record an expense or an income with one short message, check balances and undo a mistake. Messages pass through Telegram's servers, so use it where you are comfortable with that.
+
+## Where to go next
+
+- The [application repository](https://github.com/AlexGalhardo/vukem-finances) has the guide, the offline inventory of every network path, and the mobile and desktop notes.
+- For how to scaffold and customize the project, read the [CLI reference](/docs/cli/reference-new).
