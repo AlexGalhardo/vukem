@@ -6,3 +6,4 @@
 go.sum linguist-generated
 apidocs/scalar/standalone.js -text linguist-vendored
 contrib/studio/ui/** linguist-generated -text
+internal/cli/scaffolds/finance/scaffold.tar.gz binary
