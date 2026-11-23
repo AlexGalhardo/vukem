@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import config from "../astro.config.mjs";
 
 const siteDir = path.join(import.meta.dirname, "..");
 
+// Read as text: this job runs without the site's dependencies, so the config cannot be imported.
 test("the old finance guide address redirects to the SaaS edition page", () => {
-  assert.equal(config.redirects?.["/docs/finance-saas"], "/docs/finance-saas-edition/");
+  const config = fs.readFileSync(path.join(siteDir, "astro.config.mjs"), "utf8");
+  assert.match(config, /"\/docs\/finance-saas":\s*"\/docs\/finance-saas-edition\/"/);
 });
 
 test("both finance pages exist and the old page is gone", () => {
