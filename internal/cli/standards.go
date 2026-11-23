@@ -24,10 +24,10 @@ var standardsFS embed.FS
 
 // markdownlintVersion is the exact markdownlint-cli2 release the lint:md
 // script and the devDependency pin.
-const markdownlintVersion = "0.24.1"
+const markdownlintVersion = "0.24.2"
 
 // biomeVersion is the exact stable Biome v2 release the lint:js and format scripts pin.
-const biomeVersion = "2.6.7"
+const biomeVersion = "2.6.8"
 
 // licenses maps the SPDX identifiers --license accepts to their template.
 var licenses = map[string]string{"mit": "MIT"}

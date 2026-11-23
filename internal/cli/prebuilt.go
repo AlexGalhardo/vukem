@@ -20,8 +20,8 @@ var prebuiltFS embed.FS
 // Same pins as standards/compose.yaml.tmpl; TestPrebuiltComposeSharesImagePins
 // fails if they drift.
 const (
-	postgresImage = "postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b"
-	mailpitImage  = "axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce"
+	postgresImage = "postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71"
+	mailpitImage  = "axllent/mailpit:v1.34.0@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e"
 )
 
 // exampleImageRepo is the registry path of the example images; release.yml

@@ -74,7 +74,7 @@ Some rules sit on top of that:
 - Every image stays on its major line, and `golang` also on its minor, which must match the `go` directive of `go.mod`; a Go minor bump is a toolchain decision made by hand. Alpine variants follow the newest alpine release the image publishes.
 - yarn stays on Classic 1.x, and Bun follows the `oven/bun` image tag.
 
-`-write` also rewrites the old version where `docs/*.md` and `site/content/docs/**/*.mdx` mention it next to the package name (`htmx 4.0.0`, `react-email@6.11.6`, `oven/bun:1.4.4-alpine`). `site/content/versions/` and `CHANGELOG.md` are history and never change. When a docs page changes, the workflow commits it and then runs `npm ci && npm run last-updated` in `site/`, in a second commit, because the date comes from git history.
+`-write` also rewrites the old version where `docs/*.md` and `site/content/docs/**/*.mdx` mention it next to the package name (`htmx 4.0.0`, `react-email@6.11.6`, `oven/bun:1.4.5-alpine`). `site/content/versions/` and `CHANGELOG.md` are history and never change. When a docs page changes, the workflow commits it and then runs `npm ci && npm run last-updated` in `site/`, in a second commit, because the date comes from git history.
 
 The workflow needs a way to open the pull request and to run the required checks on it. Pick one:
 

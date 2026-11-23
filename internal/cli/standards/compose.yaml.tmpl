@@ -56,7 +56,7 @@ services:
   # go get github.com/AlexGalhardo/vukem/drivers/postgres && go mod tidy
   # (https://vukem.dev/docs/database/overview).
   postgres:
-    image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+    image: postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71
     profiles: [postgres]
     environment:
       POSTGRES_USER: app
@@ -75,7 +75,7 @@ services:
   # Mailpit accepts every message and shows it in a web inbox, so password
   # resets and verification emails are readable without a mail provider.
   mailpit:
-    image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    image: axllent/mailpit:v1.34.0@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e
     # Only the web inbox is published; SMTP stays on the private network.
     ports: ["127.0.0.1:8025:8025"]
     environment:
