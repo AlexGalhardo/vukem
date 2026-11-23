@@ -51,7 +51,7 @@ func TestCIAuditsTheLockfile(t *testing.T) {
 		"npm audit --package-lock-only --audit-level=high",
 		"bun install --frozen-lockfile",
 		"bun audit --audit-level=high",
-		`bash -s "bun-v1.4.4"`,
+		`bash -s "bun-v` + bunVersion + `"`,
 		"commit package-lock.json or bun.lock",
 	} {
 		if !strings.Contains(text, want) {
