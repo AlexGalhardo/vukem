@@ -17,29 +17,31 @@ import (
 //go:embed prebuilt
 var prebuiltFS embed.FS
 
-// Same pins as standards/compose.yaml.tmpl; TestPrebuiltComposeSharesImagePins
+// Same pin as standards/compose.yaml.tmpl; TestPrebuiltComposeSharesImagePins
 // fails if they drift.
-const (
-	postgresImage = "postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b"
-	mailpitImage  = "axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce"
-)
+const mailpitImage = "axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce"
 
 // exampleImageRepo is the registry path of the example images; release.yml
-// publishes <repo>-<example>.
+// publishes <repo>-<example> for the todo example.
 const exampleImageRepo = "ghcr.io/alexgalhardo/vukem-example"
 
 var releaseTagRE = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
 type prebuiltData struct {
-	Name, Example, Image        string
-	PostgresImage, MailpitImage string
-	Finance                     bool
+	Name, Example, Image string
+	MailpitImage         string
+	Finance              bool
 }
 
 // prebuiltImage names the example image matching this CLI. Only stable tags
 // are published, so any other build (devel, pre-release, pseudo-version) runs
-// latest.
+// latest. The finance example is the application's own image, tagged with the
+// app release the embedded scaffold comes from, not with the CLI version.
 func prebuiltImage(example, cliVersion string) string {
+	if example == exampleFinance {
+		return financeImageRepo + ":" + financeAppVersion()
+	}
+
 	tag := "latest"
 	if releaseTagRE.MatchString(cliVersion) {
 		tag = strings.TrimPrefix(cliVersion, "v")
@@ -102,17 +104,17 @@ func checkPrebuiltFlags(o newOpts) error {
 }
 
 // runPrebuilt writes the prebuilt folder for kind, which must be an example.
-func runPrebuilt(env *Env, name, kind string) error {
+func runPrebuilt(env *Env, name, kind, edition string) error {
 	if kind == exampleNone {
 		return usagef("--prebuilt needs an example: choose todo or finance")
 	}
 
-	return writePrebuilt(env, name, kind)
+	return writePrebuilt(env, name, kind, edition)
 }
 
 // writePrebuilt writes the folder of `vukem new --prebuilt`: compose.yaml,
 // .env with a fresh APP_KEY and README.md. It runs no container.
-func writePrebuilt(env *Env, name, kind string) error {
+func writePrebuilt(env *Env, name, kind, edition string) error {
 	dir := env.path(name)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
@@ -123,7 +125,7 @@ func writePrebuilt(env *Env, name, kind string) error {
 
 	data := prebuiltData{
 		Name: name, Example: kind, Image: prebuiltImage(kind, version(env)),
-		PostgresImage: postgresImage, MailpitImage: mailpitImage, Finance: kind == exampleFinance,
+		MailpitImage: mailpitImage, Finance: kind == exampleFinance,
 	}
 
 	for _, f := range []string{"compose.yaml", "README.md"} {
@@ -139,7 +141,12 @@ func writePrebuilt(env *Env, name, kind string) error {
 
 	if data.Finance {
 		// ADMIN_EMAILS must list the seed email, or the demo admin seeder refuses.
-		const dotenv = "APP_ENV=development\nADMIN_EMAILS=admin@example.test\nFINANCE_ADMIN_EMAIL=admin@example.test\n"
+		if edition == "" {
+			edition = editionPersonal
+		}
+
+		dotenv := "APP_ENV=development\nAPP_EDITION=" + edition +
+			"\nADMIN_EMAILS=admin@example.test\nFINANCE_ADMIN_EMAIL=admin@example.test\n"
 		if err := writeFile(project.path(".env"), []byte(dotenv)); err != nil {
 			return err
 		}

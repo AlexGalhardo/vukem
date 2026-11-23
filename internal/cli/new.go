@@ -55,6 +55,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	example := set.String("example", "", "example app: todo (the default without a terminal), finance or none")
 	noExample := set.Bool("no-example", false, "same as --example none")
 	seed := set.Bool("seed", false, "with --example finance, migrate and seed the local admin and demo data")
+	edition := set.String("edition", "", "with --example finance, the edition: personal (the default) or saas")
 	prebuilt := set.Bool("prebuilt", false,
 		"no source: a compose.yaml that runs the ready-made example image (todo by default, or --example finance)")
 	pmFlag := set.String(
@@ -88,6 +89,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			example:     *example,
 			noExample:   *noExample,
 			seed:        *seed,
+			edition:     strings.ToLower(strings.TrimSpace(*edition)),
 			prebuilt:    *prebuilt,
 			std: standardsOpts{
 				standards: *standards,
@@ -106,6 +108,7 @@ type newOpts struct {
 	noExample                                         bool
 	example                                           string
 	seed                                              bool
+	edition                                           string
 	prebuilt                                          bool
 	std                                               standardsOpts
 }
@@ -139,8 +142,18 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 		return err
 	}
 
+	if err := checkEdition(o, kind); err != nil {
+		return err
+	}
+
 	if o.prebuilt || askPrebuilt(env, o, kind) {
-		return runPrebuilt(env, name, kind)
+		return runPrebuilt(env, name, kind, o.edition)
+	}
+
+	// The finance example is the exported vukem-finances app, not a starter
+	// with patches: it has its own flow.
+	if kind == exampleFinance {
+		return runFinanceProject(ctx, env, name, dir, o)
 	}
 
 	st, err := selectNewStack(env, o, kind)
@@ -150,12 +163,6 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 
 	askStandards(env, &std)
 	std = std.withStack(st.kind)
-
-	// The finance example always ships Dockerfile and compose.yaml. setup-local.md
-	// documents that stack; --docker on other examples stays opt-in.
-	if kind == exampleFinance {
-		std.docker = true
-	}
 
 	pm, err := packageManager(dir, o.pmFlag)
 	if err != nil {
@@ -178,13 +185,8 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 		return err
 	}
 
-	switch kind {
-	case exampleTodo:
+	if kind == exampleTodo {
 		if err := applyExample(&project, st); err != nil {
-			return err
-		}
-	case exampleFinance:
-		if err := scaffoldFinance(ctx, &project, dir, data); err != nil {
 			return err
 		}
 	}
@@ -214,12 +216,6 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 		return err
 	}
 
-	if o.seed {
-		if err := seedFinance(ctx, &project); err != nil {
-			return err
-		}
-	}
-
 	// After writeAppKey: the app needs its key to boot and type the pages.
 	if kind != exampleNone && st.kind == "inertia" {
 		refreshPageProps(ctx, &project)
@@ -236,8 +232,7 @@ func runNewProject(ctx context.Context, env *Env, args []string, o newOpts) erro
 	return nil
 }
 
-// selectNewStack picks the starter. Finance is Inertia React. --seed is
-// refused for every other example so a later seed cannot run by accident.
+// selectNewStack picks the starter. --seed is refused for every other example so a later seed cannot run by accident.
 func selectNewStack(env *Env, o newOpts, kind string) (stack, error) {
 	if o.seed && kind != exampleFinance {
 		return stack{}, usagef("--seed is only valid with --example finance")
@@ -250,8 +245,6 @@ func selectNewStack(env *Env, o newOpts, kind string) (stack, error) {
 		}
 
 		return stack{kind: "minimal"}, nil
-	case kind == exampleFinance:
-		return financeStack(o)
 	default:
 		return chooseStack(env, o.apiOnly, o.templ, o.inertiaFW)
 	}

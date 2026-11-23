@@ -1,8 +1,0 @@
-{
-  "auth": {
-    "social": {
-      "no_email": "Your {provider} account did not share an email address.",
-      "email_taken": "An account with this email already exists. Log in with your password first."
-    }
-  }
-}

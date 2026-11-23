@@ -91,21 +91,63 @@ func TestNewPrebuiltFinance(t *testing.T) {
 	compose := read(t, project, "compose.yaml")
 
 	for _, want := range []string{
-		"image: ghcr.io/alexgalhardo/vukem-example-finance:0.44.0\n", "postgres:", "mailpit:", "SMTP_HOST: mailpit",
-		"127.0.0.1:8025:8025",
+		"image: ghcr.io/alexgalhardo/vukem-finances:" + financeAppVersion() + "\n", "mailpit:", "SMTP_HOST: mailpit",
+		"127.0.0.1:8025:8025", "/app/app migrate",
 	} {
 		if !strings.Contains(compose, want) {
 			t.Errorf("compose.yaml lacks %q", want)
 		}
 	}
 
+	for _, bad := range []string{"postgres", "vukem-example-finance"} {
+		if strings.Contains(compose, bad) {
+			t.Errorf("compose.yaml mentions %q:\n%s", bad, compose)
+		}
+	}
+
 	if env := read(t, project, ".env"); !strings.Contains(env, "APP_KEY=base64:") ||
+		!strings.Contains(env, "APP_EDITION=personal") ||
 		!strings.Contains(env, "ADMIN_EMAILS=admin@example.test") {
 		t.Errorf(".env = %q", env)
 	}
 
-	if !strings.Contains(read(t, project, "README.md"), "db:seed FinanceAdminSeeder FinanceDemoSeeder") {
+	readme := read(t, project, "README.md")
+	if !strings.Contains(readme, "db:seed FinanceAdminSeeder FinanceDemoSeeder") {
 		t.Error("README lacks the seed command")
+	}
+
+	if !strings.Contains(readme, "no hosted instance") {
+		t.Error("README does not say the SaaS edition has no hosted instance")
+	}
+}
+
+// The finance image is the application's own, tagged with the app release the
+// scaffold comes from, whatever the CLI version is.
+func TestNewPrebuiltFinanceEditionAndImage(t *testing.T) {
+	t.Parallel()
+
+	for _, ver := range []string{"v0.44.0", "devel"} {
+		if got, want := prebuiltImage(exampleFinance, ver),
+			"ghcr.io/alexgalhardo/vukem-finances:"+financeAppVersion(); got != want {
+			t.Errorf("prebuiltImage(finance, %q) = %q, want %q", ver, got, want)
+		}
+	}
+
+	dir := t.TempDir()
+	if code, out, errOut := vukemVersion(
+		t, dir, "v0.44.0", "new", "money", "--prebuilt", "--example", "finance", "--edition", "saas",
+	); code != 0 {
+		t.Fatalf("code = %d\n%s%s", code, out, errOut)
+	}
+
+	if env := read(t, filepath.Join(dir, "money"), ".env"); !strings.Contains(env, "APP_EDITION=saas\n") {
+		t.Errorf(".env = %q, want APP_EDITION=saas", env)
+	}
+
+	if code, _, errOut := vukemVersion(
+		t, t.TempDir(), "v0.44.0", "new", "demo", "--prebuilt", "--edition", "saas",
+	); code != 2 || !strings.Contains(errOut, "--edition") {
+		t.Errorf("--prebuilt todo --edition = %d %q, want a usage error", code, errOut)
 	}
 }
 
@@ -212,8 +254,7 @@ func TestNewPrebuiltPrompt(t *testing.T) {
 
 var composeImage = regexp.MustCompile(`(?m)^\s*image:\s*(\S+)`)
 
-// The prebuilt compose reuses the Postgres and Mailpit pins of the generated
-// one; this keeps the two from drifting apart.
+// The prebuilt compose reuses the Mailpit pin of the generated one; this keeps the two from drifting apart.
 func TestPrebuiltComposeSharesImagePins(t *testing.T) {
 	t.Parallel()
 
@@ -222,7 +263,7 @@ func TestPrebuiltComposeSharesImagePins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, ref := range []string{postgresImage, mailpitImage} {
+	for _, ref := range []string{mailpitImage} {
 		if !strings.Contains(string(b), "image: "+ref) {
 			t.Errorf("standards/compose.yaml.tmpl does not pin %s", ref)
 		}
@@ -230,7 +271,7 @@ func TestPrebuiltComposeSharesImagePins(t *testing.T) {
 
 	out, err := renderPrebuilt("compose.yaml.tmpl", prebuiltData{
 		Name: "x", Example: exampleFinance, Image: prebuiltImage(exampleFinance, "v1.0.0"),
-		PostgresImage: postgresImage, MailpitImage: mailpitImage, Finance: true,
+		MailpitImage: mailpitImage, Finance: true,
 	})
 	if err != nil {
 		t.Fatal(err)

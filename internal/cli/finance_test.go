@@ -8,12 +8,10 @@ import (
 	"testing"
 )
 
-// TestNewFinanceProjectEndToEnd scaffolds the personal finance SaaS, runs its
-// own Go tests, the type check and the Vite build, and checks that the
-// React Email templates it ships are what npm run build:emails writes.
-// It needs the tenancy package of the framework checkout (--framework).
-func TestNewFinanceProjectEndToEnd(t *testing.T) {
-	t.Parallel()
+// financeFrameworkRepo returns the checkout the generated projects use as the
+// framework (--framework), or skips when it lacks the packages the app needs.
+func financeFrameworkRepo(t *testing.T) string {
+	t.Helper()
 	requireGo(t)
 
 	repo, err := filepath.Abs(filepath.Join("..", ".."))
@@ -25,67 +23,85 @@ func TestNewFinanceProjectEndToEnd(t *testing.T) {
 		t.Skip("the finance example needs the tenancy package: ", err)
 	}
 
-	dir := t.TempDir()
+	return repo
+}
 
-	code, out, errOut := vukem(t, dir, "new", "app", "--example", "finance", "--module", "example.com/app",
-		"--framework", repo, "--no-install", "--pm", "npm")
+// generateFinance runs vukem new --example finance in a temp directory and
+// returns the project directory and the command output.
+func generateFinance(t *testing.T, extra ...string) (project, out string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	args := append([]string{
+		"new", "money", "--example", "finance", "--module", "example.test/money",
+		"--framework", financeFrameworkRepo(t), "--no-install",
+	}, extra...)
+
+	code, stdout, stderr := vukem(t, dir, args...)
 	if code != 0 {
-		t.Fatalf("vukem new --example finance = %d\n%s%s", code, out, errOut)
+		t.Fatalf("vukem %v = %d\n%s%s", args, code, stdout, stderr)
 	}
 
-	project := filepath.Join(dir, "app")
+	return filepath.Join(dir, "money"), stdout
+}
+
+// TestNewFinanceProjectEndToEnd generates the project from the exported app
+// and runs what the app's own CI runs: tidy, build, vet and its whole test
+// suite (isolation, billing, sync and the rest), under another module path.
+func TestNewFinanceProjectEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	project, out := generateFinance(t)
 
 	for _, rel := range []string{
-		"app/workspaces/tenant.go", "app/models/tenant.go", "app/finance/importer.go", "app/billing/billing.go",
-		"app/mail/resend_webhook.go", "app/jobs/finance.go", "routes/finance.go", "tests/finance_test.go",
-		"resources/js/pages/Dashboard.tsx", "resources/js/pages/Import.tsx", "resources/js/emails/welcome.tsx",
-		"resources/emails/welcome.html", "resources/emails/monthly_summary.html", "README.md",
-		"resources/js/pages/Auth/TwoFactor.tsx", "resources/js/pages/Admin/Revenue.tsx",
-		"setup-local.md", "Dockerfile", "compose.yaml",
-		"resources/js/components/ui/sidebar.tsx", "resources/js/components/ui/dialog.tsx",
-		"resources/js/lib/i18n.ts", "app/accounts/social.go", "database/seeders/finance_admin_seeder.go",
-		"database/seeders/finance_demo_seeder.go", "routes/social.go",
+		"go.mod", "README.md", "NOTICE", "Dockerfile", "compose.yaml", ".env", ".env.example", "package.json",
+		"bun.lock", "bootstrap/app.go", "routes/finance.go", "resources/js/pages/Dashboard.tsx", "setup-local.md",
 	} {
 		requireFile(t, project, rel)
 	}
 
-	// VF-096: verification is on by default, off is refused in production, and
-	// a sign-up is never marked verified without proof.
-	accountsSrc := read(t, project, "app/accounts/accounts.go")
-	if !strings.Contains(
-		accountsSrc,
-		`!strings.EqualFold(app.Source.Get("AUTH_REQUIRE_EMAIL_VERIFICATION"), "false")`,
-	) ||
-		!strings.Contains(accountsSrc, "AUTH_REQUIRE_EMAIL_VERIFICATION=false is refused in production") {
-		t.Error("the finance accounts do not default email verification on and refuse it off in production")
+	for _, gone := range []string{
+		"mobile", "desktop", ".github", ".agents", ".claude", "development", "VERSION", "MANIFEST.sha256",
+		"LICENSE.vukem-finances", "resources/js/pages/Posts", "resources/js/pages/Tasks",
+	} {
+		requireNoFile(t, project, gone)
 	}
 
-	if strings.Contains(read(t, project, "app/accounts/users.go"), "return true, a.MarkVerified(ctx, a.DB, &u)") {
-		t.Error("Register marks a self-asserted address verified")
+	if !strings.Contains(out, "vukem-finances "+financeAppVersion()) {
+		t.Errorf("output does not name the app release:\n%s", out)
 	}
 
-	for _, gone := range []string{"resources/js/pages/Posts", "app/controllers/post_controller.go"} {
-		if _, err := os.Stat(filepath.Join(project, filepath.FromSlash(gone))); err == nil {
-			t.Errorf("the finance app kept the starter's %s", gone)
+	mod := read(t, project, "go.mod")
+	for _, want := range []string{"module example.test/money\n", "contrib/stripe " + financeStripeVersion} {
+		if !strings.Contains(mod, want) {
+			t.Errorf("go.mod lacks %q:\n%s", want, mod)
 		}
 	}
 
-	if mod := read(
-		t,
-		project,
-		"go.mod",
-	); !strings.Contains(
-		mod,
-		"contrib/stripe v"+strings.TrimPrefix(stripeVersion, "v"),
-	) {
-		t.Errorf("go.mod does not pin contrib/stripe %s:\n%s", stripeVersion, mod)
+	env := read(t, project, ".env")
+	if !strings.Contains(env, "APP_KEY=base64:") || !strings.Contains(env, "APP_EDITION=personal") {
+		t.Errorf(".env lacks APP_KEY or APP_EDITION=personal:\n%s", env)
 	}
 
-	assertFinanceProduct(t, project)
+	// Every .tmpl was rendered: no suffix and no placeholder survives.
+	err := filepath.WalkDir(project, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
 
-	// The to-do example and the finance app exclude each other.
-	if _, err := os.Stat(filepath.Join(project, "resources", "js", "pages", "Tasks")); err == nil {
-		t.Error("the finance app has the to-do pages")
+		if strings.HasSuffix(p, ".tmpl") {
+			t.Errorf("%s kept its .tmpl suffix", p)
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(read(t, project, "bootstrap/app.go"), "vukem-finances") ||
+		strings.Contains(read(t, project, "compose.yaml"), "vukem-finances") {
+		t.Error("the app's own name or module path survived in bootstrap/app.go or compose.yaml")
 	}
 
 	run := func(name string, args ...string) {
@@ -98,77 +114,100 @@ func TestNewFinanceProjectEndToEnd(t *testing.T) {
 		if out, err := combinedOutput(cmd); err != nil {
 			t.Fatalf("%s %v: %v\n%s", name, args, err, out)
 		}
-
-		t.Logf("%s %v ok", name, args)
 	}
 
-	// A clone has no .env: create the key the way CI does.
-	if err := os.Remove(filepath.Join(project, ".env")); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
+	run("go", "mod", "tidy")
+	run("go", "build", "./...")
+	run("go", "vet", "./...")
+	run("go", "test", "-p", "4", "./...")
+}
+
+func TestFinanceEdition(t *testing.T) {
+	t.Parallel()
+
+	project, _ := generateFinance(t, "--edition", "saas")
+
+	env := read(t, project, ".env")
+	if strings.Count(env, "APP_EDITION=") != 1 || !strings.Contains(env, "APP_EDITION=saas") {
+		t.Errorf(".env = %s, want one APP_EDITION=saas", env)
 	}
 
-	if code, out, errOut := vukem(t, project, "key:generate", "--if-missing"); code != 0 {
-		t.Fatalf("key:generate = %d\n%s%s", code, out, errOut)
+	if !strings.Contains(read(t, project, ".env.example"), "APP_EDITION=personal") {
+		t.Error(".env.example must keep the personal default")
 	}
 
-	if code, out, errOut := vukem(t, project, "codegen:pages", "-check"); code != 0 {
-		t.Fatalf("codegen:pages -check = %d\n%s%s", code, out, errOut)
+	for name, args := range map[string][]string{
+		"unknown":       {"new", "app", "--example", "finance", "--edition", "team"},
+		"other example": {"new", "app", "--example", "todo", "--edition", "saas"},
+		"no example":    {"new", "app", "--no-example", "--edition", "saas"},
+	} {
+		code, _, errOut := vukem(t, t.TempDir(), args...)
+		if code != 2 || !strings.Contains(errOut, "--edition") {
+			t.Errorf("%s: vukem %v = %d %q, want a usage error about --edition", name, args, code, errOut)
+		}
 	}
+}
 
-	if props := read(t, project, "resources/js/page-props.ts"); !strings.Contains(props, `Transactions:`) ||
-		!strings.Contains(props, `"Auth/Login"`) || !strings.Contains(props, `"Admin/Revenue"`) {
-		t.Errorf("page-props.ts lacks the finance pages:\n%s", props)
-	}
+// --docker, --standards and --license do not overwrite what the app ships,
+// say so once, and still write what the app lacks.
+func TestFinanceFlagsDoNotOverwrite(t *testing.T) {
+	t.Parallel()
 
-	run("go", "test", "./...")
+	plain, _ := generateFinance(t)
+	project, out := generateFinance(t, "--docker", "--standards", "--license", "mit", "--ci", "--deploy", "railway")
 
-	// The finance code passes the same lint as the other generated projects.
-	if err := os.MkdirAll(filepath.Join(project, "storage"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	if code, out, errOut := vukem(t, project, "migrate"); code != 0 {
-		t.Fatalf("migrate = %d\n%s%s", code, out, errOut)
-	}
-
-	requireGeneratedLint(t, project, "example.com/app")
-
-	if _, err := exec.LookPath(npm()); err != nil {
-		t.Log("npm not found: skipping npm install, type check, emails and vite build")
-		return
-	}
-
-	run(npm(), "install", "--no-audit", "--no-fund")
-	run(npm(), "run", "typecheck")
-
-	// The shipped emails are the export of the components.
-	shipped := map[string]string{}
-
-	entries, err := os.ReadDir(filepath.Join(project, "resources", "emails"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, e := range entries {
-		shipped[e.Name()] = read(t, project, "resources/emails/"+e.Name())
-	}
-
-	run(npm(), "run", "build:emails")
-
-	for name, want := range shipped {
-		if got := read(t, project, "resources/emails/"+name); got != want {
-			t.Errorf(
-				"resources/emails/%s is stale: run npm run build:emails and update scaffolds/finance/resources/emails",
-				name,
-			)
+	for _, rel := range []string{"compose.yaml", "SECURITY.md", ".editorconfig", "package.json", "README.md"} {
+		if read(t, project, rel) != read(t, plain, rel) {
+			t.Errorf("%s was changed by the flags", rel)
 		}
 	}
 
-	if code, out, errOut := vukem(t, project, "build"); code != 0 {
-		t.Fatalf("vukem build = %d\n%s%s", code, out, errOut)
+	line := ""
+
+	for l := range strings.SplitSeq(out, "\n") {
+		if strings.Contains(l, "kept the app's") {
+			line = l
+		}
 	}
 
-	t.Log("vukem build ok")
+	for _, want := range []string{"compose.yaml", "SECURITY.md"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("no single line says the app's %s was kept:\n%s", want, out)
+		}
+	}
+
+	// What the app does not ship is written.
+	for _, rel := range []string{
+		"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md", ".githooks/commit-msg", ".config/cliff.toml",
+		".github/workflows/ci.yml", ".railway/railway.ts",
+	} {
+		requireFile(t, project, rel)
+	}
+
+	// The app's MIT text stays when the project has a license of its own.
+	requireFile(t, project, "LICENSE.vukem-finances")
+	requireNoFile(t, project, "NOTICE")
+
+	notice := read(t, plain, "NOTICE")
+	if !strings.Contains(notice, "MIT License") {
+		t.Errorf("NOTICE is not the app's MIT text:\n%s", notice)
+	}
+
+	requireNoFile(t, plain, "LICENSE")
+	requireNoFile(t, plain, "LICENSE.vukem-finances")
+}
+
+func TestFinanceRefusesConflictingFlags(t *testing.T) {
+	t.Parallel()
+
+	for _, extra := range [][]string{{"--pm", "npm"}, {"--pm", "pnpm"}, {"--assets-image", "oven/bun:1.4.4"}} {
+		args := append([]string{"new", "app", "--example", "finance"}, extra...)
+
+		code, _, errOut := vukem(t, t.TempDir(), args...)
+		if code != 2 || !strings.Contains(errOut, extra[0]) {
+			t.Errorf("vukem %v = %d %q, want a usage error naming %s", args, code, errOut, extra[0])
+		}
+	}
 }
 
 func TestFinanceExampleNeedsTheReactStack(t *testing.T) {
@@ -185,43 +224,6 @@ func TestFinanceExampleNeedsTheReactStack(t *testing.T) {
 	}
 }
 
-func assertFinanceProduct(t *testing.T, project string) {
-	t.Helper()
-
-	checks := []struct{ file, needle string }{
-		{"resources/js/pages/Home.tsx", "finance-landing"},
-		{"resources/css/finance.css", "#bdfb6b"},
-		{"resources/js/layouts/AppLayout.tsx", "SidebarProvider"},
-		{"resources/js/app.tsx", "__webpack_nonce__"},
-		{"resources/js/pages/Transactions.tsx", "<ConfirmDelete"},
-		{"resources/js/pages/Accounts.tsx", "<ConfirmDelete"},
-		{"resources/js/pages/Budgets.tsx", "<ConfirmDelete"},
-		{"resources/js/layouts/AppLayout.tsx", "startsWith('Admin/')"},
-		{"app/admin/registry.go", "WorkspaceSubscription(),"},
-		{"resources/js/pages/Transactions.tsx", "Dialog"},
-		{"resources/js/components/Preferences.tsx", "localStorage"},
-		{"resources/js/lib/i18n.ts", "pt-BR"},
-		{"resources/js/lib/i18n.ts", "const es"},
-		{"resources/views/app.html", "localStorage.getItem(\"theme\")"},
-		{"app/accounts/social.go", "SOCIAL_GOOGLE_CLIENT_ID"},
-		{"app/accounts/social.go", "set both SOCIAL_GOOGLE_CLIENT_ID and SOCIAL_GOOGLE_CLIENT_SECRET"},
-		{"setup-local.md", "compose.yaml"},
-		{"setup-local.md", "docker compose up --build"},
-		{"bootstrap/app.go", "WithAppSeeders"},
-		{"database/seeders/registry.go", "FinanceDemoSeeder{}"},
-	}
-
-	for _, c := range checks {
-		if body := read(t, project, c.file); !strings.Contains(body, c.needle) {
-			t.Errorf("%s missing %q", c.file, c.needle)
-
-			continue
-		}
-
-		t.Logf("%s contains %q", c.file, c.needle)
-	}
-}
-
 func TestSeedRequiresFinanceExample(t *testing.T) {
 	t.Parallel()
 
@@ -234,16 +236,8 @@ func TestSeedRequiresFinanceExample(t *testing.T) {
 
 func TestFinanceSeedFlag(t *testing.T) {
 	t.Parallel()
-	requireGo(t)
 
-	repo, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(repo, "tenancy", "tenancy.go")); err != nil {
-		t.Skip("the finance example needs the tenancy package: ", err)
-	}
+	repo := financeFrameworkRepo(t)
 
 	plain := filepath.Join(t.TempDir(), "plain")
 	if err := os.MkdirAll(plain, 0o750); err != nil {
@@ -251,7 +245,7 @@ func TestFinanceSeedFlag(t *testing.T) {
 	}
 
 	code, out, errOut := vukem(t, plain, "new", "app", "--example", "finance", "--module", "example.com/plain",
-		"--framework", repo, "--no-install", "--pm", "npm")
+		"--framework", repo, "--no-install")
 	if code != 0 {
 		t.Fatalf("vukem new without --seed = %d\n%s%s", code, out, errOut)
 	}
@@ -265,15 +259,13 @@ func TestFinanceSeedFlag(t *testing.T) {
 		t.Fatalf("no-seed users = %s, want 0", got)
 	}
 
-	t.Log("no-seed users = 0")
-
 	seeded := filepath.Join(t.TempDir(), "seeded")
 	if err := os.MkdirAll(seeded, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
 	code, out, errOut = vukem(t, seeded, "new", "money", "--example", "finance", "--seed",
-		"--module", "example.com/money", "--framework", repo, "--no-install", "--pm", "npm")
+		"--module", "example.com/money", "--framework", repo, "--no-install")
 	if code != 0 {
 		t.Fatalf("vukem new --seed = %d\n%s%s", code, out, errOut)
 	}
@@ -283,8 +275,8 @@ func TestFinanceSeedFlag(t *testing.T) {
 		t.Fatalf("seeded users = %s, want 1", got)
 	}
 
-	if got := sqliteCount(t, money, "select count(*) from transactions"); got != "24" {
-		t.Fatalf("seeded transactions = %s, want 24", got)
+	if got := sqliteCount(t, money, "select count(*) from transactions"); got != "32" {
+		t.Fatalf("seeded transactions = %s, want 32", got)
 	}
 
 	if code, out, errOut = vukem(t, money, "db:seed"); code != 0 {
@@ -295,15 +287,9 @@ func TestFinanceSeedFlag(t *testing.T) {
 		t.Fatalf("repeated seed users = %s, want 1", got)
 	}
 
-	if got := sqliteCount(t, money, "select count(*) from transactions"); got != "24" {
-		t.Fatalf("repeated seed transactions = %s, want 24", got)
+	if got := sqliteCount(t, money, "select count(*) from transactions"); got != "32" {
+		t.Fatalf("repeated seed transactions = %s, want 32", got)
 	}
-
-	if got := sqliteCount(t, money, "select count(*) from social_accounts"); got != "0" {
-		t.Fatalf("social accounts = %s, want 0", got)
-	}
-
-	t.Log("seed users=1 transactions=24; repeated db:seed kept users=1 transactions=24; social_accounts=0")
 }
 
 func sqliteCount(t *testing.T, project, query string) string {
@@ -320,66 +306,4 @@ print(con.execute(sys.argv[2]).fetchone()[0])
 	}
 
 	return strings.TrimSpace(string(out))
-}
-
-func TestFinanceDropsOnlyWhatTheStarterHas(t *testing.T) {
-	t.Parallel()
-
-	// The edits patch files of the starter and the installers: a renamed
-	// line must fail here, in the CLI's tests, not in a user's terminal.
-	for _, e := range financeEdits() {
-		if e.file == "" || e.old == "" {
-			t.Errorf("edit %+v is incomplete", e)
-		}
-	}
-}
-
-// The docs, layout and head of a generated finance app match how it is run:
-// the package manager it was generated with, one <main>, an icon and a Compose
-// file that says how to switch to PostgreSQL.
-func TestFinanceOnboardingDetails(t *testing.T) {
-	t.Parallel()
-	requireGo(t)
-
-	repo, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(repo, "tenancy", "tenancy.go")); err != nil {
-		t.Skip("the finance example needs the tenancy package: ", err)
-	}
-
-	dir := t.TempDir()
-
-	code, out, errOut := vukem(t, dir, "new", "app", "--example", "finance", "--module", "example.com/app",
-		"--framework", repo, "--no-install", "--pm", "bun")
-	if code != 0 {
-		t.Fatalf("vukem new --example finance --pm bun = %d\n%s%s", code, out, errOut)
-	}
-
-	project := filepath.Join(dir, "app")
-
-	for _, doc := range []string{"README.md", "setup-local.md"} {
-		text := read(t, project, doc)
-		if !strings.Contains(text, "bun install") || strings.Contains(text, "npm ") {
-			t.Errorf("%s does not name bun only:\n%s", doc, text)
-		}
-	}
-
-	if !strings.Contains(read(t, project, "setup-local.md"), "docker compose exec app sh -c") {
-		t.Error("setup-local.md does not say how to read the seeded admin password in Compose")
-	}
-
-	if layout := read(t, project, "resources/js/layouts/AppLayout.tsx"); strings.Contains(layout, "</header><main") {
-		t.Error("AppLayout nests a <main> inside the SidebarInset <main>")
-	}
-
-	if !strings.Contains(read(t, project, "resources/views/app.html"), `rel="icon"`) {
-		t.Error("app.html has no icon: the browser asks for /favicon.ico and gets a 404")
-	}
-
-	if !strings.Contains(read(t, project, "compose.yaml"), "go mod tidy") {
-		t.Error("compose.yaml does not say to run go mod tidy after switching to PostgreSQL")
-	}
 }
