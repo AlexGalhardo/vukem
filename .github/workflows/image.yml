@@ -38,12 +38,6 @@ jobs:
             file: .config/docker/vukem-example.Dockerfile
             example: todo
             app-env: production
-          - name: vukem-example-finance
-            file: .config/docker/vukem-example.Dockerfile
-            example: finance
-            # Same as release.yml: the finance demo boots without Stripe and a
-            # mail provider only in development.
-            app-env: development
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

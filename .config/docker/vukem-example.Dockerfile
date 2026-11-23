@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
 
-# A ready-made example app: `vukem new --example <todo|finance>` runs inside
-# the build, so the image holds exactly what the CLI of this checkout
-# scaffolds. Published to ghcr.io/alexgalhardo/vukem-example-todo and
-# vukem-example-finance by release.yml; `vukem new --prebuilt` writes the
-# compose.yaml that runs them. See docs/tooling.md#container-image.
+# A ready-made example app: `vukem new --example todo` runs inside the build,
+# so the image holds exactly what the CLI of this checkout scaffolds.
+# Published to ghcr.io/alexgalhardo/vukem-example-todo by release.yml;
+# `vukem new --prebuilt` writes the compose.yaml that runs it. The finance
+# example is the vukem-finances application and has its own image, built in
+# that repository. See docs/tooling.md#container-image.
 # Build from the repository root:
 #
 #   docker build -f .config/docker/vukem-example.Dockerfile --build-arg EXAMPLE=todo -t vukem-example-todo .
@@ -66,9 +67,7 @@ COPY --chmod=0755 <<'SH' /app/entrypoint.sh
 /app/app migrate && exec /app/app "$@"
 SH
 USER app
-# A demo, not a deployment: the finance example needs APP_ENV=development to
-# run without Stripe and a mail provider, which also lets its local seeders
-# run. APP_KEY must be passed at runtime (`vukem new --prebuilt` writes one).
+# APP_KEY must be passed at runtime (`vukem new --prebuilt` writes one).
 ARG APP_ENV=production
 ENV APP_ENV=${APP_ENV} HOST=0.0.0.0 PORT=3000 LOG_FORMAT=json MAIL_MAILER=log
 EXPOSE 3000

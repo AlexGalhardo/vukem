@@ -99,8 +99,9 @@ jobs:
           cp "$BUNDLE" vukem.intoto.jsonl
           gh release upload "$TAG" vukem.intoto.jsonl --clobber --repo "$GITHUB_REPOSITORY"
 
-  # One matrix entry per image: the toolchain and the two ready-made example
-  # apps that `vukem new --prebuilt` runs. Each is built once for a smoke test
+  # One matrix entry per image: the toolchain and the ready-made to-do example
+  # that `vukem new --prebuilt` runs (the finance image is published by the
+  # vukem-finances repository). Each is built once for a smoke test
   # and only then pushed, signed and attested; a failing smoke stops that image
   # before anything is published.
   image:
@@ -119,12 +120,6 @@ jobs:
             file: .config/docker/vukem-example.Dockerfile
             example: todo
             app-env: production
-          - name: vukem-example-finance
-            file: .config/docker/vukem-example.Dockerfile
-            example: finance
-            # The finance demo runs without Stripe and a mail provider only in
-            # development, which is also what lets its local seeders run.
-            app-env: development
     env:
       GHCR_IMAGE: ghcr.io/alexgalhardo/${{ matrix.name }}
       HUB_IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ matrix.name }}
