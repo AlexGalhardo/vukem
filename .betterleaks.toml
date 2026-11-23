@@ -36,4 +36,17 @@ regexes = [
 	'''\.\.\.$''',
 	'''_FAKE_|(?i)placeholder|example''',
 	'''(?i)^(password|confirm password|senha|confirmar senha|contraseña|confirmar contraseña)$''',
+	# UI labels and test values of the vukem-finances app inside the embedded scaffold archive.
+	'''^(New|Show|Hide|Your|Current) password$''',
+	'''^(Nueva|Mostrar|Ocultar|Tu) contraseña$''',
+	'''^Contraseña actual$''',
+	'''^(Nova|Mostrar|Ocultar|Sua) senha$''',
+	'''^Senha atual$''',
+	'''^The password is incorrect\.$''',
+	'''^not the password$''',
+	'''^nope nope nope$''',
+	'''^unused$''',
+	'''^Tr0ub4dor-and-three-horses$''',
+	'''^\{(knownPassword|password|pw)\}\}\)?$''',
+	'''^newPassword(\}\)\.)?$''',
 ]
