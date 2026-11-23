@@ -186,7 +186,8 @@ jobs:
           cache-dependency-path: "**/go.sum"
       - name: go test
         shell: bash # PowerShell would split -coverprofile=coverage.out at the dot
-        run: go test -race -count=1 -timeout=20m -coverprofile=coverage.out ./...
+        # internal/cli builds and tests the whole finance app: it passed 20 minutes on this runner.
+        run: go test -race -count=1 -timeout=35m -coverprofile=coverage.out ./...
       - name: go test (vukem_nosqlite)
         run: go test -tags vukem_nosqlite -count=1 -run TestOpenSQLiteWithoutDriver ./database/
 
