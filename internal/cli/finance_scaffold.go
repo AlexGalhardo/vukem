@@ -17,7 +17,7 @@ import (
 // financeScaffoldTag is the release of github.com/AlexGalhardo/vukem-finances
 // whose exported tree is embedded. Only scripts/update-finance-scaffold.sh
 // changes it, together with the archive and the manifest.
-const financeScaffoldTag = "v0.7.0"
+const financeScaffoldTag = "v0.8.0"
 
 // financeStripeVersion is the contrib/stripe release that app release pins;
 // the exported tree carries no go.mod, so the CLI writes the pin itself.
