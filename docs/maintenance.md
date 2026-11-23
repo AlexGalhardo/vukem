@@ -85,6 +85,19 @@ If `gh pr create` is refused, the run fails with an `::error::` that names both 
 
 A module added to the repository must be added to the `gomod` directories in `.github/dependabot.yml`, to the `vuln.yml` matrix and to `MODULES` in `Taskfile.yml`.
 
+## Finance scaffold routine
+
+`vukem new --example finance` writes the vukem-finances application, not a starter with patches. The CLI embeds the archive of a published release of `github.com/AlexGalhardo/vukem-finances` (`internal/cli/scaffolds/finance/scaffold.tar.gz`) and its `MANIFEST.sha256`; the plain tree is larger than the binary-size guard allows, so the archive is read with `archive/tar` at generation time. The tag it comes from is `financeScaffoldTag` in `internal/cli/finance_scaffold.go`, and the prebuilt image is `ghcr.io/alexgalhardo/vukem-finances` at that version.
+
+To update it from an application release:
+
+1. Check that the application release has the assets `scaffold-vX.Y.Z.tar.gz` and `scaffold-vX.Y.Z.MANIFEST.sha256` (attached by its image workflow). Never update from an unreleased branch.
+2. Run `scripts/update-finance-scaffold.sh vX.Y.Z`. It downloads both assets with `gh release download`, checks that `VERSION` in the archive is the tag, that the manifest is the one inside the archive and that every file matches it, then replaces the two embedded files and pins the tag.
+3. Compare `go.mod` of the application at that tag: `financeStripeVersion` must be its `contrib/stripe` pin. The exported tree has no `go.mod`; the CLI writes it.
+4. Run `go test ./internal/cli/... -run 'TestFinanceScaffold|TestNewFinance|TestFinance|TestNewPrebuiltFinance'`. `TestFinanceScaffoldMatchesManifest` fails if one embedded byte changed outside the script, and `TestNewFinanceProjectEndToEnd` generates the project and runs its own build, vet and test suite.
+5. Run `go build -o "$TEMP/vukem" ./cmd/vukem` and compare the size with the previous build: the CLI may grow by at most 3 MiB for this scaffold.
+6. Commit as `feat(cli): update the finance scaffold to vX.Y.Z`, and refresh the [documentation pages](../site/content/docs/getting-started/finance-saas-edition.mdx) if the app changed what they describe.
+
 ## Security review routine
 
 1. A change in `auth`, `session`, `csrf`, `crypt`, `signed`, `storage`, `upload`, `router`, `orm` or `middleware` updates its row in [security.md](security.md) and its `TestSecurity_*` test in the same PR.
