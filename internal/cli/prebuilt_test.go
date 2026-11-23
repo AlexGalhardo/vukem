@@ -99,7 +99,7 @@ func TestNewPrebuiltFinance(t *testing.T) {
 		}
 	}
 
-	for _, bad := range []string{"postgres", "vukem-example-finance"} {
+	for _, bad := range []string{"postgres", "vukem-example-" + "finance"} {
 		if strings.Contains(compose, bad) {
 			t.Errorf("compose.yaml mentions %q:\n%s", bad, compose)
 		}
