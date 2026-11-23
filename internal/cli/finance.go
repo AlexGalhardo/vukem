@@ -162,7 +162,7 @@ func writeFinanceScaffold(project *Env, data starterData, ownLicense bool) error
 			perm = 0o700
 		}
 
-		if err := os.WriteFile(dst, content, perm); err != nil { //nolint:gosec // G703: the project directory is the developer's own
+		if err := os.WriteFile(dst, content, perm); err != nil {
 			return err
 		}
 	}
