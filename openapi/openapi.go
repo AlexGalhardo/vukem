@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"mime"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -629,24 +630,7 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 	}
 
 	s.input = false
-	status := t.Status
-	noOutput := t.Out.Kind() == reflect.Struct && t.Out.NumField() == 0
-
-	switch {
-	case status != 0:
-	case noOutput:
-		status = http.StatusNoContent
-	case t.Method == http.MethodPost:
-		status = http.StatusCreated
-	default:
-		status = http.StatusOK
-	}
-
-	resp := Response{Description: http.StatusText(status)}
-	if status != http.StatusNoContent && !noOutput {
-		resp.Content = map[string]MediaType{"application/json": {Schema: s.For(t.Out)}}
-	}
-
+	status, resp := successResponse(s, t)
 	op.Responses[strconv.Itoa(status)] = resp
 
 	if len(op.Security) > 0 {
@@ -662,6 +646,52 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 	})
 
 	return op
+}
+
+// successResponse is the status and the documented success response of t:
+// its JSON output, and the media types the handler writes itself.
+func successResponse(s *Schemas, t *api.Operation) (int, Response) {
+	status := t.Status
+	noOutput := t.Out.Kind() == reflect.Struct && t.Out.NumField() == 0
+
+	switch {
+	case status != 0:
+	case noOutput && len(t.Produces) == 0:
+		status = http.StatusNoContent
+	case t.Method == http.MethodPost:
+		status = http.StatusCreated
+	default:
+		status = http.StatusOK
+	}
+
+	resp := Response{Description: http.StatusText(status)}
+	if status == http.StatusNoContent {
+		return status, resp
+	}
+
+	if !noOutput {
+		resp.Content = map[string]MediaType{"application/json": {Schema: s.For(t.Out)}}
+	}
+
+	for _, mt := range t.Produces {
+		if resp.Content == nil {
+			resp.Content = map[string]MediaType{}
+		}
+
+		resp.Content[mt] = MediaType{Schema: producedSchema(mt)}
+	}
+
+	return status, resp
+}
+
+// producedSchema is the schema of a body of media type mt that the handler
+// writes itself: text for a text/* type, bytes otherwise.
+func producedSchema(mt string) Schema {
+	if base, _, err := mime.ParseMediaType(mt); err == nil && strings.HasPrefix(base, "text/") {
+		return Schema{"type": "string"}
+	}
+
+	return Schema{"type": "string", "format": "binary"}
 }
 
 // queryParams documents the fields of in that are not path parameters as

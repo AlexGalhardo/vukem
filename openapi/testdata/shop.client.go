@@ -75,6 +75,13 @@ func (e *Error) Error() string {
 
 const maxErrorBody = 1 << 20
 
+// rawBody receives a success body that is not JSON (an .ics file, an
+// image): accept is sent as the Accept header and data is the body as is.
+type rawBody struct {
+	accept string
+	data   []byte
+}
+
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	u := strings.TrimRight(c.BaseURL, "/") + path
 	if len(query) > 0 {
@@ -96,7 +103,12 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return fmt.Errorf("shopclient: %s %s: %w", method, path, err)
 	}
 
-	req.Header.Set("Accept", "application/json")
+	raw, isRaw := out.(*rawBody)
+	if isRaw {
+		req.Header.Set("Accept", raw.accept)
+	} else {
+		req.Header.Set("Accept", "application/json")
+	}
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -128,6 +140,14 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 	if out == nil || resp.StatusCode == http.StatusNoContent {
 		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+
+	if isRaw {
+		if raw.data, err = io.ReadAll(resp.Body); err != nil {
+			return fmt.Errorf("shopclient: read %s %s: %w", method, path, err)
+		}
+
 		return nil
 	}
 
@@ -237,6 +257,14 @@ func (c *Client) ProductsDestroy(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/api/v1/products/"+url.PathEscape(queryString(id)), nil, nil, nil)
 }
 
+// ProductsImage calls GET /api/v1/products/{id}/image.
+func (c *Client) ProductsImage(ctx context.Context, id string) ([]byte, error) {
+	out := &rawBody{accept: "image/png"}
+	err := c.do(ctx, "GET", "/api/v1/products/"+url.PathEscape(queryString(id))+"/image", nil, nil, out)
+
+	return out.data, err
+}
+
 // ProductsIndex calls GET /api/v1/products: List products.
 func (c *Client) ProductsIndex(ctx context.Context, query ProductsIndexQuery) (Page, error) {
 	var out Page
@@ -251,6 +279,14 @@ func (c *Client) ProductsStore(ctx context.Context, shop int64, body ProductsSto
 	err := c.do(ctx, "POST", "/api/v1/shops/"+url.PathEscape(queryString(shop))+"/products", nil, body, &out)
 
 	return out, err
+}
+
+// ShopsCalendar calls GET /api/v1/shops/{shop}/calendar: Export the calendar.
+func (c *Client) ShopsCalendar(ctx context.Context, shop string) ([]byte, error) {
+	out := &rawBody{accept: "text/calendar; charset=utf-8"}
+	err := c.do(ctx, "GET", "/api/v1/shops/"+url.PathEscape(queryString(shop))+"/calendar", nil, nil, out)
+
+	return out.data, err
 }
 
 // WebhooksReceive calls POST /api/v1/webhooks/{provider}.

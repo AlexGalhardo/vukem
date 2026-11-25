@@ -47,6 +47,8 @@ export type Product = {
 
 export type ProductsDestroyResponse = void;
 
+export type ProductsImageResponse = void;
+
 export type ProductsIndexQuery = {
   per_page?: number;
   q?: string;
@@ -65,5 +67,7 @@ export type ProductsStoreBody = {
 };
 
 export type ProductsStoreResponse = Product;
+
+export type ShopsCalendarResponse = void;
 
 export type WebhooksReceiveBody = unknown;

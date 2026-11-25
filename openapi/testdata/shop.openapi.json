@@ -110,6 +110,69 @@
         }
       }
     },
+    "/api/v1/products/{id}/image": {
+      "get": {
+        "operationId": "products.image",
+        "summary": "products.image",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/shops/{shop}/calendar": {
+      "get": {
+        "operationId": "shops.calendar",
+        "summary": "Export the calendar",
+        "parameters": [
+          {
+            "name": "shop",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/calendar; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/shops/{shop}/products": {
       "post": {
         "operationId": "products.store",

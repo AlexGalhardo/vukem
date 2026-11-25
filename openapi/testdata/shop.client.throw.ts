@@ -47,6 +47,8 @@ export type Product = {
 
 export type ProductsDestroyResponse = void;
 
+export type ProductsImageResponse = void;
+
 export type ProductsIndexQuery = {
   per_page?: number;
   q?: string;
@@ -66,6 +68,8 @@ export type ProductsStoreBody = {
 
 export type ProductsStoreResponse = Product;
 
+export type ShopsCalendarResponse = void;
+
 export type WebhooksReceiveBody = unknown;
 
 export type LegacyParams = {
@@ -76,8 +80,16 @@ export type ProductsDestroyParams = {
   id: string;
 };
 
+export type ProductsImageParams = {
+  id: string;
+};
+
 export type ProductsStoreParams = {
   shop: number;
+};
+
+export type ShopsCalendarParams = {
+  shop: string;
 };
 
 export type WebhooksReceiveParams = {
@@ -134,7 +146,7 @@ export type ClientOptions = {
   credentials?: RequestCredentials;
 };
 
-type RequestArgs = { params?: object; query?: object; body?: unknown };
+type RequestArgs = { params?: object; query?: object; body?: unknown; accept?: string; binary?: boolean };
 
 function buildPath(template: string, params: object | undefined): string {
   const values = (params ?? {}) as Record<string, unknown>;
@@ -180,7 +192,7 @@ function requester(options: ClientOptions) {
     const extra = typeof options.headers === "function" ? await options.headers() : options.headers;
     const headers = new Headers(extra);
     if (!headers.has("Accept")) {
-      headers.set("Accept", "application/json");
+      headers.set("Accept", args.accept ?? "application/json");
     }
     let body: string | undefined;
     if (args.body !== undefined) {
@@ -195,7 +207,7 @@ function requester(options: ClientOptions) {
     });
     let data: unknown;
     try {
-      data = await readBody(res);
+      data = args.binary && res.ok ? await res.blob() : await readBody(res);
     } catch (err) {
       if (res.ok) {
         throw err;
@@ -223,6 +235,11 @@ export interface Client {
   productsDestroy(args: { params: ProductsDestroyParams }): Promise<ProductsDestroyResponse>;
 
   /**
+   * GET /api/v1/products/{id}/image
+   */
+  productsImage(args: { params: ProductsImageParams }): Promise<Blob>;
+
+  /**
    * GET /api/v1/products: List products
    */
   productsIndex(args?: { query?: ProductsIndexQuery }): Promise<ProductsIndexResponse>;
@@ -231,6 +248,11 @@ export interface Client {
    * POST /api/v1/shops/{shop}/products: Create a product
    */
   productsStore(args: { params: ProductsStoreParams; body: ProductsStoreBody }): Promise<ProductsStoreResponse>;
+
+  /**
+   * GET /api/v1/shops/{shop}/calendar: Export the calendar
+   */
+  shopsCalendar(args: { params: ShopsCalendarParams }): Promise<string>;
 
   /**
    * POST /api/v1/webhooks/{provider}
@@ -245,8 +267,12 @@ export function createClient(options: ClientOptions = {}): Client {
   return {
     legacy: (args) => request<unknown>("GET", "/api/v1/legacy/{path}", args),
     productsDestroy: (args) => request<ProductsDestroyResponse>("DELETE", "/api/v1/products/{id}", args),
+    productsImage: (args) =>
+      request<Blob>("GET", "/api/v1/products/{id}/image", { ...args, accept: "image/png", binary: true }),
     productsIndex: (args) => request<ProductsIndexResponse>("GET", "/api/v1/products", args),
     productsStore: (args) => request<ProductsStoreResponse>("POST", "/api/v1/shops/{shop}/products", args),
+    shopsCalendar: (args) =>
+      request<string>("GET", "/api/v1/shops/{shop}/calendar", { ...args, accept: "text/calendar; charset=utf-8" }),
     webhooksReceive: (args) => request<unknown>("POST", "/api/v1/webhooks/{provider}", args),
   };
 }

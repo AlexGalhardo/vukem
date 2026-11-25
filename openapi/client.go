@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ type clientOp struct {
 	bodyRequired              bool
 	response                  map[string]any // schema of the first 2xx JSON response
 	hasResponse               bool           // a 2xx response is declared
+	produces                  []string       // non-JSON media types of that response (api.Op.Produces)
 	errors                    []clientError  // declared 4xx and 5xx responses, by status
 }
 
@@ -86,15 +88,7 @@ func clientOps(doc map[string]any) []*clientOp {
 			}
 
 			responses := asMap(o["responses"])
-			for _, code := range sortedKeys(responses) {
-				if len(code) == 3 && code[0] == '2' {
-					op.hasResponse = true
-					op.response = asMap(asMap(asMap(asMap(responses[code])["content"])["application/json"])["schema"])
-
-					break
-				}
-			}
-
+			op.readSuccess(responses)
 			op.errors = errorResponses(doc, responses)
 
 			ops = append(ops, &op)
@@ -104,6 +98,28 @@ func clientOps(doc map[string]any) []*clientOp {
 	slices.SortFunc(ops, func(a, b *clientOp) int { return strings.Compare(a.id, b.id) })
 
 	return ops
+}
+
+// readSuccess fills the response fields of op from its first 2xx response:
+// the JSON schema, and the other media types it declares (api.Op.Produces).
+func (op *clientOp) readSuccess(responses map[string]any) {
+	for _, code := range sortedKeys(responses) {
+		if len(code) != 3 || code[0] != '2' {
+			continue
+		}
+
+		op.hasResponse = true
+		content := asMap(asMap(responses[code])["content"])
+		op.response = asMap(asMap(content["application/json"])["schema"])
+
+		for _, mt := range sortedKeys(content) {
+			if mt != "application/json" {
+				op.produces = append(op.produces, mt)
+			}
+		}
+
+		return
+	}
 }
 
 // lowerFirst turns "ProductsStore" into "productsStore" and "ID" into "id".
@@ -229,8 +245,8 @@ func writeThrowClient(b *strings.Builder, ops []*clientOp) {
 		}
 
 		call := strconv.Quote(op.method) + ", " + strconv.Quote(op.path)
-		if arg != "" {
-			call += ", " + arg
+		if expr := tsRequestArgs(op, arg); expr != "" {
+			call += ", " + expr
 		}
 
 		name := lowerFirst(tsName(op.id))
@@ -316,7 +332,49 @@ func tsArgs(op *clientOp) string {
 	return arg
 }
 
+// tsRequestArgs is the RequestArgs expression of a call whose own argument
+// is named args ("" or "undefined" when the method takes none): an operation
+// that answers only a non-JSON body sends its media types as Accept, and
+// reads a binary one as a Blob. One that also answers JSON keeps asking for
+// JSON, which is what its result type describes.
+func tsRequestArgs(op *clientOp, args string) string {
+	if !op.rawOnly() {
+		return args
+	}
+
+	extra := "accept: " + strconv.Quote(strings.Join(op.produces, ", "))
+	if op.binary() {
+		extra += ", binary: true"
+	}
+
+	if args == "" || args == "undefined" {
+		return "{ " + extra + " }"
+	}
+
+	return "{ ..." + args + ", " + extra + " }"
+}
+
+// rawOnly reports whether the success response of op is only a body the
+// handler writes itself (api.Op.Produces), with no JSON form.
+func (op *clientOp) rawOnly() bool { return op.response == nil && len(op.produces) > 0 }
+
+// binary reports whether a produced media type of op is not text, so the
+// body must be read as bytes: decoding it as UTF-8 would corrupt it.
+func (op *clientOp) binary() bool {
+	return slices.ContainsFunc(op.produces, func(mt string) bool {
+		base, _, err := mime.ParseMediaType(mt)
+		return err != nil || !strings.HasPrefix(base, "text/")
+	})
+}
+
 func tsResult(op *clientOp) string {
+	switch {
+	case op.rawOnly() && op.binary():
+		return "Blob"
+	case op.rawOnly():
+		return "string"
+	}
+
 	if op.hasResponse {
 		return tsName(op.id) + "Response"
 	}
@@ -376,7 +434,7 @@ export type ClientOptions = {
   credentials?: RequestCredentials;
 };
 
-type RequestArgs = { params?: object; query?: object; body?: unknown };
+type RequestArgs = { params?: object; query?: object; body?: unknown; accept?: string; binary?: boolean };
 
 function buildPath(template: string, params: object | undefined): string {
   const values = (params ?? {}) as Record<string, unknown>;
@@ -422,7 +480,7 @@ function requester(options: ClientOptions) {
     const extra = typeof options.headers === "function" ? await options.headers() : options.headers;
     const headers = new Headers(extra);
     if (!headers.has("Accept")) {
-      headers.set("Accept", "application/json");
+      headers.set("Accept", args.accept ?? "application/json");
     }
     let body: string | undefined;
     if (args.body !== undefined) {
@@ -437,7 +495,7 @@ function requester(options: ClientOptions) {
     });
     let data: unknown;
     try {
-      data = await readBody(res);
+      data = args.binary && res.ok ? await res.blob() : await readBody(res);
     } catch (err) {
       if (res.ok) {
         throw err;
@@ -639,11 +697,19 @@ func writeResultClient(b *strings.Builder, ops []*clientOp) {
 		}
 
 		name := lowerFirst(tsName(op.id))
-		call := fmt.Sprintf("request<%s, %sError>(%s, %s, %s, options)", tsResult(op), tsName(op.id),
-			strconv.Quote(op.method), strconv.Quote(op.path), args)
+		head := fmt.Sprintf("request<%s, %sError>(", tsResult(op), tsName(op.id))
+		callArgs := []string{
+			strconv.Quote(op.method), strconv.Quote(op.path), cmpOr(tsRequestArgs(op, args), "undefined"), "options",
+		}
+		call := head + strings.Join(callArgs, ", ") + ")"
 		b.WriteString(fit(
 			fmt.Sprintf("    %s: (%s) => %s,\n", name, params, call),
-			fmt.Sprintf("    %s: (%s) =>\n      %s,\n", name, params, call),
+			fit(
+				fmt.Sprintf("    %s: (%s) =>\n      %s,\n", name, params, call),
+				// Still too wide: Biome puts each argument on its own line.
+				fmt.Sprintf("    %s: (%s) =>\n      %s\n        %s,\n      ),\n",
+					name, params, head, strings.Join(callArgs, ",\n        ")),
+			),
 		))
 	}
 
@@ -819,7 +885,7 @@ export type ClientOptions = {
   throwHttpError?: boolean;
 };
 
-type RequestArgs = { params?: object; query?: object; body?: unknown };
+type RequestArgs = { params?: object; query?: object; body?: unknown; accept?: string; binary?: boolean };
 
 function buildPath(template: string, params: object | undefined): string {
   const values = (params ?? {}) as Record<string, unknown>;
@@ -871,7 +937,7 @@ function requester(options: ClientOptions) {
     const headers = new Headers(extra);
     new Headers(call.headers).forEach((value: string, key: string) => headers.set(key, value));
     if (!headers.has("Accept")) {
-      headers.set("Accept", "application/json");
+      headers.set("Accept", args.accept ?? "application/json");
     }
     let body: string | undefined;
     if (args.body !== undefined) {
@@ -896,7 +962,7 @@ function requester(options: ClientOptions) {
     }
     let data: unknown;
     try {
-      data = await readBody(res);
+      data = args.binary && res.ok ? await res.blob() : await readBody(res);
     } catch (err) {
       if (res.ok) {
         throw err;

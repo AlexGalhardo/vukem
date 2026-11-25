@@ -47,6 +47,8 @@ export type Product = {
 
 export type ProductsDestroyResponse = void;
 
+export type ProductsImageResponse = void;
+
 export type ProductsIndexQuery = {
   per_page?: number;
   q?: string;
@@ -66,6 +68,8 @@ export type ProductsStoreBody = {
 
 export type ProductsStoreResponse = Product;
 
+export type ShopsCalendarResponse = void;
+
 export type WebhooksReceiveBody = unknown;
 
 export type LegacyParams = {
@@ -76,8 +80,16 @@ export type ProductsDestroyParams = {
   id: string;
 };
 
+export type ProductsImageParams = {
+  id: string;
+};
+
 export type ProductsStoreParams = {
   shop: number;
+};
+
+export type ShopsCalendarParams = {
+  shop: string;
 };
 
 export type WebhooksReceiveParams = {
@@ -180,7 +192,7 @@ export type ClientOptions = {
   throwHttpError?: boolean;
 };
 
-type RequestArgs = { params?: object; query?: object; body?: unknown };
+type RequestArgs = { params?: object; query?: object; body?: unknown; accept?: string; binary?: boolean };
 
 function buildPath(template: string, params: object | undefined): string {
   const values = (params ?? {}) as Record<string, unknown>;
@@ -232,7 +244,7 @@ function requester(options: ClientOptions) {
     const headers = new Headers(extra);
     new Headers(call.headers).forEach((value: string, key: string) => headers.set(key, value));
     if (!headers.has("Accept")) {
-      headers.set("Accept", "application/json");
+      headers.set("Accept", args.accept ?? "application/json");
     }
     let body: string | undefined;
     if (args.body !== undefined) {
@@ -257,7 +269,7 @@ function requester(options: ClientOptions) {
     }
     let data: unknown;
     try {
-      data = await readBody(res);
+      data = args.binary && res.ok ? await res.blob() : await readBody(res);
     } catch (err) {
       if (res.ok) {
         throw err;
@@ -279,6 +291,8 @@ export type LegacyError = { status: HttpErrorStatus; value: ApiProblem | undefin
 
 export type ProductsDestroyError = { status: HttpErrorStatus; value: ApiProblem | undefined };
 
+export type ProductsImageError = { status: HttpErrorStatus; value: ApiProblem | undefined };
+
 export type ProductsIndexError =
   | { status: 422; value: Problem }
   | { status: Exclude<HttpErrorStatus, 422>; value: ApiProblem | undefined };
@@ -287,6 +301,8 @@ export type ProductsStoreError =
   | { status: 401; value: Problem }
   | { status: 422; value: Problem }
   | { status: Exclude<HttpErrorStatus, 401 | 422>; value: ApiProblem | undefined };
+
+export type ShopsCalendarError = { status: HttpErrorStatus; value: ApiProblem | undefined };
 
 export type WebhooksReceiveError = { status: HttpErrorStatus; value: ApiProblem | undefined };
 
@@ -307,6 +323,14 @@ export interface Client {
   ): Promise<ApiResult<ProductsDestroyResponse, ProductsDestroyError>>;
 
   /**
+   * GET /api/v1/products/{id}/image
+   */
+  productsImage(
+    args: { params: ProductsImageParams },
+    options?: CallOptions,
+  ): Promise<ApiResult<Blob, ProductsImageError>>;
+
+  /**
    * GET /api/v1/products: List products
    */
   productsIndex(
@@ -321,6 +345,14 @@ export interface Client {
     args: { params: ProductsStoreParams; body: ProductsStoreBody },
     options?: CallOptions,
   ): Promise<ApiResult<ProductsStoreResponse, ProductsStoreError>>;
+
+  /**
+   * GET /api/v1/shops/{shop}/calendar: Export the calendar
+   */
+  shopsCalendar(
+    args: { params: ShopsCalendarParams },
+    options?: CallOptions,
+  ): Promise<ApiResult<string, ShopsCalendarError>>;
 
   /**
    * POST /api/v1/webhooks/{provider}
@@ -339,10 +371,24 @@ export function createClient(options: ClientOptions = {}): Client {
     legacy: (args, options) => request<unknown, LegacyError>("GET", "/api/v1/legacy/{path}", args, options),
     productsDestroy: (args, options) =>
       request<ProductsDestroyResponse, ProductsDestroyError>("DELETE", "/api/v1/products/{id}", args, options),
+    productsImage: (args, options) =>
+      request<Blob, ProductsImageError>(
+        "GET",
+        "/api/v1/products/{id}/image",
+        { ...args, accept: "image/png", binary: true },
+        options,
+      ),
     productsIndex: (args, options) =>
       request<ProductsIndexResponse, ProductsIndexError>("GET", "/api/v1/products", args, options),
     productsStore: (args, options) =>
       request<ProductsStoreResponse, ProductsStoreError>("POST", "/api/v1/shops/{shop}/products", args, options),
+    shopsCalendar: (args, options) =>
+      request<string, ShopsCalendarError>(
+        "GET",
+        "/api/v1/shops/{shop}/calendar",
+        { ...args, accept: "text/calendar; charset=utf-8" },
+        options,
+      ),
     webhooksReceive: (args, options) =>
       request<unknown, WebhooksReceiveError>("POST", "/api/v1/webhooks/{provider}", args, options),
   };
@@ -371,6 +417,10 @@ export function createQueries(client: Client) {
       mutationKey: ["productsDestroy"] as const,
       mutationFn: async (args: { params: ProductsDestroyParams }) => unwrap(await client.productsDestroy(args)),
     }),
+    productsImage: (args: { params: ProductsImageParams }) => ({
+      queryKey: ["productsImage", args] as const,
+      queryFn: async ({ signal }: { signal?: AbortSignal }) => unwrap(await client.productsImage(args, { signal })),
+    }),
     productsIndex: (args?: { query?: ProductsIndexQuery }) => ({
       queryKey: ["productsIndex", args ?? {}] as const,
       queryFn: async ({ signal }: { signal?: AbortSignal }) => unwrap(await client.productsIndex(args, { signal })),
@@ -379,6 +429,10 @@ export function createQueries(client: Client) {
       mutationKey: ["productsStore"] as const,
       mutationFn: async (args: { params: ProductsStoreParams; body: ProductsStoreBody }) =>
         unwrap(await client.productsStore(args)),
+    }),
+    shopsCalendar: (args: { params: ShopsCalendarParams }) => ({
+      queryKey: ["shopsCalendar", args] as const,
+      queryFn: async ({ signal }: { signal?: AbortSignal }) => unwrap(await client.shopsCalendar(args, { signal })),
     }),
     webhooksReceive: () => ({
       mutationKey: ["webhooksReceive"] as const,
