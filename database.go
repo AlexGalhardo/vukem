@@ -304,6 +304,8 @@ func statusCommand() Command {
 					status = "Ran (CHANGED since applied)"
 				case s.OutOfOrder:
 					status = "Pending (out of order)"
+				case s.Deferred:
+					status = "Pending (deferred: the app runs it)"
 				case s.Ran:
 					status = "Ran"
 				}
@@ -3100,6 +3102,10 @@ func checkDestructive(ctx context.Context, app *App, m *schema.Migrator) error {
 	}
 
 	for _, mig := range pending {
+		if mig.Deferred {
+			continue // migrate does not run it
+		}
+
 		drops, err := schema.Destructive(ctx, db, mig)
 		if err != nil {
 			return err

@@ -34,6 +34,16 @@ type Migration struct {
 	// webhook): an app can enable the module long after its own migrations
 	// ran, and the migration depends on none of them.
 	AnyOrder bool
+	// Deferred keeps the migration pending until the app runs it with
+	// [Migrator.RunDeferred]: Up, Fresh and the migrate command skip it, and
+	// Status lists it as Deferred. It is for a data migration that needs
+	// something the app only has later, such as a data key that exists
+	// once a user has unlocked it: the app calls RunDeferred with a ctx
+	// that carries it (Up reads it from [Schema.Context]). It is recorded,
+	// rolled back and checksummed like any other migration, and, like
+	// AnyOrder, exempt from the out-of-order check: the migrations after it
+	// run without waiting for it, so it must not be one they depend on.
+	Deferred bool
 }
 
 // Status describes a migration's state.
@@ -47,6 +57,9 @@ type Status struct {
 	// OutOfOrder marks a pending migration whose ID sorts before one that
 	// already ran: it came from another branch.
 	OutOfOrder bool `json:"out_of_order,omitempty"`
+	// Deferred marks a pending Migration.Deferred: it waits for
+	// Migrator.RunDeferred, not for migrate.
+	Deferred bool `json:"deferred,omitempty"`
 }
 
 // Migrator applies migrations to a database.
@@ -77,7 +90,7 @@ func (m *Migrator) outOfOrder(pending []string, done map[string]applied) []strin
 	anyOrder := map[string]bool{}
 
 	for _, mig := range m.migrations {
-		if mig.AnyOrder {
+		if mig.AnyOrder || mig.Deferred {
 			anyOrder[mig.ID] = true
 		}
 	}
@@ -219,7 +232,7 @@ func (m *Migrator) up(ctx context.Context) ([]string, error) {
 		var pending []string
 
 		for _, mig := range m.migrations {
-			if _, ok := done[mig.ID]; !ok {
+			if _, ok := done[mig.ID]; !ok && !mig.Deferred {
 				pending = append(pending, mig.ID)
 			}
 		}
@@ -236,44 +249,106 @@ func (m *Migrator) up(ctx context.Context) ([]string, error) {
 	var ran []string
 
 	for _, mig := range m.migrations {
-		if _, ok := done[mig.ID]; ok {
+		if _, ok := done[mig.ID]; ok || mig.Deferred {
 			continue
 		}
 
-		sum, err := m.Checksum(mig)
-		if err != nil {
+		if err := m.run(ctx, mig, batch); err != nil {
 			return ran, err
-		}
-
-		err = m.inTx(ctx, mig, func(ex database.Executor) error {
-			sch := New(ctx, ex)
-			if err := mig.Up(sch); err != nil {
-				return m.partialFailure(mig, sch.executed, err)
-			}
-
-			if mig.NoTransaction {
-				if err := m.checkInvalidIndexes(ctx); err != nil {
-					return err
-				}
-			}
-
-			_, err := ex.ExecContext(ctx, "INSERT INTO "+m.table+" (id, batch, checksum, ran_at) VALUES ("+
-				m.ph(1)+", "+m.ph(2)+", "+m.ph(3)+", "+m.ph(4)+")", mig.ID, batch, sum, time.Now().UTC())
-
-			return err
-		})
-		if err != nil {
-			if _, ok := errors.AsType[*partialError](err); ok {
-				return ran, err
-			}
-
-			return ran, fmt.Errorf("schema: migrate %s: %w", mig.ID, err)
 		}
 
 		ran = append(ran, mig.ID)
 	}
 
 	return ran, nil
+}
+
+// RunDeferred runs the pending Migration.Deferred migrations, all of them
+// or the ones named by ids, in ID order and in one new batch, under the
+// same lock as Up. ctx reaches each Up through [Schema.Context], so it can
+// carry what the migration was waiting for. It returns the IDs that ran;
+// an ID that is not a deferred migration of m is an error, and one already
+// applied is skipped.
+func (m *Migrator) RunDeferred(ctx context.Context, ids ...string) ([]string, error) {
+	want := map[string]bool{}
+
+	for _, id := range ids {
+		i := slices.IndexFunc(m.migrations, func(mig Migration) bool { return mig.ID == id })
+		if i < 0 {
+			return nil, fmt.Errorf("%w %q", ErrUnknownMigration, id)
+		}
+
+		if !m.migrations[i].Deferred {
+			return nil, fmt.Errorf("schema: migration %q is not deferred; run it with Up", id)
+		}
+
+		want[id] = true
+	}
+
+	var ran []string
+
+	err := m.locked(ctx, func() error {
+		done, err := m.applied(ctx)
+		if err != nil {
+			return err
+		}
+
+		batch := 1
+		for _, a := range done {
+			batch = max(batch, a.batch+1)
+		}
+
+		for _, mig := range m.migrations {
+			if _, ok := done[mig.ID]; ok || !mig.Deferred || len(want) > 0 && !want[mig.ID] {
+				continue
+			}
+
+			if err := m.run(ctx, mig, batch); err != nil {
+				return err
+			}
+
+			ran = append(ran, mig.ID)
+		}
+
+		return nil
+	})
+
+	return ran, err
+}
+
+// run applies one migration and records it in batch.
+func (m *Migrator) run(ctx context.Context, mig Migration, batch int) error {
+	sum, err := m.Checksum(mig)
+	if err != nil {
+		return err
+	}
+
+	err = m.inTx(ctx, mig, func(ex database.Executor) error {
+		sch := New(ctx, ex)
+		if err := mig.Up(sch); err != nil {
+			return m.partialFailure(mig, sch.executed, err)
+		}
+
+		if mig.NoTransaction {
+			if err := m.checkInvalidIndexes(ctx); err != nil {
+				return err
+			}
+		}
+
+		_, err := ex.ExecContext(ctx, "INSERT INTO "+m.table+" (id, batch, checksum, ran_at) VALUES ("+
+			m.ph(1)+", "+m.ph(2)+", "+m.ph(3)+", "+m.ph(4)+")", mig.ID, batch, sum, time.Now().UTC())
+
+		return err
+	})
+	if err == nil {
+		return nil
+	}
+
+	if _, ok := errors.AsType[*partialError](err); ok {
+		return err
+	}
+
+	return fmt.Errorf("schema: migrate %s: %w", mig.ID, err)
 }
 
 // checkInvalidIndexes fails when the current PostgreSQL schema holds an
@@ -674,6 +749,8 @@ func (m *Migrator) Status(ctx context.Context) ([]Status, error) {
 			}
 
 			st.Changed = sum != a.checksum
+		} else {
+			st.Deferred = mig.Deferred
 		}
 
 		out = append(out, st)
@@ -690,7 +767,7 @@ func (m *Migrator) Status(ctx context.Context) ([]Status, error) {
 	var pending []string
 
 	for _, s := range out {
-		if !s.Ran {
+		if !s.Ran && !s.Deferred {
 			pending = append(pending, s.ID)
 		}
 	}
