@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/api"
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/router"
@@ -299,5 +301,33 @@ func TestRawBodyAndQueryReachOpenAPI(t *testing.T) {
 
 	if len(mixed.Parameters) != 1 || mixed.Parameters[0].Name != "mode" || mixed.Parameters[0].In != "query" {
 		t.Fatalf("mixed parameters = %+v, want the mode query parameter", mixed.Parameters)
+	}
+}
+
+// A service that does not import vukem reads the body itself and must tell
+// an over-limit body from any other read error with the standard library.
+func TestRawBodyOverLimitErrorIsAMaxBytesError(t *testing.T) {
+	t.Parallel()
+
+	var readErr error
+
+	r := router.New(nil)
+	api.Register(r, "POST /import", api.Op{MaxBody: 16}, func(_ *web.Ctx, in importFile) (importResult, error) {
+		_, readErr = io.ReadAll(in.Body)
+
+		return importResult{}, readErr
+	})
+
+	rec := serveTo(t, r, "/import?format=png&scale=1", "application/octet-stream", strings.Repeat("a", 100), true)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("POST = %d %s, want 413", rec.Code, rec.Body)
+	}
+
+	if mbe, ok := errors.AsType[*http.MaxBytesError](readErr); !ok || mbe.Limit != 16 {
+		t.Errorf("errors.As(%v, *http.MaxBytesError) = %v, %v; want a limit of 16", readErr, mbe, ok)
+	}
+
+	if !errors.Is(readErr, errs.ErrRequestTooLarge) {
+		t.Errorf("errors.Is(%v, errs.ErrRequestTooLarge) = false, want true", readErr)
 	}
 }

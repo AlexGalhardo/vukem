@@ -30,6 +30,9 @@ import (
 // router-wide one, else [web.DefaultMaxBody]). A declared Content-Length over
 // the limit answers 413 before the handler runs; an undeclared body that
 // crosses it makes Read return the same 413 error, which the handler returns.
+// That error matches both errors.Is(err, errs.ErrRequestTooLarge) and
+// errors.As with a *http.MaxBytesError target, so code that does not import vukem
+// can tell an over-limit body from any other read error.
 // The other fields of In come from the query string and the path (`query:"name"`
 // tags), never from the body. RawBody needs a method with a body: Register
 // panics for GET, HEAD and DELETE, for a field that is not exported or lacks
@@ -99,9 +102,21 @@ type tooLargeReader struct{ r io.Reader }
 
 func (t tooLargeReader) Read(p []byte) (int, error) {
 	n, err := t.r.Read(p)
-	if _, tooBig := errors.AsType[*http.MaxBytesError](err); tooBig {
-		return n, errs.ErrRequestTooLarge
+	if mbe, tooBig := errors.AsType[*http.MaxBytesError](err); tooBig {
+		return n, &bodyTooLargeError{cause: mbe}
 	}
 
 	return n, err
+}
+
+// bodyTooLargeError is what a RawBody read returns over the limit. It is
+// [errs.ErrRequestTooLarge] for the vukem error handler (a 413) and still
+// the [*http.MaxBytesError] the standard library returned, so a service
+// layer that does not import vukem recognizes it with errors.As.
+type bodyTooLargeError struct{ cause *http.MaxBytesError }
+
+func (e *bodyTooLargeError) Error() string { return e.cause.Error() }
+
+func (e *bodyTooLargeError) Unwrap() []error {
+	return []error{errs.ErrRequestTooLarge, e.cause}
 }
