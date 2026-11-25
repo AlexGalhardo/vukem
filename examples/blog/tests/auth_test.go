@@ -102,7 +102,6 @@ func TestRegisterIsThrottled(t *testing.T) {
 		"name": {"Ana Silva"}, "email": {"user10@example.com"},
 		"password": {"correct horse battery"}, "password_confirmation": {"correct horse battery"},
 	}).AssertStatus(429)
-
 }
 
 // One address is limited on its own, however few requests the IP sent.
