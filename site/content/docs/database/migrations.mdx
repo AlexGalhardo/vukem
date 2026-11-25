@@ -431,6 +431,26 @@ Up: func(s *schema.Schema) error {
 },
 ```
 
+### Changing one CHECK on SQLite
+
+To change only a CHECK, such as adding a value to a closed list, `s.ReplaceCheck(table, old, expr)` rebuilds the table from its own `CREATE TABLE` text with that one expression replaced, so you do not describe the whole table again. `old` is the expression as `s.Inspect(table)` lists it in `SQLite.Checks`; both are written without the `CHECK` keyword and the outer parentheses. Columns, the other constraints, indexes, triggers and the `AUTOINCREMENT` counter stay as they were. It needs `NoTransaction: true` like `Rebuild`, and fails without changing anything when no CHECK has the expression `old` or a row breaks the new one.
+
+```go
+{
+	ID:            "20261124130000_recordings_paused",
+	NoTransaction: true,
+	Up: func(s *schema.Schema) error {
+		return s.ReplaceCheck("recordings",
+			"status IN ('draft', 'recording', 'done')",
+			"status IN ('draft', 'recording', 'paused', 'done')")
+	},
+},
+```
+
+### Deferred data migrations
+
+A migration with `Deferred: true` stays pending until the app runs it with `Migrator.RunDeferred(ctx)`: `vukem migrate` skips it and `migrate:status` shows it as deferred. It fits a data migration that needs something the app only has later, such as a key that exists once a user unlocks their data. Pass it in the context, read it with `s.Context()`, and skip work done outside the `Schema` while `s.Recording()` is true (the checksum calls `Up` too). It is recorded, rolled back and checksummed like any other migration.
+
 `vukem migrate` refuses a pending migration whose ID sorts before one already applied (usually another branch's) and runs nothing: it fails with `schema.ErrOutOfOrder` and the list. Review them, then run `vukem migrate -allow-out-of-order` (`Migrator.AllowOutOfOrder()` in code). A migration with `AnyOrder: true`, which the modules that ship a fixed ID set (queue, session, cache, webhook), is exempt, so enabling a module later still works.
 
 `vukem migrate:check` finds colliding migrations, `vukem db:pull` writes a baseline from an existing database and `vukem migrate:diff` writes a migration stub from your models; see [the database guide](/docs/database/overview) and the [CLI reference](/docs/cli/reference-database). In production `vukem migrate` refuses a pending migration that drops a table or column unless you pass `--allow-destructive`.

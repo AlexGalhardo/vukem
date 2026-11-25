@@ -166,7 +166,7 @@ Rules that compare fields are methods of `StructSchema[T]`, or `validate` tags o
 
 - `Confirmed("password")` compares the input `password` with `password_confirmation`, which need not be in the shape; a missing confirmation counts as different.
 - `Strict()` does not reject the `<key>_confirmation` input of a `Confirmed` rule, and `Passthrough` does not hand it over.
-- `Check(v)` cannot tell a missing field from an empty one: a Go struct has no "absent" state, so an unset `string` is `""` and fails `Min` or `Email` like any empty value, without the `required` code. To tell them apart, validate the decoded input with `Parse(map)` (or `ParseJSON`): an absent key gives `required`, an empty value gives the rule's own code. Use pointer fields in the Go type only to carry the distinction after parsing.
+- `Check(v)` cannot tell a missing field from an empty one: a Go struct has no "absent" state, so an unset `string` is `""` and fails `Min` or `Email` like any empty value, without the `required` code. To tell them apart, validate the decoded input with `Parse(map)` (or `ParseJSON`): an absent key gives `required`, an empty value gives the rule's own code. Use pointer fields in the Go type only to carry the distinction after parsing. When the typed value itself must report a missing field, tag it `json:"name,omitzero"` (or `omitempty`): its zero value is left out of the JSON form `Check` reads, so it gives `required` like an absent key.
 - On a typed value (`Check(v)`, or `Parse` given a `T`) there is no raw input to ask whether a key was *sent*, so the rules that depend on it are skipped: `Confirmed` and the `RequiredIf*`, `RequiredWhen`, `required_with*` and `required_without*` rules. The comparison rules (`SameAs`, `NotSameAs`, the `*Field` date rules) still apply, to the fields that hold a non-zero value. `RequiredIf` reads the parsed value of the field it watches, so a `Default` on it counts.
 - A tag cites the other field by its **input key** (`json`/`form` name), not the Go name. Tag values are separated by spaces, so a value with a space needs the method.
 - The `RequiredIf*` and `RequiredWhen` rules need the target to be optional in the shape (a required key could never be missing); a key that is not in the shape, or `SameAs` over two fields of different Go types, is a panic at boot.
@@ -443,6 +443,7 @@ Supported rules, by the field kind they apply to:
 | `uppercase` | string | `ToUpper()`, a pre-step, like `trim` |
 | `normalize_email` | string | `NormalizeEmail()`, a pre-step: trimmed and lower-cased |
 | `escape` | string | `Escape()`, a pre-step: HTML entities are stored, escaped again if posted back, and counted by `min`/`max`; see [Cross-field rules](#cross-field-rules) |
+| `rawtext` | string | `AllowControl()`: control characters reach the rules (and the handler) instead of a `string.utf8` issue; invalid UTF-8 is still refused |
 | `confirmed` | any kind | `Confirmed(key)`: equals the `<key>_confirmation` input |
 | `same=KEY` | any kind | `SameAs(key, other)`; cites the other field by its input key |
 | `different=KEY` | any kind | `NotSameAs(key, other)` |

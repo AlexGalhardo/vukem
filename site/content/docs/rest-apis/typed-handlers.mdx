@@ -211,7 +211,7 @@ api.Register(g, "POST /images/import", api.Op{Name: "images.import", MaxBody: 64
 	})
 ```
 
-The reader is limited by `Op.MaxBody`, else the router-wide limit, else `web.DefaultMaxBody`. A declared `Content-Length` over the limit answers `413` before your function runs; a body that crosses it later makes `Read` return the same `413` error, so return it. `Register` panics for a `RawBody` on `GET`, `HEAD` or `DELETE`, on a field without `json:"-"`, and on a second `RawBody`. The document describes the body as `application/octet-stream` (binary); the generated TypeScript and Go clients only read JSON bodies, so they omit it.
+The reader is limited by `Op.MaxBody`, else the router-wide limit, else `web.DefaultMaxBody`. A declared `Content-Length` over the limit answers `413` before your function runs; a body that crosses it later makes `Read` return the same `413` error, so return it. That error also matches `errors.As` with a `*http.MaxBytesError` target, so a service layer that does not import vukem can tell an over-limit body from any other read error. `Register` panics for a `RawBody` on `GET`, `HEAD` or `DELETE`, on a field without `json:"-"`, and on a second `RawBody`. The document describes the body as `application/octet-stream` (binary); the generated TypeScript and Go clients only read JSON bodies, so they omit it.
 
 ### Checking input types in a test
 
@@ -322,6 +322,20 @@ func (t *Tasks) Destroy(
 
 	return struct{}{}, orm.Delete(c.Context(), t.db, &task)
 }
+```
+
+### Answering a file
+
+A route that answers a file (an `.ics` calendar, a CSV export, an image) writes it with `c.Blob` or `c.Stream` and declares its media types in `Op.Produces`. The OpenAPI document then lists them under the success response (a `text/*` type as a string, anything else as a binary string), and the generated clients send them as `Accept` and hand back the body undecoded: in TypeScript a `string` for a `text/*` type and a `Blob` for any other, in Go a `[]byte`. With `Out` as `struct{}`, the route is documented as `200` (`201` for `POST`) instead of `204`.
+
+```go title="routes/calendar.go"
+api.Register(g, "GET /calendar/export", api.Op{
+	Name:     "calendar.export",
+	Produces: []string{"text/calendar; charset=utf-8"},
+}, func(c *web.Ctx, _ struct{}) (struct{}, error) {
+	c.SetHeader("Content-Disposition", `attachment; filename="calendar.ics"`)
+	return struct{}{}, c.Blob(http.StatusOK, "text/calendar; charset=utf-8", ics)
+})
 ```
 
 ## Checking responses
