@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-11-25
+
+### Added
+
+- **api:** Declare the media types of a file response with Op.Produces ([d97ad7f](https://github.com/AlexGalhardo/vukem/commit/d97ad7f04c4867735ff5fe5cfb2bd698fcb27fad))
+- **sse:** Filter the events of each subscriber with SubscribeFunc and StreamFunc ([85fdf03](https://github.com/AlexGalhardo/vukem/commit/85fdf03a55e75ecc64a61b2a207f3924f4b08746))
+- **z:** Let control characters reach the rules with AllowControl and rawtext ([4f02e02](https://github.com/AlexGalhardo/vukem/commit/4f02e027bfae564a93f903e72fb3765e0af099b5))
+- **schema:** Change one SQLite CHECK with ReplaceCheck ([e0aafa1](https://github.com/AlexGalhardo/vukem/commit/e0aafa160e4fab5c33eb9f1b11ae572042d39b09))
+- **schema:** Keep a Deferred migration pending until Migrator.RunDeferred ([082e8d9](https://github.com/AlexGalhardo/vukem/commit/082e8d95337e7b5d5e3983854b51d19afa1ca9e0))
+
+### Fixed
+
+- **api:** Let a service recognize an over-limit RawBody with errors.As ([e85977d](https://github.com/AlexGalhardo/vukem/commit/e85977d5bdcf1033e6dbb010fed6399cacbc5bc6))
+
+### Security
+
+- **BREAKING:** **z:** Write an unsafe caller key as ? in validation paths ([bbcbec8](https://github.com/AlexGalhardo/vukem/commit/bbcbec85d2452237b64800401c86acdf9f0e5af5))
+
 ## [0.49.0] - 2026-11-23
 
 ### Added
@@ -1896,7 +1914,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.49.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/AlexGalhardo/vukem/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/AlexGalhardo/vukem/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/AlexGalhardo/vukem/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/AlexGalhardo/vukem/compare/v0.46.0...v0.47.0

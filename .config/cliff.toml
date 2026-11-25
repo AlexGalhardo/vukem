@@ -20,7 +20,7 @@ body = """
 ### {{ group | striptags | trim }}
 
 {% for commit in commits %}\
-- {% if commit.breaking %}**BREAKING:** {% endif %}{% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first | replace(from="<", to="\\<") }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/AlexGalhardo/vukem/commit/{{ commit.id }}))
+- {% if commit.breaking and "Breaking" not in group %}**BREAKING:** {% endif %}{% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first | replace(from="<", to="\\<") }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/AlexGalhardo/vukem/commit/{{ commit.id }}))
 {% endfor %}\
 {% endfor %}
 """
@@ -49,14 +49,19 @@ tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+'
 sort_commits = "oldest"
 commit_parsers = [
   { message = '^chore\(release\)', skip = true },
-  { footer = "^Deprecated", group = "<!-- 2 -->Deprecated" },
+  { footer = "^Deprecated", group = "<!-- 3 -->Deprecated" },
   { message = "^(docs|test|ci|build|chore|style)", skip = true },
   # Security is explicit: a "Security:" footer on a feat, fix, perf or
   # refactor commit. Matching the word in the body filed unrelated commits
-  # (a feature whose test is named TestSecurity_*) under Security.
-  { footer = "^Security", group = "<!-- 5 -->Security" },
-  { message = "^feat", group = "<!-- 0 -->Added" },
-  { message = "^(perf|refactor)", group = "<!-- 1 -->Changed" },
-  { message = "^revert", group = "<!-- 3 -->Removed" },
-  { message = "^fix", group = "<!-- 4 -->Fixed" },
+  # (a feature whose test is named TestSecurity_*) under Security. A breaking
+  # security fix stays here, its line prefixed with BREAKING.
+  { footer = "^Security", group = "<!-- 6 -->Security" },
+  # Breaking comes first in a release: "!" after the type or scope, or a
+  # "BREAKING CHANGE:" footer, which also marks a new refusal at run time
+  # (a migration, a request or a boot that used to pass and now fails).
+  { field = "breaking", pattern = "true", group = "<!-- 0 -->Breaking" },
+  { message = "^feat", group = "<!-- 1 -->Added" },
+  { message = "^(perf|refactor)", group = "<!-- 2 -->Changed" },
+  { message = "^revert", group = "<!-- 4 -->Removed" },
+  { message = "^fix", group = "<!-- 5 -->Fixed" },
 ]

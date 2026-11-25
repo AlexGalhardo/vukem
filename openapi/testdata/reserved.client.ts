@@ -145,7 +145,7 @@ export type ClientOptions = {
   throwHttpError?: boolean;
 };
 
-type RequestArgs = { params?: object; query?: object; body?: unknown };
+type RequestArgs = { params?: object; query?: object; body?: unknown; accept?: string; binary?: boolean };
 
 function buildPath(template: string, params: object | undefined): string {
   const values = (params ?? {}) as Record<string, unknown>;
@@ -197,7 +197,7 @@ function requester(options: ClientOptions) {
     const headers = new Headers(extra);
     new Headers(call.headers).forEach((value: string, key: string) => headers.set(key, value));
     if (!headers.has("Accept")) {
-      headers.set("Accept", "application/json");
+      headers.set("Accept", args.accept ?? "application/json");
     }
     let body: string | undefined;
     if (args.body !== undefined) {
@@ -222,7 +222,7 @@ function requester(options: ClientOptions) {
     }
     let data: unknown;
     try {
-      data = await readBody(res);
+      data = args.binary && res.ok ? await res.blob() : await readBody(res);
     } catch (err) {
       if (res.ok) {
         throw err;

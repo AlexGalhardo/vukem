@@ -82,6 +82,17 @@ func Record(d database.Dialect, up func(s *Schema) error) ([]string, error) {
 // Dialect returns the dialect name ("sqlite", "postgres", "mysql").
 func (s *Schema) Dialect() string { return s.d.Name() }
 
+// Context returns the context the migration runs with: the one given to
+// Up or [Migrator.RunDeferred], so a Migration.Deferred can read what it
+// waited for from it. It is context.Background while recording.
+func (s *Schema) Context() context.Context { return s.ctx }
+
+// Recording reports whether s only records statements (Migrator.Checksum,
+// Record, Destructive) instead of running them. Every Up is called that
+// way too, so one that works outside the Schema (reading rows through its
+// own handle) does that work only when Recording is false.
+func (s *Schema) Recording() bool { return s.record != nil || s.model != nil }
+
 // SQLDialect returns the dialect the Schema builds DDL for, so a package
 // can render one set of statements for both a migration and a non-migration
 // path, such as a store's boot-time CREATE TABLE IF NOT EXISTS.

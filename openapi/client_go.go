@@ -432,6 +432,18 @@ func (g *goGen) method(b *strings.Builder, op *clientOp) {
 
 	call := fmt.Sprintf("c.do(ctx, %q, %s, %s, %s", op.method, path, query, body)
 
+	if op.response == nil && len(op.produces) > 0 {
+		fmt.Fprintf(
+			b,
+			"func (c *Client) %s(%s) ([]byte, error) {\n\tout := &rawBody{accept: %q}\n\terr := %s, out)\n\n\treturn out.data, err\n}\n\n",
+			name,
+			strings.Join(args, ", "),
+			strings.Join(op.produces, ", "),
+			call,
+		)
+		return
+	}
+
 	if op.response == nil {
 		fmt.Fprintf(
 			b,
@@ -528,6 +540,13 @@ func (e *Error) Error() string {
 
 const maxErrorBody = 1 << 20
 
+// rawBody receives a success body that is not JSON (an .ics file, an
+// image): accept is sent as the Accept header and data is the body as is.
+type rawBody struct {
+	accept string
+	data   []byte
+}
+
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	u := strings.TrimRight(c.BaseURL, "/") + path
 	if len(query) > 0 {
@@ -549,7 +568,12 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return fmt.Errorf("PKG: %s %s: %w", method, path, err)
 	}
 
-	req.Header.Set("Accept", "application/json")
+	raw, isRaw := out.(*rawBody)
+	if isRaw {
+		req.Header.Set("Accept", raw.accept)
+	} else {
+		req.Header.Set("Accept", "application/json")
+	}
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -581,6 +605,14 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 	if out == nil || resp.StatusCode == http.StatusNoContent {
 		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+
+	if isRaw {
+		if raw.data, err = io.ReadAll(resp.Body); err != nil {
+			return fmt.Errorf("PKG: read %s %s: %w", method, path, err)
+		}
+
 		return nil
 	}
 

@@ -85,6 +85,19 @@ func routes() []router.RouteInfo {
 		}, func(*web.Ctx, storeProduct) (product, error) { return product{}, nil })
 		api.Register(g, "DELETE /products/{id}", api.Op{Name: "products.destroy", Deprecated: true},
 			func(*web.Ctx, struct{}) (struct{}, error) { return struct{}{}, nil })
+		api.Register(g, "GET /shops/{shop}/calendar", api.Op{
+			Name:     "shops.calendar",
+			Summary:  "Export the calendar",
+			Produces: []string{"text/calendar; charset=utf-8"},
+		}, func(c *web.Ctx, _ struct{}) (struct{}, error) {
+			return struct{}{}, c.Blob(http.StatusOK, "text/calendar; charset=utf-8", []byte("BEGIN:VCALENDAR"))
+		})
+		api.Register(g, "GET /products/{id}/image", api.Op{
+			Name:     "products.image",
+			Produces: []string{"image/png"},
+		}, func(c *web.Ctx, _ struct{}) (struct{}, error) {
+			return struct{}{}, c.Blob(http.StatusOK, "image/png", []byte{0x89, 'P', 'N', 'G'})
+		})
 		g.Get("/legacy/{path...}", func(*web.Ctx) error { return nil }).Name("legacy")
 		g.Post("/webhooks/{provider}", func(*web.Ctx) error { return nil }).Name("webhooks.receive")
 		g.Get("/internal", func(*web.Ctx) error { return nil }).Doc(openapi.Skip{})

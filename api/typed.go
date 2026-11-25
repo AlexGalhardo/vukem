@@ -53,6 +53,15 @@ type Op struct {
 	// DELETE, which have no body. Keys are matched against In's field names
 	// and json, form and query tags, also under RegisterWith.
 	StrictBody bool
+	// Produces lists the media types of a success response the handler
+	// writes itself (c.Blob, c.Stream), such as "text/calendar" for an .ics
+	// file. It is documentation: the OpenAPI document lists each type under
+	// the success response, as a string (a text/* type) or a binary string,
+	// and the generated clients ask for them in Accept and hand back the body
+	// undecoded. A route whose Out is struct{} is then documented as 200 (201
+	// for POST) instead of 204. Register panics on a type that is not a valid
+	// media type.
+	Produces []string
 }
 
 // Operation is attached to every typed route (router.RouteInfo.Doc) so
@@ -198,6 +207,12 @@ func register[In, Out any](
 		}
 
 		outSchema = z.For[Out]() // panics at boot on bad tags
+	}
+
+	for _, mt := range op.Produces {
+		if _, _, err := mime.ParseMediaType(mt); err != nil || !strings.Contains(mt, "/") {
+			panic(fmt.Sprintf("api: %s %q: Produces has an invalid media type %q", who, pattern, mt))
+		}
 	}
 
 	if op.MaxBody < 0 {

@@ -1006,6 +1006,21 @@ func pick(first bool, a, b string) string {
 func sqliteChecks(createSQL string) []string {
 	var out []string
 
+	for _, sp := range sqliteCheckSpans(createSQL) {
+		out = append(out, strings.TrimSpace(createSQL[sp.start:sp.end]))
+	}
+
+	return out
+}
+
+// checkSpan is where the expression of one CHECK sits in a CREATE TABLE
+// text: the bytes between its parentheses.
+type checkSpan struct{ start, end int }
+
+// sqliteCheckSpans locates every CHECK expression of createSQL.
+func sqliteCheckSpans(createSQL string) []checkSpan {
+	var out []checkSpan
+
 	for i := 0; i < len(createSQL); {
 		c := createSQL[i]
 
@@ -1033,7 +1048,7 @@ func sqliteChecks(createSQL string) []string {
 
 			if j < len(createSQL) && createSQL[j] == '(' {
 				end := matchParen(createSQL, j)
-				out = append(out, strings.TrimSpace(createSQL[j+1:end]))
+				out = append(out, checkSpan{j + 1, end})
 				i = end
 			}
 		default:

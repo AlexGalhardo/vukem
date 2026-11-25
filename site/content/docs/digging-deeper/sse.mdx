@@ -264,11 +264,14 @@ func (o *OrderController) Ship(c *web.Ctx) error {
 | `hub.Publish(ctx, topic, ev)` | Sends `ev` to every subscriber of `topic` |
 | `hub.Stream(s, topics...)` | Forwards the events of `topics` to `s` until the client leaves, the server stops or the hub closes; returns `nil` then |
 | `hub.Subscribe(ctx, topics...)` | Returns a channel of events and an unsubscribe function, for code that is not a stream |
+| `hub.StreamFunc(s, keep, topics...)` | `hub.Stream` that sends only the events `keep(ev)` returns true for: each client of a shared topic gets what it may see |
+| `hub.SubscribeFunc(ctx, keep, topics...)` | `hub.Subscribe` with the same filter; it also returns the broker error, like `TrySubscribe` |
 | `hub.Subscribers(topic)` | How many subscribers `topic` has on this instance |
 | `hub.Close()` | Ends every subscription; later subscriptions end immediately |
 
 Under the hood:
 
+- A filter (`StreamFunc`, `SubscribeFunc`) runs once per event on the subscription's own goroutine, outside the hub's lock, so it may look at the caller (a member who only sees their own requests on a shared `inbox` topic, read from `ev.Data`) without one topic per user. Keep it quick: the time it takes counts against the subscriber's buffer.
 - Each subscriber has a buffer of 64 events. A subscriber that falls 64 events behind is dropped instead of slowing down publishers: its channel closes, `hub.Stream` returns, the response ends, and the browser reconnects on its own.
 - A subscription ends, and its channel closes, when you call the unsubscribe function, when its `ctx` is done, or on `hub.Close()`.
 - Publishing to a topic with no subscribers does nothing. Events are not stored.

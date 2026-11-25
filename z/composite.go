@@ -269,7 +269,7 @@ func (c mapCore) parse(p *pctx, path string, in any) (reflect.Value, bool) {
 	out := reflect.MakeMapWithSize(c.goType(), len(m))
 
 	for _, k := range sortedKeys(m) {
-		v, set, ok := c.value.parseAny(p, joinPath(path, k), m[k], true)
+		v, set, ok := c.value.parseAny(p, joinPath(path, callerKey(k)), m[k], true)
 		if !ok {
 			continue
 		}
@@ -620,7 +620,7 @@ func (s structCore) parseFrom(c *pctx, path string, in any, fromTyped bool) (ref
 
 		for _, k := range sortedKeys(m) {
 			if !known[k] {
-				s.o.issue(c, joinPath(path, k), CodeUnrecognizedKeys, CodeUnrecognizedKeys, nil)
+				s.o.issue(c, joinPath(path, callerKey(k)), CodeUnrecognizedKeys, CodeUnrecognizedKeys, nil)
 			}
 		}
 	}
@@ -791,6 +791,12 @@ func (s StructSchema[T]) Parse(in any) (T, error) { return parseRoot[T](s, in) }
 // Check implements Schema. It validates v as it stands: the pre-steps run
 // inside the check, but nothing is returned, so Trim, Default and Transform
 // do not change v. Use [StructSchema.Normalize] to get the transformed value.
+//
+// v is seen through its JSON form, so an unset field is an empty value,
+// not an absent one: an unset string fails Min with too_small, without the
+// required code. A field tagged omitzero (or omitempty) that holds its zero
+// value is left out of that form, so Check reports it as absent (required).
+// Parse given a map tells the two apart without any tag.
 func (s StructSchema[T]) Check(v T) error { return checkValue(s, v) }
 
 // Normalize validates v like Parse does for decoded input and returns the

@@ -109,7 +109,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 - **Types:** `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`, `revert`.
 - **Scopes:** package or area — `router`, `ctx`, `config`, `validate`, `session`, `view`, `htmx`, `orm`, `schema`, `database`, `auth`, `authz`, `mail`, `cache`, `storage`, `event`, `queue`, `schedule`, `inertia`, `vite`, `cli`, `postgres`, `redis`, `mongo`, `otel`, `websocket`, `graphql`, `deps`, `release`, `docs`, `repo`.
 - Description: imperative, lowercase start, no trailing period, ≤ 100 chars header.
-- Breaking changes: `!` after type/scope; describe the impact in a `BREAKING CHANGE:` footer.
+- Breaking changes: `!` after type/scope; describe the impact and what to do in a `BREAKING CHANGE:` footer. The changelog lists them first, under **Breaking** (a breaking security fix stays under Security, prefixed **BREAKING**). A new refusal at run time is breaking even when every API still compiles: a migration, a request or a boot of an existing app that used to pass and now fails (a `Rebuild` that refuses to lose an index, an out-of-order migration) needs the marker and a line in the upgrade guide.
 - Security changes: add a `Security: <one line on the risk closed>` footer to the `feat`, `fix`, `perf` or `refactor` commit; the changelog then lists it under Security. `docs`, `test`, `ci`, `build`, `chore` and `style` commits never reach the changelog, footer or not.
 - Allowed exceptions: `Merge …`, `Revert "…"`, `fixup!`/`squash!` (local only; blocked on push to `main`).
 
