@@ -196,7 +196,9 @@ func (s *Schema) Rebuild(table string, fn func(t *Table), opts ...RebuildOption)
 		return err
 	}
 
-	return s.rebuildRun(db, t, cols, kept)
+	keepSeq := slices.ContainsFunc(t.cols, func(c *Column) bool { return c.kind == kindID })
+
+	return s.rebuildRun(db, table, s.rebuildStatements(t, cols, kept, false), keepSeq)
 }
 
 // storedIndex is an explicit index of the old table with its original SQL.
@@ -533,23 +535,23 @@ func (s *Schema) rebuildStatements(t *Table, cols []copyCol, kept []storedIndex,
 // off, one transaction, foreign_key_check before the commit. Whatever
 // happens, the transaction is rolled back unless committed and the foreign
 // keys are turned back on, with a context that outlives a cancelled one.
-func (s *Schema) rebuildRun(db *database.DB, t *Table, cols []copyCol, kept []storedIndex) (err error) {
+func (s *Schema) rebuildRun(db *database.DB, table string, stmts []string, keepSeq bool) (err error) {
 	ctx := s.ctx
 
 	conn, err := db.SQL().Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("schema: rebuild %s: %w", t.name, err)
+		return fmt.Errorf("schema: rebuild %s: %w", table, err)
 	}
 	defer conn.Close()
 
 	var fkOn int
 	if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fkOn); err != nil {
-		return fmt.Errorf("schema: rebuild %s: %w", t.name, err)
+		return fmt.Errorf("schema: rebuild %s: %w", table, err)
 	}
 
 	run := func(stmt string) error {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("schema: rebuild %s: %w\n%s", t.name, err, stmt)
+			return fmt.Errorf("schema: rebuild %s: %w\n%s", table, err, stmt)
 		}
 
 		return nil
@@ -562,56 +564,56 @@ func (s *Schema) rebuildRun(db *database.DB, t *Table, cols []copyCol, kept []st
 	}
 
 	if err := run("BEGIN IMMEDIATE"); err != nil {
-		return errors.Join(err, restoreConn(ctx, conn, true, fkOn == 1, t.name))
+		return errors.Join(err, restoreConn(ctx, conn, true, fkOn == 1, table))
 	}
 
 	committed := false
 
 	defer func() {
-		err = errors.Join(err, restoreConn(ctx, conn, committed, fkOn == 1, t.name))
+		err = errors.Join(err, restoreConn(ctx, conn, committed, fkOn == 1, table))
 	}()
 
 	// A leftover of an interrupted run.
-	if err := run("DROP TABLE IF EXISTS " + s.q(rebuildPrefix+t.name)); err != nil {
+	if err := run("DROP TABLE IF EXISTS " + s.q(rebuildPrefix+table)); err != nil {
 		return err
 	}
 
-	seq, hasSeq, err := sequenceOf(ctx, conn, t.name)
+	seq, hasSeq, err := sequenceOf(ctx, conn, table)
 	if err != nil {
-		return fmt.Errorf("schema: rebuild %s: %w", t.name, err)
+		return fmt.Errorf("schema: rebuild %s: %w", table, err)
 	}
 
-	for _, stmt := range s.rebuildStatements(t, cols, kept, false) {
+	for _, stmt := range stmts {
 		if err := run(stmt); err != nil {
 			return err
 		}
 	}
 
-	if hasSeq && slices.ContainsFunc(t.cols, func(c *Column) bool { return c.kind == kindID }) {
+	if hasSeq && keepSeq {
 		// The copy leaves the counter at the largest id left; the old one also
 		// remembers ids that were used and deleted, which must not be reused.
-		if _, err := conn.ExecContext(ctx, "DELETE FROM sqlite_sequence WHERE name = ?", t.name); err != nil {
-			return fmt.Errorf("schema: rebuild %s: %w", t.name, err)
+		if _, err := conn.ExecContext(ctx, "DELETE FROM sqlite_sequence WHERE name = ?", table); err != nil {
+			return fmt.Errorf("schema: rebuild %s: %w", table, err)
 		}
 
 		if _, err := conn.ExecContext(
 			ctx,
 			"INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)",
-			t.name,
+			table,
 			seq,
 		); err != nil {
-			return fmt.Errorf("schema: rebuild %s: %w", t.name, err)
+			return fmt.Errorf("schema: rebuild %s: %w", table, err)
 		}
 	}
 
 	if fkOn == 1 {
 		violations, err := foreignKeyViolations(ctx, conn)
 		if err != nil {
-			return fmt.Errorf("schema: rebuild %s: %w", t.name, err)
+			return fmt.Errorf("schema: rebuild %s: %w", table, err)
 		}
 
 		if violations > 0 {
-			return fmt.Errorf("schema: rebuild %s leaves %d foreign key violation(s)", t.name, violations)
+			return fmt.Errorf("schema: rebuild %s leaves %d foreign key violation(s)", table, violations)
 		}
 	}
 
