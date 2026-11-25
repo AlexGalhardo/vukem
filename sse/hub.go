@@ -192,6 +192,68 @@ func (h *Hub) TrySubscribe(ctx context.Context, topics ...string) (<-chan Event,
 	return s.ch, func() { h.remove(s) }, nil
 }
 
+// SubscribeFunc is [Hub.TrySubscribe] with a filter: the returned channel
+// receives only the events for which keep returns true, so one topic can
+// serve subscribers that may each see a different part of it (a member's
+// own requests on a shared "inbox" topic, decided from ev.Data). keep runs
+// on a goroutine of the subscription, outside the hub's lock, once per event
+// and in order; it may read a store but must not block for long, since a
+// subscriber that falls Buffer events behind is dropped like any other. A
+// nil keep keeps every event, and a keep that panics ends the subscription.
+// The channel closes on unsubscribe, ctx cancellation, Close, or when the
+// subscriber falls too far behind.
+func (h *Hub) SubscribeFunc(
+	ctx context.Context,
+	keep func(Event) bool,
+	topics ...string,
+) (<-chan Event, func(), error) {
+	in, unsubscribe, err := h.TrySubscribe(ctx, topics...)
+	if err != nil || keep == nil {
+		return in, unsubscribe, err
+	}
+
+	out := make(chan Event)
+	done := make(chan struct{})
+
+	var once sync.Once
+
+	stop := func() {
+		once.Do(func() {
+			close(done)
+			unsubscribe()
+		})
+	}
+
+	go func() {
+		defer close(out)
+		// keep runs outside any request's recover: a panic in it ends this
+		// subscription (the stream closes, the client reconnects) instead
+		// of the process.
+		defer func() {
+			if recover() != nil {
+				stop()
+			}
+		}()
+
+		for ev := range in {
+			if !keep(ev) {
+				continue
+			}
+
+			select {
+			case out <- ev:
+			case <-done:
+				return
+			case <-ctx.Done():
+				// Nobody reads out any more; the hub removes the subscriber.
+				return
+			}
+		}
+	}()
+
+	return out, stop, nil
+}
+
 // relay subscribes to the broker channel of topic, waiting at most
 // brokerSubscribeTimeout, then forwards its messages to local subscribers
 // until r is cancelled (the topic emptied or the hub closed).
@@ -344,17 +406,33 @@ func (h *Hub) Stream(s *Stream, topics ...string) error {
 	events, unsubscribe := h.Subscribe(s.Context(), topics...)
 	defer unsubscribe()
 
+	pump(s, events)
+
+	return nil
+}
+
+// StreamFunc is [Hub.Stream] that sends only the events keep returns true
+// for (see [Hub.SubscribeFunc]): each client of a shared topic gets the
+// events it may see, decided with what the handler knows about the caller.
+func (h *Hub) StreamFunc(s *Stream, keep func(Event) bool, topics ...string) error {
+	events, unsubscribe, _ := h.SubscribeFunc(s.Context(), keep, topics...)
+	defer unsubscribe()
+
+	pump(s, events)
+
+	return nil
+}
+
+// pump sends events to s until the channel closes or the client leaves; a
+// send that fails means the client went away, which ends the stream cleanly.
+func pump(s *Stream, events <-chan Event) {
 	for {
 		select {
 		case <-s.Context().Done():
-			return nil
+			return
 		case ev, ok := <-events:
-			if !ok {
-				return nil
-			}
-
-			if err := s.SendEvent(ev); err != nil {
-				return nil // the client went away
+			if !ok || s.SendEvent(ev) != nil {
+				return
 			}
 		}
 	}
