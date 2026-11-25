@@ -13,8 +13,6 @@ import (
 const (
 	// maxUnrecognized stops the walk after this many issues.
 	maxUnrecognized = 100
-	// maxKeyLen clips each key, in bytes, before it joins a path.
-	maxKeyLen = 256
 	// maxPathLen bounds the accumulated path, in bytes; each join copies at
 	// most this much whatever the body size.
 	maxPathLen = 1024
@@ -134,10 +132,11 @@ func (w *unrecognizedWalk) walkStruct(t reflect.Type, m map[string]any, path str
 	}
 }
 
-// joinClipped is joinPath with key clipped to maxKeyLen and the result to
-// maxPathLen, so it copies a bounded amount whatever the input holds.
+// joinClipped is joinPath with key shown as callerKey shows it and the
+// result clipped to maxPathLen, so it copies a bounded amount whatever the
+// input holds.
 func joinClipped(base, key string) string {
-	return clip(joinPath(base, clip(key, maxKeyLen)), maxPathLen)
+	return clip(joinPath(base, callerKey(key)), maxPathLen)
 }
 
 // clip cuts s to at most n bytes plus clipMark, never inside a UTF-8 rune.

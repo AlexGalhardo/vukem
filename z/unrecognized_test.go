@@ -146,20 +146,19 @@ func TestSecurity_UnrecognizedIsBounded(t *testing.T) {
 		}
 	})
 
-	t.Run("a clipped multibyte key stays valid UTF-8", func(t *testing.T) {
+	t.Run("a long or unsafe key is never repeated", func(t *testing.T) {
 		t.Parallel()
 
-		key := strings.Repeat("é", 300) // 600 bytes, boundary falls mid-rune for odd cuts
-		got := z.Unrecognized(typ, map[string]any{key: 1})
-
-		if len(got) != 1 || !utf8.ValidString(got[0].Path) || !utf8.ValidString(got[0].Message) ||
-			!strings.HasSuffix(got[0].Path, "...") || len(got[0].Path) > 256+3 {
-			t.Fatalf("got %+v, want one valid, clipped path", got)
-		}
-
-		odd := strings.Repeat("a", 255) + "é" // the rune straddles byte 256
-		if p := z.Unrecognized(typ, map[string]any{odd: 1})[0].Path; !utf8.ValidString(p) {
-			t.Fatalf("path %q is not valid UTF-8", p)
+		for _, key := range []string{
+			strings.Repeat("é", 300),
+			strings.Repeat("a", 255) + "é",
+			strings.Repeat("a", 65),
+			"x\nhint: y",
+		} {
+			got := z.Unrecognized(typ, map[string]any{key: 1})
+			if len(got) != 1 || got[0].Path != "?" || !utf8.ValidString(got[0].Message) {
+				t.Errorf("Unrecognized(%.20q) = %+v, want one issue at ?", key, got)
+			}
 		}
 	})
 

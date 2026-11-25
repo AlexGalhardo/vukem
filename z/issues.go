@@ -353,6 +353,15 @@ func fieldName(path string) string {
 	segs := strings.Split(path, ".")
 	last := segs[len(segs)-1]
 
+	// A hidden map key: the message names the map ("The values field...").
+	if last == unsafeKey {
+		if len(segs) == 1 {
+			return "value"
+		}
+
+		last = segs[len(segs)-2]
+	}
+
 	if isIndex(last) && len(segs) > 1 {
 		last = segs[len(segs)-2] + "." + last
 	}
@@ -373,6 +382,31 @@ func isIndex(s string) bool {
 
 	return true
 }
+
+// callerKey is what an issue path shows for key, a map key or an unknown
+// struct key the caller chose: the key itself when it is 1 to 64 of
+// A-Z a-z 0-9 _ . -, else "?". The path becomes the field name of the
+// message and a key of the 422 "errors" object, so a raw key would echo
+// caller-chosen text (a line break, a fake "hint:", markup) into the
+// response and the logs.
+func callerKey(key string) string {
+	if key == "" || len(key) > 64 {
+		return unsafeKey
+	}
+
+	for i := range len(key) {
+		switch c := key[i]; {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '.', c == '-':
+		default:
+			return unsafeKey
+		}
+	}
+
+	return key
+}
+
+// unsafeKey replaces a caller key that callerKey refuses to repeat.
+const unsafeKey = "?"
 
 func joinPath(base, key string) string {
 	if base == "" {
