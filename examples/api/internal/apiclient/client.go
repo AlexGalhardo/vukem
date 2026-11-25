@@ -75,6 +75,13 @@ func (e *Error) Error() string {
 
 const maxErrorBody = 1 << 20
 
+// rawBody receives a success body that is not JSON (an .ics file, an
+// image): accept is sent as the Accept header and data is the body as is.
+type rawBody struct {
+	accept string
+	data   []byte
+}
+
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	u := strings.TrimRight(c.BaseURL, "/") + path
 	if len(query) > 0 {
@@ -96,7 +103,12 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return fmt.Errorf("apiclient: %s %s: %w", method, path, err)
 	}
 
-	req.Header.Set("Accept", "application/json")
+	raw, isRaw := out.(*rawBody)
+	if isRaw {
+		req.Header.Set("Accept", raw.accept)
+	} else {
+		req.Header.Set("Accept", "application/json")
+	}
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -128,6 +140,14 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 	if out == nil || resp.StatusCode == http.StatusNoContent {
 		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+
+	if isRaw {
+		if raw.data, err = io.ReadAll(resp.Body); err != nil {
+			return fmt.Errorf("apiclient: read %s %s: %w", method, path, err)
+		}
+
 		return nil
 	}
 
