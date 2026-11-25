@@ -24,7 +24,8 @@ import (
 //	        base64, base64url, jwt (shape only), iso_date, iso_time,
 //	        iso_datetime, iso_duration, oneof=a b c, regex=PATTERN (last
 //	        rule), startswith=, endswith=, contains=, trim, lowercase,
-//	        uppercase, normalize_email, escape, omitempty (skips the
+//	        uppercase, normalize_email, escape, rawtext (control
+//	        characters reach the rules, see AllowControl), omitempty (skips the
 //	        rules above when the value is empty, so "omitempty,oneof=a b"
 //	        accepts "a", "b" and ""), default=V (used when the key is
 //	        absent, or empty with omitempty; it also reaches the OpenAPI
@@ -139,6 +140,7 @@ func tagRules() []tagRule {
 		{name: "iso_duration", scopes: []tagScope{scopeString}},
 		{name: "normalize_email", scopes: []tagScope{scopeString}},
 		{name: "escape", scopes: []tagScope{scopeString}},
+		{name: "rawtext", scopes: []tagScope{scopeString}},
 		{name: "uppercase", scopes: []tagScope{scopeString}},
 		{name: "confirmed", scopes: []tagScope{scopeCross}},
 		{name: "same", arg: "other", scopes: []tagScope{scopeCross}},

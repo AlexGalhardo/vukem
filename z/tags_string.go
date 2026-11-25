@@ -80,6 +80,8 @@ func stringFromRules(t reflect.Type, rs ruleSet, optional, nullable bool) (AnySc
 			s = s.NormalizeEmail()
 		case "escape":
 			s = s.Escape()
+		case "rawtext":
+			s = s.AllowControl()
 		case "ip":
 			s = s.IP()
 		case "ipv4":

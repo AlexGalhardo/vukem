@@ -23,6 +23,9 @@ type StringSchema struct {
 	// pre-steps, so an optional enum or a bounded optional string can be
 	// described in one schema.
 	omitEmpty bool
+	// allowControl lets control characters reach the rules; invalid UTF-8
+	// is still refused.
+	allowControl bool
 }
 
 // String returns a schema for string values. The empty string is a valid
@@ -98,7 +101,7 @@ func (s StringSchema) core(c *pctx, path string, in any) (string, bool) {
 		return "", false
 	}
 
-	if !safeText(v) {
+	if !s.text(v) {
 		s.o.issue(c, path, CodeInvalidString, "string.utf8", nil)
 		return "", false
 	}
@@ -109,7 +112,7 @@ func (s StringSchema) core(c *pctx, path string, in any) (string, bool) {
 
 	// Fail closed: a Preprocess func must not reintroduce what the first
 	// check rejected.
-	if len(s.pre) > 0 && !safeText(v) {
+	if len(s.pre) > 0 && !s.text(v) {
 		s.o.issue(c, path, CodeInvalidString, "string.utf8", nil)
 		return "", false
 	}
@@ -137,6 +140,30 @@ func (s StringSchema) core(c *pctx, path string, in any) (string, bool) {
 	}
 
 	return v, len(c.issues) == before
+}
+
+// text reports whether v may reach the rules: valid UTF-8 without control
+// characters, or only valid UTF-8 after AllowControl.
+func (s StringSchema) text(v string) bool {
+	if s.allowControl {
+		return utf8.ValidString(v)
+	}
+
+	return safeText(v)
+}
+
+// AllowControl lets control characters (a bell, an escape, a NUL) through
+// to the rules instead of refusing them with "string.utf8", for a field
+// whose domain validates them itself and answers its own error, the same
+// one its other surfaces (a CLI, a service) give. Invalid UTF-8 is still
+// refused. The value then reaches the handler with those characters, so
+// the domain must refuse or strip them before storing or echoing it. The
+// tag form is `validate:"rawtext"`.
+func (s StringSchema) AllowControl() StringSchema {
+	s = s.with(nil, nil)
+	s.allowControl = true
+
+	return s
 }
 
 // safeText reports whether v is valid UTF-8 without control characters
