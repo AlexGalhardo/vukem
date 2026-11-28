@@ -3,6 +3,6 @@ module github.com/AlexGalhardo/vukem/contrib/telegram
 go 1.27.4
 
 require (
-	github.com/AlexGalhardo/vukem v0.48.0
+	github.com/AlexGalhardo/vukem v0.49.0
 	github.com/google/go-cmp v0.7.0
 )

@@ -6,7 +6,7 @@ require (
 	connectrpc.com/connect v1.21.1
 	connectrpc.com/grpchealth v1.5.0
 	connectrpc.com/grpcreflect v1.3.1
-	github.com/AlexGalhardo/vukem v0.48.0
+	github.com/AlexGalhardo/vukem v0.49.0
 	github.com/google/go-cmp v0.7.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941
 	google.golang.org/protobuf v1.36.12
@@ -19,9 +19,10 @@ require (
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/crypto v0.59.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
-	modernc.org/libc v1.79.0 // indirect
+	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.61.0 // indirect
+	modernc.org/sqlite v1.63.0 // indirect
 )
