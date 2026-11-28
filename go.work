@@ -10,8 +10,8 @@ use (
 	./contrib/imaging
 	./contrib/qrcode
 	./contrib/stripe
-	./contrib/telegram
 	./contrib/studio
+	./contrib/telegram
 	./drivers/mongo
 	./drivers/mysql
 	./drivers/otel
